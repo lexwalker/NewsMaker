@@ -1,0 +1,142 @@
+[
+  {
+    "id": "auto-01",
+    "title": "Toyota unveils 2026 Camry with plug-in hybrid option",
+    "body": "Toyota Motor Corporation today announced the 2026 Camry lineup, adding a new plug-in hybrid variant with 60 km of electric-only range. Pricing starts at $29,500. The company said production at its Georgetown, Kentucky plant will begin in Q3.",
+    "expected_section": "facts",
+    "expected_region": "Global"
+  },
+  {
+    "id": "auto-02",
+    "title": "Haval открыл 10 новых дилерских центров в Казахстане",
+    "body": "Китайский бренд Haval объявил о расширении дилерской сети в Казахстане. В 2026 году открыто десять новых салонов в Алматы, Астане и Шымкенте. Партнёром выступает крупный местный дистрибьютор.",
+    "expected_section": "dealers",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-03",
+    "title": "Правительство РФ продлило программу льготного автокредитования",
+    "body": "Постановлением Правительства РФ программа льготного автокредитования продлена до конца 2026 года. Субсидия достигает 20% от стоимости автомобиля для отдельных категорий граждан.",
+    "expected_section": "local",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-04",
+    "title": "Shanghai Auto Show 2026: top EV debuts",
+    "body": "This year's Shanghai Auto Show featured more than 100 electric-vehicle world premieres, including new models from BYD, Nio and Xpeng.",
+    "expected_section": "exhibitions",
+    "expected_region": "Global"
+  },
+  {
+    "id": "auto-05",
+    "title": "Russian new-car market falls 12% YoY in Q1",
+    "body": "Sales of new cars in Russia declined 12% year-on-year in Q1 2026, according to AEB Automobile Manufacturers Committee data. Lada retained the top spot with 22% market share.",
+    "expected_section": "economy",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-06",
+    "title": "Leaked: BMW reportedly planning electric M3 for 2027",
+    "body": "Unconfirmed reports from industry sources suggest BMW is preparing an all-electric M3 Touring for launch in late 2027. The company has not commented.",
+    "expected_section": "rumors",
+    "expected_region": "Global"
+  },
+  {
+    "id": "auto-07",
+    "title": "GAZ launches updated Gazelle NN for city logistics",
+    "body": "GAZ Group introduced an updated version of the Gazelle NN light commercial vehicle, aimed at last-mile delivery operators. Payload capacity increased to 1.7 tonnes.",
+    "expected_section": "LCV",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-08",
+    "title": "Geely запускает программу trade-in на все модели в апреле",
+    "body": "В апреле 2026 года бренд Geely запустил общероссийскую программу trade-in, предлагая до 300 000 рублей дополнительной выгоды при обмене старого автомобиля на новый.",
+    "expected_section": "promo",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-09",
+    "title": "Chery confirms Tiggo 9 launch in Russia for Q3 2026",
+    "body": "Chery International officially confirmed that the Tiggo 9 flagship SUV will be available on the Russian market in Q3 2026. Pricing has not yet been disclosed.",
+    "expected_section": "facts",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-10",
+    "title": "Tesla recalls 120,000 Model Y vehicles over software issue",
+    "body": "Tesla has issued a voluntary recall for approximately 120,000 Model Y vehicles in North America due to a software bug that may affect the automatic wiper system. An OTA update is being rolled out.",
+    "expected_section": "facts",
+    "expected_region": "Global"
+  },
+  {
+    "id": "auto-11",
+    "title": "BYD overtakes Tesla in global EV sales",
+    "body": "BYD reported record quarterly electric-vehicle sales, surpassing Tesla for the second consecutive quarter according to industry analysts.",
+    "expected_section": "economy",
+    "expected_region": "Global"
+  },
+  {
+    "id": "auto-12",
+    "title": "АвтоВАЗ представил обновлённый седан Lada Vesta NG",
+    "body": "Пресс-служба АвтоВАЗа сообщила о старте продаж обновлённой Lada Vesta NG. Машина получила новые опции безопасности и переработанный интерьер.",
+    "expected_section": "facts",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-13",
+    "title": "Uzbekistan raises import duties on used vehicles",
+    "body": "The Cabinet of Ministers of Uzbekistan approved increased customs duties on imported used vehicles older than five years, effective July 1.",
+    "expected_section": "local",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-14",
+    "title": "Kazakhstan starts local assembly of Chery Tiggo 7",
+    "body": "AllurGroup has launched local assembly of the Chery Tiggo 7 at its plant in Kostanay. Annual capacity is planned at 20,000 units.",
+    "expected_section": "local",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-15",
+    "title": "Москва открыла новый автосалон Exeed",
+    "body": "В Москве открылся флагманский дилерский центр Exeed площадью 5 000 кв. метров. Это шестой салон бренда в столице.",
+    "expected_section": "dealers",
+    "expected_region": "Local"
+  },
+  {
+    "id": "noise-01",
+    "title": "New study links coffee to reduced cancer risk",
+    "body": "A new medical study from Harvard University suggests moderate coffee consumption is associated with a reduced risk of certain cancers.",
+    "expected_section": null,
+    "expected_region": null
+  },
+  {
+    "id": "noise-02",
+    "title": "Real Madrid win Champions League final",
+    "body": "Real Madrid defeated Manchester City 2-1 in the UEFA Champions League final on Saturday.",
+    "expected_section": null,
+    "expected_region": null
+  },
+  {
+    "id": "auto-16",
+    "title": "Hyundai announces hydrogen fuel-cell truck for European market",
+    "body": "Hyundai Motor Group said it will begin deliveries of its XCIENT Fuel Cell heavy truck to European logistics operators in late 2026.",
+    "expected_section": "LCV",
+    "expected_region": "Global"
+  },
+  {
+    "id": "auto-17",
+    "title": "Московский автосалон 2026: главные премьеры",
+    "body": "Организаторы ММАС подтвердили проведение выставки в сентябре 2026 года. Ожидаются премьеры от российских и китайских брендов.",
+    "expected_section": "exhibitions",
+    "expected_region": "Local"
+  },
+  {
+    "id": "auto-18",
+    "title": "Kia предлагает 0% рассрочку на всю линейку в Казахстане",
+    "body": "Kia Kazakhstan объявила о старте акции: беспроцентная рассрочка до 36 месяцев на все модели в апреле.",
+    "expected_section": "promo",
+    "expected_region": "Local"
+  }
+]

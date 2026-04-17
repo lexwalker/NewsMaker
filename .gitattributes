@@ -1,0 +1,12 @@
+# Normalise text line endings across Windows and macOS/Linux.
+* text=auto eol=lf
+
+# Keep binary asset bytes intact.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.docx binary

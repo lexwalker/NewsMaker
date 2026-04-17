@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+build/
+dist/
+data/
+logs/
+secrets/
+reports/
+*.sqlite
+*.sqlite-journal
+.DS_Store
+# Claude Code local state — never commit
+.claude/
+# IDE
+.vscode/
+.idea/

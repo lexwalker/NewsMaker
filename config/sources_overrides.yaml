@@ -1,0 +1,10 @@
+# Per-source overrides. Matched by URL prefix.
+# Add entries as you encounter sources that need special handling.
+
+overrides: []
+#  - url: https://example-js-heavy-site.com/
+#    requires_js: true
+#    rate_limit_rps: 0.5
+#    language: en
+#  - url: https://example.com/
+#    rss_url: https://example.com/feed/atom.xml

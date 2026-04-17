@@ -1,0 +1,312 @@
+"""Rule-based 'is this a news article?' + 'is it about automotive/economy?'
+
+Two independent checks, no network, no LLM. Used as a cheap pre-filter;
+LLM only sees articles that pass both.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from urllib.parse import urlparse
+
+from news_agent.core.models import RawArticle
+
+# ---------------------------------------------------------------- is_article
+_NON_ARTICLE_URL_HINTS = (
+    # generic non-article patterns
+    "/search",
+    "/tag/",
+    "/tags/",
+    "/category/",
+    "/categories/",
+    "/archive",
+    "/rubric",
+    "/author/",
+    "/login",
+    "/signin",
+    "/register",
+    "/cabinet",
+    "/account",
+    "/cart",
+    "/checkout",
+    "/brand/",          # smotrim.ru/brand/9928 style
+    "/organizations-card/",  # bo.nalog.ru
+    "/quick-search",
+    "/listconews/index",     # hkexnews index page
+    "?lang=",           # common for index/query pages
+    # evergreen / educational / product-info — identified from v1 manual review
+    "/insights/",             # cox auto weekly summaries + podcasts
+    "-101/",                  # semiconductors-101, evergreen explainers
+    "/industries/",           # geotab product landing
+    "/services/",
+    "/products/",
+    "/guides/",
+    "/whitepaper",
+    "?camefrom=",             # referral lander (benchmarkminerals from rhomotion)
+    "/safety-ratings",        # ancap ratings catalog
+    "/eSearch",               # euipo search
+)
+
+# File extensions that are never news articles.
+_NON_ARTICLE_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip")
+
+_ARTICLE_URL_HINTS = (
+    # generic
+    "/news/",
+    "/article/",
+    "/post/",
+    "/story/",
+    "/press",
+    "/release",
+    "/20",                    # year in slug
+    ".html",
+    # patterns learned from the published-news corpus (2989 rows)
+    "/mag/article/",          # abreview.ru
+    "/ekonomika/",            # iz.ru, tass.ru
+    "/business/",
+    "/doc/",                  # kommersant.ru
+    "/ab/news/",              # abreview.ru
+    "/chinamashina_news/",    # chinamashina site
+    "/obschestvo/",           # iz.ru
+    "/infographics/",
+)
+
+
+@dataclass
+class ArticleVerdict:
+    is_article: bool
+    score: float  # 0.0 … 1.0
+    reasons: list[str]
+
+
+# --- Three-tier confidence thresholds --------------------------------------
+# Tuned on the v1 manual review; revisit after each labelled batch.
+CERTAIN_SCORE_THRESHOLD = 0.65   # above this → definitely an article
+POSSIBLE_SCORE_THRESHOLD = 0.35  # below this → definitely not
+CERTAIN_MIN_AUTO_HITS = 2        # keyword hits required to call it 'certainly automotive'
+
+
+def looks_like_article(
+    raw: RawArticle, *, whitelist: set[str] | None = None
+) -> ArticleVerdict:
+    """Heuristic: is this a single news article, or an index/search/form page?
+
+    If ``whitelist`` contains the article's domain, the score gets +0.15 —
+    we trust editor-approved sources more and are willing to accept borderline
+    pages coming from them.
+    """
+    reasons: list[str] = []
+    score = 0.0
+    html = raw.html or ""
+
+    # --- positive structural signals ---
+    if '"@type":"NewsArticle"' in html.replace(" ", "") or '"@type": "NewsArticle"' in html:
+        score += 0.4
+        reasons.append("schema:NewsArticle")
+    elif '"@type":"Article"' in html.replace(" ", "") or '"@type": "Article"' in html:
+        score += 0.25
+        reasons.append("schema:Article")
+
+    if 'property="og:type" content="article"' in html or 'og:type" content="article"' in html:
+        score += 0.2
+        reasons.append("og:type=article")
+
+    if raw.published_at is not None:
+        score += 0.25
+        reasons.append("published_at")
+
+    body_len = len(raw.body.strip())
+    if body_len >= 1000:
+        score += 0.25
+        reasons.append(f"body≥1000 ({body_len})")
+    elif body_len >= 500:
+        score += 0.15
+        reasons.append(f"body≥500 ({body_len})")
+    elif body_len >= 200:
+        score += 0.05
+        reasons.append(f"body≥200 ({body_len})")
+    else:
+        reasons.append(f"body<200 ({body_len})")
+
+    if raw.title and 20 <= len(raw.title) <= 220:
+        score += 0.1
+        reasons.append("title-length-ok")
+
+    # --- URL hints ---
+    parsed_url = urlparse(raw.url)
+    path = parsed_url.path.lower()
+    full = parsed_url.geturl().lower()
+    host = parsed_url.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    if any(h in path for h in _ARTICLE_URL_HINTS):
+        score += 0.1
+        reasons.append("url-article-slug")
+    # PDF / DOC / XLS extensions → hard negative (never a news article)
+    if any(path.endswith(ext) for ext in _NON_ARTICLE_EXTENSIONS):
+        score -= 0.8
+        reasons.append("binary-document-url")
+    if any(h in full for h in _NON_ARTICLE_URL_HINTS):
+        score -= 0.5
+        reasons.append("url-non-article-pattern")
+
+    # --- whitelist bonus ---
+    if whitelist and host in whitelist:
+        score += 0.15
+        reasons.append(f"whitelist-domain ({host})")
+
+    # --- negative: too many links per character (index pages) ---
+    link_density = _link_density(html, body_len)
+    if link_density > 0.08:
+        score -= 0.3
+        reasons.append(f"high-link-density ({link_density:.3f})")
+
+    score = max(0.0, min(1.0, score))
+    # Threshold chosen so pages with only 1–2 weak signals don't pass.
+    # A binary-document-url single-handedly disqualifies the page regardless of score.
+    is_article = (
+        score >= 0.35
+        and body_len >= 200
+        and "binary-document-url" not in reasons
+    )
+    return ArticleVerdict(is_article=is_article, score=round(score, 3), reasons=reasons)
+
+
+def _link_density(html: str, body_len: int) -> float:
+    if not html or body_len == 0:
+        return 0.0
+    link_count = html.count("<a ")
+    return link_count / max(body_len, 1)
+
+
+# -------------------------------------------------------------- is_auto_topic
+_AUTO_KEYWORDS_EN = (
+    # generic
+    "automotive", "auto industry", "car ", " cars", "vehicle", "vehicles",
+    "sedan", "suv", "crossover", "pickup", "hatchback", "coupe", "minivan",
+    "electric vehicle", " ev ", " ev,", "ev sales", "hybrid", "plug-in",
+    "dealer", "dealership", "assembly plant", "production plant",
+    "horsepower", "engine", "drivetrain", "transmission",
+    "recall", "unveil", "launch", "facelift", "refresh",
+    # market / economy
+    "car market", "new-car sales", "auto sales", "auto market",
+    "car production", "auto production", "automaker", "oem",
+    # brand hints (short-circuit if any brand shows up anywhere)
+    "toyota", "nissan", "honda", "mazda", "subaru", "suzuki", "mitsubishi",
+    "hyundai", "kia", "genesis", "volkswagen", "audi", "porsche", "skoda",
+    "bmw", "mini ", "mercedes", "ford", "chevrolet", "cadillac", "tesla",
+    "rivian", "volvo", "jaguar", "land rover", "renault", "peugeot",
+    "citroen", "fiat", "alfa romeo", "stellantis", "lada", "avtovaz",
+    "gaz ", "uaz", "moskvich", "chery", "haval", "geely", "exeed", "omoda",
+    "jaecoo", "byd", "xpeng", "nio", "li auto", "great wall", "gwm",
+    "changan", "dongfeng",
+)
+
+_AUTO_KEYWORDS_RU = (
+    "автомобил", "автопром", "автоконцерн", "автомобильн", "авторынок",
+    "автозавод", "автосалон", "автокредит", "автокомпон",
+    "машин", "седан", "кроссовер", "внедорожн", "хэтчбек", "пикап",
+    "двигатель", "мотор", "коробка передач", "трансмисси", "привод",
+    "электромобил", "гибрид", "топливо", "бензин", "дизел",
+    "дилер", "дилерск", "модельный ряд", "комплектаци",
+    "произведен", "сборк", "выпуск", "отзывн", "отозв",
+    "продажи авто", "рынок авто", "автомобильный рынок",
+    # brands (russian spellings)
+    "тойота", "лексус", "ниссан", "хонда", "мазда", "субару", "мицубиси",
+    "сузуки", "хендай", "хёндэ", "киа", "фольксваген", "ауди", "порше",
+    "шкода", "мерседес", "бмв", "форд", "шевроле", "вольво",
+    "рено", "пежо", "ситроен", "ваз", "лада", "автоваз", "газ ", "уаз",
+    "москвич", "чери", "хавейл", "джили",
+)
+
+_NEGATIVE_KEYWORDS = (
+    # sport
+    "football", "soccer", "basketball", "hockey ", "nba ", "nfl ",
+    "premier league", "champions league", "olympic", "goalkeeper",
+    "футбол", "хоккей", "баскетбол", "чемпионат мира по",
+    # entertainment
+    "cinema", "actor", "actress", "movie", "tv series",
+    "кино", "актёр", "актриса", "режиссёр", "фильм", "сериал",
+    # health/medical (unless auto-related)
+    "vaccine", "cancer", "clinical trial",
+    "вакцин", "онколог",
+)
+
+
+@dataclass
+class TopicVerdict:
+    is_auto_or_economy: bool
+    auto_hits: int
+    negative_hits: int
+    hit_samples: list[str]
+
+
+def is_auto_or_economy(raw: RawArticle) -> TopicVerdict:
+    """Keyword-based topic filter. Non-perfect: ~80% precision.
+
+    Strategy: lower-case title + first 2000 chars of body, count auto-keyword
+    hits and negative-keyword hits. Pass if auto_hits ≥ 1 and
+    auto_hits > negative_hits.
+    """
+    text = (raw.title + "\n" + raw.body[:2000]).lower()
+    auto_hits: list[str] = []
+    for kw in _AUTO_KEYWORDS_EN + _AUTO_KEYWORDS_RU:
+        if kw in text:
+            auto_hits.append(kw.strip())
+    neg_hits: list[str] = [kw.strip() for kw in _NEGATIVE_KEYWORDS if kw in text]
+
+    # Dedup while preserving first-seen order
+    seen: set[str] = set()
+    auto_unique = [h for h in auto_hits if not (h in seen or seen.add(h))]
+
+    passes = len(auto_unique) >= 1 and len(auto_unique) > len(neg_hits)
+    return TopicVerdict(
+        is_auto_or_economy=passes,
+        auto_hits=len(auto_unique),
+        negative_hits=len(neg_hits),
+        hit_samples=auto_unique[:5],
+    )
+
+
+# Regex not used but kept as a hook for future structured sections (VIN etc).
+_VIN_RE = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b")
+
+
+# ----------------------------------------------------------- three-tier grade
+from typing import Literal  # noqa: E402  (kept local to the grading section)
+
+Grade = Literal[
+    "certain_news",   # → straight to section classification + title translation
+    "possible_news",  # → LLM is_news binary check first
+    "off_topic",      # → reject: passes is_article but not automotive
+    "not_article",    # → reject: heuristic says it's not an article
+]
+
+
+def grade_article(article: ArticleVerdict, topic: TopicVerdict) -> Grade:
+    """Three-tier verdict used by the pipeline to decide LLM strategy.
+
+    ``certain_news``  → skip the cheap LLM relevance check, go directly
+                        to section classification + title translation.
+    ``possible_news`` → run the cheap LLM relevance check first; if it
+                        returns true, proceed like ``certain_news``.
+    ``off_topic``     → reject without any LLM call.
+    ``not_article``   → reject without any LLM call.
+    """
+    # Hard reject: binary docs, or score below the lower threshold.
+    if "binary-document-url" in article.reasons:
+        return "not_article"
+    if not article.is_article or article.score < POSSIBLE_SCORE_THRESHOLD:
+        return "not_article"
+    # Article is plausible but topic fails → off-topic reject.
+    if not topic.is_auto_or_economy:
+        return "off_topic"
+    # Both article- and topic-heuristics pass. Decide certain vs possible.
+    if (
+        article.score >= CERTAIN_SCORE_THRESHOLD
+        and topic.auto_hits >= CERTAIN_MIN_AUTO_HITS
+    ):
+        return "certain_news"
+    return "possible_news"

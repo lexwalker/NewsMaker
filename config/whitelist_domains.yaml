@@ -1,0 +1,37 @@
+# Domains that appeared ≥10 times in the published news corpus.
+# The is_article heuristic nudges its score upward (+0.15) when the final URL
+# belongs to one of these — because these domains have earned editorial trust:
+# the editor routinely publishes news from them. This lets us loosen rejection
+# on border-line pages (e.g. short bodies, missing schema.org) coming from
+# reputable sources, while keeping strict rules for unknown domains.
+
+# Sorted by frequency in 'Новости опубликованные' (descending).
+domains:
+  - carnewschina.com          # 140
+  - cnevpost.com              # 114
+  - tass.ru                   # 105
+  - autostat.ru               # 94
+  - carscoops.com             # 85
+  - auto.ru                   # 79
+  - iz.ru                     # 63
+  - kolesa.ru                 # 59
+  - autocarindia.com          # 52
+  - naavtotrasse.ru           # 52
+  - moex.com                  # 49
+  - static.nhtsa.gov          # 46
+  - kommersant.ru             # 39
+  - interfax.ru               # 38
+  - abreview.ru               # 35
+  - rg.ru                     # 34
+  - media.stellantis.com      # 33
+  - napinfo.ru                # 32
+  - press.bmwgroup.com        # 30
+  - finmarket.ru              # 30
+  - autonews.gasgoo.com       # 29
+  - autonews.ru               # 28
+  - ria.ru                    # 27
+  - motor.ru                  # 26
+  - 1prime.ru                 # 26
+  - media.stellantisnorthamerica.com  # 24
+  - media.mercedes-benz.com   # 24
+  - motor1.com                # 22

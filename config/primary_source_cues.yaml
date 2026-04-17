@@ -1,0 +1,64 @@
+# Phrases in article body that strongly suggest the NEXT link is the primary source.
+# Matching is case-insensitive. We look up to ~200 chars after a hit for a URL.
+
+phrases:
+  ru:
+    - "пресс-релиз"
+    - "пресс-служба"
+    - "официальный сайт"
+    - "сообщает"
+    - "как сообщает"
+    - "передаёт"
+    - "по данным"
+    - "по информации"
+    - "об этом говорится"
+    - "в заявлении"
+    - "представила"
+    - "объявила"
+  en:
+    - "press release"
+    - "according to"
+    - "said in a statement"
+    - "announced"
+    - "unveiled"
+    - "reported"
+    - "via"
+    - "source:"
+  uz:
+    - "matbuot xizmati"
+    - "rasmiy sayt"
+    - "ma'lumot berdi"
+    - "xabar qildi"
+  kz:
+    - "ресми сайт"
+    - "баспасөз қызметі"
+    - "хабарлайды"
+
+# Hosts that are press-release aggregators or brand pressrooms.
+# Any outbound link to one of these is a near-certain primary source.
+press_release_hosts:
+  - prnewswire.com
+  - businesswire.com
+  - globenewswire.com
+  - tass.ru
+  - interfax.ru
+  - ria.ru
+  - press.mini.com
+  - media.mercedes-benz.com
+  - press.bmwgroup.com
+  - media.ford.com
+  - media.gm.com
+  - pressroom.toyota.com
+  - hyundainews.com
+  - hyundai.news
+  - press.kia.com
+  - volkswagen-newsroom.com
+  - audi-mediacenter.com
+  - newsroom.porsche.com
+  - skoda-storyboard.com
+  - media.renaultgroup.com
+  - media.stellantis.com
+  - media.volvocars.com
+  - nissannews.com
+  - hondanews.com
+  - insidemazda.mazdausa.com

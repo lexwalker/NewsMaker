@@ -1,0 +1,155 @@
+sections:
+  Confirmed:
+  - region: Global
+    title: Kia announced plans to expand its line-up to 10 models in India (EN)
+  - region: Global
+    title: Li Auto will review the line of hybrid SUVs of the L-series (RU)
+  - region: Local
+    title: UMO introduced the 5 EV in Russia (RU)
+  - region: Local
+    title: Mitsubishi patented the Grandis trademark in Russia (RU)
+  - region: Global
+    title: JLR and Chery published photos of the Freelander EV on tests (RU)
+  - region: Global
+    title: GAC revealed photos of the new Hyptec S600 SUV-coupe (RU)
+  - region: Global
+    title: Leapmotor announced debut of the Lafa 5 version - Ultra in China (EN)
+  - region: Global
+    title: Wuling announced debut of the Starlight L SUV in China (RU)
+  Dealer news / Promo:
+  - region: Local
+    title: ROAD index in Russia increased by 44% in March 2026 (RU)
+  - region: Local
+    title: Haval invites to take part in brand days in Russia (RU)
+  - region: Local
+    title: TOP-10 Russian dealers in sales of used cars in January-December 2025 (RU)
+  - region: Local
+    title: New Omoda, Jaecoo and Li Auto dealerships opened in Omsk (RU)
+  - region: Local
+    title: Interview with the Head of the Major Expert (RU)
+  - region: Local
+    title: DAV-Avto got Rox dealership (RU)
+  - region: Local
+    title: Major got Deepal dealership (RU)
+  - region: Local
+    title: New Li Auto dealership opened in Moscow (RU)
+  Economics:
+  - region: Local
+    title: 'Oil prices (USD): Brent 100,93/ WTI 102,38 (RU)'
+  - region: Local
+    title: Central Bank decreased USD rate on April 14 to 76,24 RUB (RU)
+  - region: Local
+    title: Number of consumer loans in Russia increased by 43,1% in March 2026 (RU)
+  - region: Global
+    title: OPEC retains forecasts for world oil demand in 2026 (EN)
+  - region: Local
+    title: Russian foreign trade surplus decreased by 36% in January-February 2026
+      (RU)
+  - region: Local
+    title: 'Oil prices (USD): Brent 96,18/ WTI 98,2 (RU)'
+  - region: Local
+    title: Central Bank decreased USD rate on April 11 to 76,97 RUB (RU)
+  - region: Local
+    title: Russian trade balance surplus decreased by 32,9% in January-February 2026
+      (RU)
+  LCV news:
+  - region: Global
+    title: KGM got Red Dot Award 2026 (EN)
+  - region: Global
+    title: Jeep introduced Gladiator pickup version - Rewind Special Edition in U.S.
+      (EN)
+  - region: Global
+    title: New BYD pickup spied during tests in China (EN)
+  - region: Local
+    title: Russian sales of new pickups decreased by 19,9% in January-March 2026 (RU)
+  - region: Local
+    title: UAZ does not plan to stop production of SGR and Hunter cars in the future
+      (RU)
+  - region: Global
+    title: Scout Terra pickup may not arrive until 2030 (EN)
+  - region: Local
+    title: Sales of the new Avior V90 van started in Russia (RU)
+  - region: Local
+    title: Russo-Balt will launch a new version of the F200 van in Russia (RU)
+  Local specifics:
+  - region: Local
+    title: Demand for KASKO policies in Russia increased by 80% in January-March 2026
+      (RU)
+  - region: Local
+    title: About 30% of Russians have given up carsharing and kicksharing (RU)
+  - region: Local
+    title: Government purchases of cars in Russia decreased by 19% in Q1 2026 (RU)
+  - region: Local
+    title: Number of accidents with PMD increased by 5% in Russia in January-March
+      2026 (RU)
+  - region: Local
+    title: Share of used cars in leasing in Russia reached 40% in February 2026 (RU)
+  - region: Local
+    title: Paid parking used 2,8 million times in Moscow region (RU)
+  - region: Local
+    title: Parking enforcement officers in Moscow revealed over 80 k violations in
+      Q1 2026 (RU)
+  - region: Local
+    title: AvtoVAZ recalled 41,3 k units of LADA Granta cars in Russia (RU)
+  Motorshow:
+  - region: Global
+    title: Stellantis will take part in the New York International Auto Show 2026
+      exhibition (EN)
+  - region: Global
+    title: Stellantis will take part in Paris Motor Show 2026 (EN)
+  - region: Global
+    title: Stellantis will take part in the Canadian International Autoshow 2026 (EN)
+  - region: Global
+    title: Stellantis announced newcomers for Chicago Auto Show 2026 (EN)
+  Other news:
+  - region: Global
+    title: GWM produced 100 thousandth Wey 80 MPV (RU)
+  - region: Global
+    title: Winners of the 2026 Consumer Choice Awards from Kelley Blue Book (EN)
+  - region: Global
+    title: Mercedes-Benz to open sales centers in more than 10 cities in 2026 (EN)
+  - region: Global
+    title: Volkswagen Group sales decreased by 4% in Q1 2026 (EN)
+  - region: Global
+    title: DS Automobiles to partner with the Italian Open golf tournament (EN)
+  - region: Global
+    title: Fiat will take part in the Milan Design Week 2026 exhibition (EN)
+  - region: Global
+    title: Tesla prepares to debut Full Self-Driving (Supervised) system in Europe
+      (EN)
+  - region: Global
+    title: Refreshed electric Onvo L90 SUV will get the Shenji NX9031 chip (EN)
+  Rumors:
+  - region: Global
+    title: Hybrid Jaecoo J7 SUV spied in India (EN)
+  - region: Global
+    title: New gen Hybrid Li Auto L9 Livis SUV spied in China (RU)
+  - region: Local
+    title: Tenet Plus L4 SUV spied during tests in Russia (RU)
+  - region: Global
+    title: Refreshed Mercedes-AMG CLA EQ Shooting Brake spy shots (EN)
+  - region: Global
+    title: BMW to start production of electric iX3 M60 xDrive SUV in March 2027 (EN)
+  - region: Global
+    title: Lamborghini to release Miura-inspired Revuelto special version (EN)
+  - region: Global
+    title: Electric Rolls-Royce SUV spied during tests in Germany (EN)
+  - region: Global
+    title: Electric Mercedes-Benz C-Class EQ sedan spied in Germany (EN)
+  Test-drive:
+  - region: Local
+    title: Exlantix ES test-drive (RU)
+  - region: Local
+    title: Comparative test of Tenet T8 and Soueast S07 (RU)
+  - region: Local
+    title: Tank 500 test-drive (RU)
+  - region: Local
+    title: Evolute i‑SPACE test-drive (RU)
+  - region: Local
+    title: Jaecoo J6 test-drive (RU)
+  - region: Local
+    title: Omoda C5 test-drive (RU)
+  - region: Local
+    title: Solaris HC test-drive (RU)
+  - region: Local
+    title: Belgee X50+ test-drive (RU)

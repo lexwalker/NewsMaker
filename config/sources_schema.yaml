@@ -1,0 +1,8 @@
+# Maps columns from the `Sources (...)` tabs to our Source model fields.
+# Edit on first run if your sheet uses different column headers.
+columns:
+  name: name
+  url: url
+  type: type
+  is_active: is_active
+  language: language
