@@ -164,6 +164,32 @@ def test_grade_not_article_for_pdf() -> None:
     assert grade_article(v, t) == "not_article"
 
 
+def test_op_ed_title_is_rejected() -> None:
+    raw = _article(
+        url="https://naamsa.net/where-people-defy-the-numbers-the-paradox-of-sas-automotive-industry/",
+        title="Where people defy the numbers: The paradox of SA's automotive industry",
+        body="The paradox of our industry is that sales grow despite …" * 20,
+        html='<meta property="og:type" content="article">',
+        published_at=datetime.now(timezone.utc),
+    )
+    v = looks_like_article(raw)
+    assert "title-op-ed" in v.reasons
+    assert not v.is_article
+
+
+def test_lifestyle_title_is_rejected() -> None:
+    raw = _article(
+        url="https://napinfo.ru/infographics/puteshestvuem-po-rossii-na-haval/",
+        title="Путешествуем по России! Во сколько обойдётся поездка из Москвы на Haval",
+        body="Маршрут Москва — Переславль … стоимость бензина …" * 20,
+        html='<meta property="og:type" content="article">',
+        published_at=datetime.now(timezone.utc),
+    )
+    v = looks_like_article(raw)
+    assert "title-lifestyle" in v.reasons
+    assert not v.is_article
+
+
 def test_whitelist_domain_gets_bonus() -> None:
     raw = _article(
         url="https://www.autostat.ru/news/12345/",

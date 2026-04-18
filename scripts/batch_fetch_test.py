@@ -58,8 +58,8 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
 from news_agent.core.urls import canonicalise, domain_of  # noqa: E402
 
 # ----------------------------------------------------------------- config
-NUM_SOURCES = 80          # will stop earlier once MAX_ARTICLES is reached
-MAX_ARTICLES = 100        # hard cap on article rows to collect
+NUM_SOURCES = 100         # number of source URLs to process end-to-end
+MAX_ARTICLES = 10_000     # soft cap; effectively disabled for 100-source runs
 ITEMS_PER_SOURCE = 5
 HTTP_TIMEOUT = 10.0
 

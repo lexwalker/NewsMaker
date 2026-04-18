@@ -35,7 +35,9 @@ class FakeLLM:
         return RelevanceCheck(is_automotive_or_economy=True, reason="ok"), _usage()
 
     def classify_section(self, **_: Any) -> tuple[Classification, LLMUsage]:
-        return Classification(section="facts", region="Global", confidence=0.9, reasoning="ok"), _usage()
+        return Classification(
+            section="Confirmed", region="Global", confidence=0.9, reasoning="ok"
+        ), _usage()
 
     def translate_title(self, *, title: str, source_language_hint: str | None) -> tuple[TitlePair, LLMUsage]:
         return TitlePair(english=title, russian="Тойота представила Camry", source_language="EN"), _usage()
@@ -133,7 +135,7 @@ def test_pipeline_writes_row_for_fresh_article(
     assert summary.rows_written == 1
     assert len(sheets.written) == 1
     row = sheets.written[0]
-    assert row.section == "facts"
+    assert row.section == "Confirmed"
     assert row.country == "Russia [7]"
     assert row.name == "Toyota unveils 2026 Camry"
     assert "Тойота" in row.localized_title

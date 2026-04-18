@@ -134,3 +134,79 @@ brands:
     domains: [changan.com.cn, globalchangan.com]
   - brand: Dongfeng
     domains: [dongfeng-global.com, dfmc.com.cn]
+  # --- Additional Chinese brands (editor asked to monitor these too)
+  - brand: Zeekr
+    aliases: [Зикр]
+    domains: [zeekrlife.com, zeekrglobal.com, zeekr.com]
+  - brand: Lynk & Co
+    aliases: [Линк Ко, Lynk&Co, Lynkco]
+    domains: [lynkco.com, press.lynkco.com]
+  - brand: Denza
+    aliases: [Денза]
+    domains: [denzaauto.com]
+  - brand: IM Motors
+    aliases: [IM, IM智己,智己]
+    domains: [immotors.com, immotors.com.cn]
+  - brand: Seres
+    aliases: [Серес, Thalys]
+    domains: [seres.com, serescars.com]
+  - brand: Aito
+    aliases: [Huawei Aito, AITO问界, 问界]
+    domains: [aitomotors.com]
+  - brand: Avatr
+    aliases: [Аватр]
+    domains: [avatr.com]
+  - brand: Neta
+    aliases: [Hozon, Нета]
+    domains: [nautomobile.com, nauto.cn]
+  - brand: HiPhi
+    aliases: [Хайфай]
+    domains: [hiphi.com]
+  - brand: Voyah
+    aliases: [Вояш, Вояж]
+    domains: [voyah.su, voyahauto.com]
+  - brand: Jetta
+    aliases: [Джетта, Jetta VS, Jetta X, FAW-Jetta]
+    domains: [jetta.com.cn]
+  - brand: Maxus
+    aliases: [Максус, SAIC Maxus]
+    domains: [saicmaxus.com, maxusmotors.com]
+  - brand: Wuling
+    aliases: [Вулинг]
+    domains: [sgmw.com.cn, wuling.com]
+  - brand: Baojun
+    aliases: [Баоджун]
+    domains: [baojunauto.com]
+  - brand: Rising Auto
+    aliases: [Rising, Rising R, 飞凡]
+    domains: [risingauto.com]
+  - brand: Xiaomi Auto
+    aliases: [Xiaomi EV, Сяоми, Xiaomi SU7]
+    domains: [xiaomi-auto.com, mi.com]
+  - brand: Leapmotor
+    aliases: [Липмотор, Липмоторс, 零跑]
+    domains: [leapmotor.com, leapmotorinternational.com]
+  - brand: Belgee
+    aliases: [Белджи, Белгее]
+    domains: [belgee.com, belgee.by]
+  - brand: JAC
+    aliases: [Джак, ДжиАЙСи, JAC Motors]
+    domains: [jac-motors.com, jac.com.cn]
+  - brand: GAC
+    aliases: [GAC Motor, GAC Aion, Аион, Трумчи, Trumpchi]
+    domains: [gacmotor.com, gac-aion.com]
+  - brand: Foton
+    aliases: [Фотон]
+    domains: [foton.com.cn, fotoninter.com]
+  - brand: Soueast
+    aliases: [Соуист]
+    domains: [soueast-motor.com, soueast.ru]
+  - brand: Tank
+    aliases: [Танк, GWM Tank]
+    domains: [tank.auto, tank-auto.com]
+  - brand: UMO
+    aliases: [УМО]
+    domains: [umoauto.ru]
+  - brand: Jeland
+    aliases: [Джейлэнд]
+    domains: [jeland.ru]

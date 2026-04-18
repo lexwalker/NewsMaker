@@ -46,10 +46,45 @@ _NON_ARTICLE_URL_HINTS = (
     "?camefrom=",             # referral lander (benchmarkminerals from rhomotion)
     "/safety-ratings",        # ancap ratings catalog
     "/eSearch",               # euipo search
+    # Op-ed / feature / analytics-lifestyle — editor confirmed not to include
+    "/infocenter/autoarticles/",        # motorpage long-form opinion
+    "/infographics/puteshestvuem-",     # napinfo auto-lifestyle travel posts
+    "/five-minutes-with-",              # SMMT interview series
+    "/interview/archive/",              # autostat interview archive
 )
 
 # File extensions that are never news articles.
 _NON_ARTICLE_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip")
+
+# Title-level signals that a text is an op-ed / long-form opinion — editor
+# marked category (6) in 'Уточнение у руководителя' as "not included".
+# Matched lowercase, anywhere in the title.
+_OP_ED_TITLE_PHRASES = (
+    # english
+    "paradox of",
+    "time to rethink",
+    "rethinking ",
+    "why chaos",
+    "why the ",
+    "investing to stay ahead",
+    "defy the numbers",
+    # russian
+    "на грани",
+    "парадокс",
+    "переосмысление",
+    "рассуждени",
+    "а что если",
+)
+
+# Title-level signals of auto-lifestyle / tourism posts — editor category (9)
+# "Лайфстайл туризм нам не интересен".
+_LIFESTYLE_TITLE_PHRASES = (
+    "путешеств",     # путешествие, путешествуем
+    "поездка из",    # «поездка из Москвы в …»
+    "road trip",
+    "weekend trip",
+    "lifestyle ",
+)
 
 _ARTICLE_URL_HINTS = (
     # generic
@@ -151,6 +186,16 @@ def looks_like_article(
     if any(h in full for h in _NON_ARTICLE_URL_HINTS):
         score -= 0.5
         reasons.append("url-non-article-pattern")
+
+    # Title-level filters (op-ed / lifestyle). These are strong negative
+    # signals — the editor explicitly rejected these categories.
+    title_lower = (raw.title or "").lower()
+    if any(p in title_lower for p in _OP_ED_TITLE_PHRASES):
+        score -= 0.6
+        reasons.append("title-op-ed")
+    if any(p in title_lower for p in _LIFESTYLE_TITLE_PHRASES):
+        score -= 0.6
+        reasons.append("title-lifestyle")
 
     # --- whitelist bonus ---
     if whitelist and host in whitelist:

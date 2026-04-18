@@ -170,7 +170,7 @@ def run_pipeline(
             budget.record(u2)
             if cls.section not in {s.name for s in sections}:
                 log.warning("classify.unknown_section", section=cls.section, url=c.canonical_url)
-                cls.section = "other"
+                cls.section = "Other news"
 
             titles, u3 = llm.translate_title(
                 title=c.raw.title, source_language_hint=c.raw.source_language

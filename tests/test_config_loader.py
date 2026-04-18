@@ -10,7 +10,18 @@ from news_agent.core.config_loader import (
 def test_sections_are_nonempty() -> None:
     sections = load_sections()
     names = {s.name for s in sections}
-    assert {"facts", "economy", "rumors", "other"}.issubset(names)
+    # These are the real canonical names from the editor's 'Разделы новостей' tab.
+    assert {
+        "Confirmed",
+        "Economics",
+        "Rumors",
+        "Other news",
+        "Local specifics",
+        "LCV news",
+        "Dealer news / Promo",
+        "Motorshow",
+        "Test-drive",
+    }.issubset(names)
 
 
 def test_schema_has_required_columns() -> None:

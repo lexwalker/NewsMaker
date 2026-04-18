@@ -20,6 +20,8 @@ reports/
 .DS_Store
 # Claude Code local state — never commit
 .claude/
+# Temporary JSON dumps created by helper scripts
+v*_rows.json
 # IDE
 .vscode/
 .idea/
