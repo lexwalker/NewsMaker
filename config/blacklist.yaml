@@ -1,0 +1,54 @@
+# Hard-reject rules collected from the editorial team (Q2, Q3).
+# An article that matches ANY rule below gets verdict
+# "Точно не новость (чёрный список)" BEFORE any LLM call — pure savings.
+
+# Topic phrases matched case-insensitively inside title + first 1000 chars
+# of body. Keep phrases specific enough to avoid false positives
+# (e.g. don't just use "bus" — matches "business").
+topic_phrases_ru:
+  # Q3 — тяжёлый транспорт, спецтехника, сельхозтехника
+  - автобус
+  - электробус
+  - троллейбус
+  - трактор
+  - комбайн
+  - сельхозтехник
+  - спецтехник
+  - экскаватор
+  - бульдозер
+  - самосвал
+  - карьерный грузовик
+  # Q2 — сырьё для батарей (только о ценах/рынке, не о новых технологиях)
+  - цены на литий
+  - цена на литий
+  - цены на кобальт
+  - цена кобальта
+  - рынок лития
+  - рынок кобальта
+
+topic_phrases_en:
+  # Q3
+  - bus demand
+  - electric bus
+  - city bus
+  - bus operator
+  - coach operator
+  - tractor
+  - combine harvester
+  - agricultural machinery
+  - farm equipment
+  - construction equipment
+  - excavator
+  - bulldozer
+  - dump truck
+  # Q2
+  - lithium price
+  - lithium prices
+  - cobalt price
+  - cobalt prices
+  - nickel price
+  - battery minerals intelligence
+
+# Domains rejected entirely (never produce news useful for this portal).
+domains:
+  - benchmarkminerals.com   # battery supply chain analytics only

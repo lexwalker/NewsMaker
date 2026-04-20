@@ -38,7 +38,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_bufferin
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)
 
 from news_agent.adapters.fetchers.html import (  # noqa: E402
     extract_article,
@@ -49,19 +49,33 @@ from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     parse_channel_html,
     to_channel_preview_url,
 )
-from news_agent.core.config_loader import load_whitelist_domains  # noqa: E402
+from news_agent.core.config_loader import (  # noqa: E402
+    load_blacklist,
+    load_brand_domains,
+    load_whitelist_domains,
+)
+from news_agent.core.freshness import is_fresh  # noqa: E402
 from news_agent.core.heuristic_relevance import (  # noqa: E402
+    blacklist_hit,
     grade_article,
     is_auto_or_economy,
     looks_like_article,
 )
+from news_agent.adapters.llm import make_llm_client  # noqa: E402
+from news_agent.adapters.llm.base import LLMClient  # noqa: E402
+from news_agent.core.budget import BudgetExceeded, BudgetTracker  # noqa: E402
+from news_agent.core.config_loader import load_sections  # noqa: E402
 from news_agent.core.urls import canonicalise, domain_of  # noqa: E402
+from news_agent.settings import get_settings  # noqa: E402
 
 # ----------------------------------------------------------------- config
-NUM_SOURCES = 100         # number of source URLs to process end-to-end
-MAX_ARTICLES = 10_000     # soft cap; effectively disabled for 100-source runs
+NUM_SOURCES = 400         # effectively all active sources (there are ~357 flagged "1")
+MAX_ARTICLES = 10_000     # soft cap
 ITEMS_PER_SOURCE = 5
 HTTP_TIMEOUT = 10.0
+ENABLE_LLM = True         # flip to False to run pure heuristics again
+LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
+FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "48"))  # drop articles older than this
 
 # Real Telegram channels that the editor uses (from 'Новости опубликованные').
 # We prepend them to the source list so the test run actually exercises the
@@ -79,6 +93,8 @@ ARTICLES_TAB_BASE = "ТЕСТ статьи"
 # final-URL deduplication set.
 WHITELIST: set[str] = set()
 SEEN_FINAL_URLS: set[str] = set()
+BLACKLIST = None  # type: ignore[assignment]  # set to a Blacklist instance in main()
+BRANDS: list = []  # type: ignore[type-arg]  # BrandDomainEntry list from config
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
@@ -102,7 +118,18 @@ class ArticleRow:
     article_reasons: str = ""
     auto_topic: bool = False
     auto_hits: str = ""
-    verdict: str = ""  # "Отправить в LLM" | "Отклонить"
+    verdict: str = ""  # "Точно новость" | "Возможно новость" | ...
+    # Kept in-memory only (not written to Sheets) — feeds the LLM.
+    body_excerpt: str = ""
+    # LLM fields — populated only for certain_news / possible_news
+    llm_relevance: str = ""       # "Да" / "Нет" / ""
+    llm_section: str = ""
+    llm_region: str = ""
+    llm_confidence: float | str = ""
+    llm_title_en: str = ""
+    llm_title_ru: str = ""
+    llm_cost_usd: float | str = ""
+    llm_note: str = ""            # e.g. "требует ручной проверки — Test-drive"
 
 
 @dataclass
@@ -145,7 +172,12 @@ def read_active_sources(svc, limit: int) -> list[str]:  # type: ignore[no-untype
             continue
         active = (row[0] if len(row) > 0 else "").strip()
         url = (row[1] if len(row) > 1 else "").strip()
-        if active == "1" and url.startswith(("http://", "https://")):
+        # Accept anything that is NOT explicitly "0" (flags "1", "2", empty
+        # are all considered active). Editor has three flags in the sheet:
+        #   1 — daily-monitored automotive sources
+        #   2 — OEM pressrooms and IR pages (secondary)
+        #   (empty) — unmarked, but URL is valid
+        if active != "0" and url.startswith(("http://", "https://")):
             out.append(url)
         if len(out) >= limit:
             break
@@ -214,23 +246,33 @@ HEADER = [
 
 
 ARTICLES_HEADER = [
-    "Прогон (UTC)",
-    "№ ист.",
-    "URL источника",
-    "№ ст.",
-    "URL статьи",
-    "Заголовок",
-    "Дата публикации",
-    "Тело (симв)",
-    "Картинка",
-    "is_article",
-    "Score",
-    "Причины is_article",
-    "Авто/эконом",
-    "Hits темы",
-    "Итог бота",
-    "Ручная проверка (впишите: Новость / Не новость)",
-    "Комментарий",
+    "Прогон (UTC)",        # A
+    "№ ист.",              # B
+    "URL источника",       # C
+    "№ ст.",               # D
+    "URL статьи",          # E
+    "Заголовок",           # F
+    "Дата публикации",     # G
+    "Тело (симв)",         # H
+    "Картинка",            # I
+    "is_article",          # J
+    "Score",               # K
+    "Причины is_article",  # L
+    "Авто/эконом",         # M
+    "Hits темы",           # N
+    "Итог бота",           # O
+    # --- LLM результаты (только для certain / possible) ---
+    "LLM relevance",       # P
+    "LLM раздел",          # Q
+    "LLM регион",          # R
+    "LLM confidence",      # S
+    "Заголовок EN (LLM)",  # T
+    "Заголовок RU (LLM)",  # U
+    "Стоимость LLM, $",    # V
+    "Пометка редактору",   # W
+    # --- свободные колонки для редактора ---
+    "Ручная проверка (Новость / Не новость)",  # X
+    "Комментарий",         # Y
 ]
 
 
@@ -257,7 +299,15 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
                 "Авто/эконом" if r.auto_topic else "Нет",
                 r.auto_hits[:200],
                 r.verdict,
-                "",  # manual check column — fill in by the editor
+                r.llm_relevance,
+                r.llm_section,
+                r.llm_region,
+                r.llm_confidence,
+                r.llm_title_en[:300],
+                r.llm_title_ru[:300],
+                r.llm_cost_usd,
+                r.llm_note,
+                "",  # manual check column
                 "",  # free-form comment
             ]
         )
@@ -397,8 +447,8 @@ def process_source(
                 article_idx=idx,
                 article_url=art.url,
             )
-            _score_article(art, r, row)
-            article_rows.append(row)
+            if _score_article(art, r, row):
+                article_rows.append(row)
         r.elapsed_ms = int((time.monotonic() - t0) * 1000)
         return r
 
@@ -467,6 +517,97 @@ def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
         _fetch_and_score(client, link, result, source_idx, idx, article_rows)
 
 
+def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
+    """For every certain/possible row: run LLM relevance (possible only), then
+    classify_section + translate_title. Populates llm_* fields in-place.
+
+    Stops early on budget exhaustion (raises BudgetExceeded)."""
+    settings = get_settings()
+    client: LLMClient = make_llm_client(settings)
+    sections = load_sections()
+    budget = BudgetTracker(cap_usd=LLM_BUDGET_USD)
+
+    candidates = [
+        r for r in article_rows
+        if r.verdict in {"Точно новость", "Возможно новость"}
+    ]
+    if not candidates:
+        print("LLM pass: кандидатов для LLM нет.")
+        return
+
+    print(f"\nLLM pass: {len(candidates)} кандидатов "
+          f"(certain={sum(1 for r in candidates if r.verdict == 'Точно новость')}, "
+          f"possible={sum(1 for r in candidates if r.verdict == 'Возможно новость')})")
+    print(f"  provider: {client.provider_name}  model: {client.model}  cap: ${LLM_BUDGET_USD}")
+
+    country = "Russia"  # portal country for now; будет параметром позже
+    section_names = {s.name for s in sections}
+
+    for i, r in enumerate(candidates, start=1):
+        # 1. Cheap relevance check for 'possible' rows
+        if r.verdict == "Возможно новость":
+            try:
+                rel, u = client.is_automotive(r.title, r.body_excerpt or r.title)
+                budget.record(u)
+                r.llm_relevance = "Да" if rel.is_automotive_or_economy else "Нет"
+                r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+            except Exception as e:  # noqa: BLE001
+                r.llm_note = f"relevance error: {e!s:100}"
+                continue
+            if not rel.is_automotive_or_economy:
+                # drop — not auto/economy; no classify/translate needed
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + "LLM: не авто/эконом"
+                print(f"  [{i}/{len(candidates)}] {r.title[:60]!r} → relevance=Нет (отсечено)")
+                continue
+        else:
+            # certain — implicitly relevant
+            r.llm_relevance = "Да"
+
+        # 2. Classify section
+        try:
+            cls, u = client.classify_section(
+                title=r.title,
+                body=r.body_excerpt or r.title,
+                sections=sections,
+                few_shots=[],
+                portal_country=country,
+            )
+            budget.record(u)
+            r.llm_section = cls.section if cls.section in section_names else "Other news"
+            r.llm_region = cls.region
+            r.llm_confidence = round(cls.confidence, 2)
+            r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+            if r.llm_section == "Test-drive":
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    "требует ручной проверки — Test-drive"
+        except Exception as e:  # noqa: BLE001
+            r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                f"classify error: {e!s:100}"
+            continue
+
+        # 3. Translate title
+        try:
+            tp, u = client.translate_title(title=r.title, source_language_hint=None)
+            budget.record(u)
+            r.llm_title_en = tp.english
+            r.llm_title_ru = tp.russian
+            r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+        except Exception as e:  # noqa: BLE001
+            r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                f"translate error: {e!s:100}"
+
+        print(
+            f"  [{i}/{len(candidates)}]  {r.llm_section:22}  "
+            f"{r.llm_region:6}  conf={r.llm_confidence}  "
+            f"spent=${budget.spent_usd:.3f}  |  {r.title[:60]}"
+        )
+
+    snap = budget.snapshot()
+    print(f"\nLLM pass done: {snap['calls']} calls, "
+          f"${snap['spent_usd']} / ${snap['cap_usd']}  "
+          f"({snap['input_tokens']} in / {snap['output_tokens']} out)")
+
+
 def _fetch_and_score(
     client: httpx.Client,
     link: str,
@@ -503,17 +644,45 @@ def _fetch_and_score(
         article_rows.append(row)
         return
 
-    _score_article(article, r, row)
-    article_rows.append(row)
+    if _score_article(article, r, row):
+        article_rows.append(row)
 
 
-def _score_article(article, r: SourceResult, row: ArticleRow) -> None:  # type: ignore[no-untyped-def]
-    """Populate heuristic fields on ``row`` from ``article``; update source counters."""
+def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: ignore[no-untyped-def]
+    """Populate heuristic fields on ``row`` from ``article``; update source counters.
+
+    Returns ``False`` if the row should NOT be written to the output sheet
+    (currently: articles older than FRESHNESS_HOURS — they never go to LLM
+    and clutter the report with no value).
+    """
     row.article_url = article.url
     row.title = article.title
     row.body_len = len(article.body)
+    row.body_excerpt = article.body[:1000]  # ≤1000 chars → ~40% token saving on LLM input
     row.published_at = article.published_at.isoformat() if article.published_at else ""
     row.has_image = bool(article.image_url)
+
+    # --- Freshness gate ------------------------------------------------------
+    # If the article has a known publication timestamp and it's older than
+    # FRESHNESS_HOURS, short-circuit: no heuristic score, no LLM call.
+    # Articles without any timestamp pass through (many t.me posts do expose
+    # one; HTML fetchers usually find og:article:published_time).
+    if article.published_at is not None and not is_fresh(
+        article.published_at, hours=FRESHNESS_HOURS
+    ):
+        # Skip entirely — do not write to Sheets, don't run LLM.
+        return False
+
+    # --- Blacklist gate ------------------------------------------------------
+    # Hard-reject topics the editorial team explicitly opted out of
+    # (buses, construction equipment, agricultural machinery, battery
+    # raw-material prices). Cheaper than a full LLM call.
+    if BLACKLIST is not None:
+        bl = blacklist_hit(article, BLACKLIST, brands=BRANDS)
+        if bl.hit:
+            row.verdict = "Точно не новость (чёрный список)"
+            row.article_reasons = bl.reason
+            return True
 
     # Final-URL deduplication. Using canonicalised URL handles trailing slashes,
     # UTM params and similar differences that hide the same page behind many
@@ -522,7 +691,7 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> None:  # type: 
     if canon in SEEN_FINAL_URLS:
         row.article_reasons = "duplicate-final-url"
         row.verdict = "Отклонить (дубль финального URL)"
-        return
+        return True
     SEEN_FINAL_URLS.add(canon)
 
     if article.title:
@@ -561,6 +730,7 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> None:  # type: 
         "off_topic": "Точно не новость (не авто)",
         "not_article": "Точно не новость (не статья)",
     }[grade]
+    return True
 
 
 def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
@@ -586,10 +756,17 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
 
 # ------------------------------------------------------------- main
 def main() -> int:
-    global WHITELIST, SEEN_FINAL_URLS
+    global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS
     WHITELIST = load_whitelist_domains()
+    BLACKLIST = load_blacklist()
+    BRANDS = load_brand_domains()
     SEEN_FINAL_URLS = set()
     print(f"Whitelist domains loaded: {len(WHITELIST)}")
+    print(f"Brand list loaded: {len(BRANDS)} brands (used to whitelist blacklist hits)")
+    print(
+        f"Blacklist: {len(BLACKLIST.topic_phrases_ru)} RU phrases, "
+        f"{len(BLACKLIST.topic_phrases_en)} EN phrases, {len(BLACKLIST.domains)} domains"
+    )
 
     svc = sheets_client()
     urls = TELEGRAM_SEED_URLS + read_active_sources(svc, NUM_SOURCES)
@@ -633,6 +810,13 @@ def main() -> int:
     print(f"\nTotal: {total_ms} ms ({total_ms / 1000:.1f} s)")
     news_total = sum(r.news_like for r in results)
     print(f"News-like articles across all sources: {news_total}")
+
+    # ------------------------------------------ LLM pass (certain + possible)
+    if ENABLE_LLM:
+        try:
+            _run_llm_pass(article_rows)
+        except BudgetExceeded as e:
+            print(f"\n!!! Бюджет LLM превышен: {e}", file=sys.stderr)
 
     write_report(svc, run_ts, results, report_tab)
     write_articles(svc, run_ts, article_rows, articles_tab)

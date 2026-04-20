@@ -19,7 +19,7 @@ from news_agent.adapters.llm.base import (
     build_classify_user_prompt,
     prompt_hash,
 )
-from news_agent.adapters.llm.pricing import estimate_cost
+from news_agent.adapters.llm.pricing import estimate_cost_with_cache as estimate_cost
 from news_agent.core.models import (
     Classification,
     FewShotExample,

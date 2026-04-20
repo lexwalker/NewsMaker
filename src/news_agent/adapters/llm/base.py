@@ -80,6 +80,7 @@ def build_classify_user_prompt(
     few_shots: list[FewShotExample],
     portal_country: str,
 ) -> str:
+    """Legacy one-shot prompt (kept for OpenAI path which has no explicit cache)."""
     sections_block = "\n".join(
         f"- {s.name}: {s.description.strip()}" for s in sections
     )
@@ -97,6 +98,37 @@ def build_classify_user_prompt(
         f"Sections:\n{sections_block}\n\n"
         f"Title: {title}\n\nBody:\n{body_trunc}"
     )
+
+
+# ---------- cache-friendly split: static system + dynamic user ----------
+# Static part is identical across all 89 articles in a single batch run.
+# Anthropic prompt caching gives it 90% discount on reads.
+
+def build_classify_system(
+    sections: list[SectionDefinition],
+    few_shots: list[FewShotExample],
+    portal_country: str,
+) -> str:
+    sections_block = "\n".join(
+        f"- {s.name}: {s.description.strip()}" for s in sections
+    )
+    few_shot_block = ""
+    if few_shots:
+        lines = [f"  • [{fs.section}] {fs.title}" for fs in few_shots[:20]]
+        few_shot_block = "\nFew-shot examples from curated news:\n" + "\n".join(lines)
+    valid = ", ".join(s.name for s in sections)
+    return (
+        f"{CLASSIFY_SYSTEM}\n\n"
+        f"Portal country: {portal_country}.\n"
+        f"Task: classify every news item that follows into exactly one of: {valid}.\n"
+        f"Also set region='Local' iff the news is specifically about {portal_country}.\n\n"
+        f"Sections:\n{sections_block}"
+        f"{few_shot_block}"
+    )
+
+
+def build_classify_user(title: str, body: str) -> str:
+    return f"Title: {title}\n\nBody:\n{body[:4000]}"
 
 
 def prompt_hash(*parts: str) -> str:

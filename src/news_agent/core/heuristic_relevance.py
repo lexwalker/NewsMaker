@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 
+from news_agent.core.config_loader import Blacklist
 from news_agent.core.models import RawArticle
+from news_agent.core.urls import domain_of
 
 # ---------------------------------------------------------------- is_article
 _NON_ARTICLE_URL_HINTS = (
@@ -328,6 +331,83 @@ Grade = Literal[
     "off_topic",      # → reject: passes is_article but not automotive
     "not_article",    # → reject: heuristic says it's not an article
 ]
+
+
+@dataclass
+class BlacklistVerdict:
+    hit: bool
+    reason: str = ""
+
+
+# "Strong" auto-signal markers: if a blacklist phrase is found in a title
+# but one of these is also there, we assume the piece is really about the
+# car market and let the LLM decide. Examples:
+#   "BMW представила электробус"   ← не отсеиваем (BMW присутствует)
+#   "Электробус Wrightbus UK"       ← отсеиваем (нет авто-маркера)
+_AUTO_STRONG_MARKERS = (
+    # russian
+    "автомобил", "легков", "автопром", "авторынок", "автокредит",
+    "автоконцерн", "автопроизводит", "автосалон", "автобренд",
+    "дилерск", "модельн", "кроссовер", "седан",
+    # english
+    "automotive", "car market", "passenger car", "crossover", "sedan",
+    "hatchback", "auto industry", "carmaker", "automaker", "suv",
+    "ev market", "electric vehicle",
+)
+
+
+def blacklist_hit(
+    raw: RawArticle,
+    bl: Blacklist,
+    brands: list[Any] | None = None,
+) -> BlacklistVerdict:
+    """Check article against the editor-supplied hard-reject list.
+
+    Rules:
+      • Whole-domain blocks (e.g. benchmarkminerals.com) — always reject.
+      • Phrases — matched in the TITLE only (case-insensitive).
+      • BUT: if a blacklist phrase is found AND the title also contains
+        a car brand name (from ``brands``) OR a strong auto-signal marker,
+        we do NOT reject — the article is presumed to be about the car
+        market as a whole, with buses / tractors / battery minerals
+        mentioned incidentally. Let the LLM decide.
+    """
+    if not bl:
+        return BlacklistVerdict(False)
+    dom = domain_of(raw.url or "")
+    for blocked in bl.domains:
+        if dom == blocked or dom.endswith("." + blocked):
+            return BlacklistVerdict(True, f"blacklisted domain: {blocked}")
+
+    title = (raw.title or "").lower()
+    for phrase in bl.all_phrases():
+        if not phrase or phrase not in title:
+            continue
+        # Blacklist phrase is present — check for override signals.
+        if _title_has_auto_signal(title, brands):
+            continue
+        return BlacklistVerdict(True, f"blacklisted title phrase: {phrase!r}")
+    return BlacklistVerdict(False)
+
+
+def _title_has_auto_signal(title_lower: str, brands: list[Any] | None) -> bool:
+    """Return True if the title mentions a known car brand or a strong
+    automotive market marker — which lets the blacklist phrase slide."""
+    if any(m in title_lower for m in _AUTO_STRONG_MARKERS):
+        return True
+    if brands:
+        for b in brands:
+            names = [b.brand.lower(), *(a.lower() for a in getattr(b, "aliases", []))]
+            for n in names:
+                # skip very short brand aliases (GAZ, UAZ, KIA) that cause too many
+                # false positives inside generic words — require boundary-ish match
+                if len(n) < 4:
+                    if f" {n} " in f" {title_lower} " or title_lower.startswith(n + " ") \
+                            or title_lower.endswith(" " + n):
+                        return True
+                elif n in title_lower:
+                    return True
+    return False
 
 
 def grade_article(article: ArticleVerdict, topic: TopicVerdict) -> Grade:

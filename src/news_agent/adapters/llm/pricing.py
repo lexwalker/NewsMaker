@@ -42,3 +42,35 @@ def estimate_cost(provider: str, model: str, input_tokens: int, output_tokens: i
     return (input_tokens / 1_000_000) * p.input_per_mtok + (
         output_tokens / 1_000_000
     ) * p.output_per_mtok
+
+
+# Anthropic prompt-cache multipliers (relative to input price).
+#   cache_creation_input: 1.25x input price (writing to cache)
+#   cache_read_input:     0.10x input price (cache hit)
+_CACHE_WRITE_MULT = 1.25
+_CACHE_READ_MULT = 0.10
+
+
+def estimate_cost_with_cache(
+    provider: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> float:
+    """Like estimate_cost but accounts for Anthropic prompt caching tokens.
+
+    For OpenAI the cache_* args are ignored — OpenAI auto-caches with a flat
+    50% discount already reflected in their billing; we don't get a separate
+    counter from the SDK.
+    """
+    table = ANTHROPIC_PRICES if provider == "anthropic" else OPENAI_PRICES
+    p = table.get(model)
+    if p is None:
+        p = max(table.values(), key=lambda x: x.input_per_mtok + x.output_per_mtok) if table else Price(5.0, 15.0)
+    base_input = (input_tokens / 1_000_000) * p.input_per_mtok
+    cache_write = (cache_creation_tokens / 1_000_000) * p.input_per_mtok * _CACHE_WRITE_MULT
+    cache_read = (cache_read_tokens / 1_000_000) * p.input_per_mtok * _CACHE_READ_MULT
+    output = (output_tokens / 1_000_000) * p.output_per_mtok
+    return base_input + cache_write + cache_read + output

@@ -90,11 +90,33 @@ def load_whitelist_domains() -> set[str]:
     return {d.strip().lower() for d in data.get("domains", []) if d}
 
 
+class Blacklist(BaseModel):
+    """Hard-reject rules from the editorial team (see blacklist.yaml)."""
+
+    topic_phrases_ru: list[str] = Field(default_factory=list)
+    topic_phrases_en: list[str] = Field(default_factory=list)
+    domains: list[str] = Field(default_factory=list)
+
+    def all_phrases(self) -> list[str]:
+        return [*self.topic_phrases_ru, *self.topic_phrases_en]
+
+
+def load_blacklist() -> Blacklist:
+    data = _read_yaml(CONFIG_DIR / "blacklist.yaml") or {}
+    return Blacklist(
+        topic_phrases_ru=[s.lower() for s in data.get("topic_phrases_ru", []) if s],
+        topic_phrases_en=[s.lower() for s in data.get("topic_phrases_en", []) if s],
+        domains=[d.lower() for d in data.get("domains", []) if d],
+    )
+
+
 __all__ = [
+    "Blacklist",
     "BrandDomainEntry",
     "PrimarySourceCues",
     "SourceOverride",
     "SourcesSchema",
+    "load_blacklist",
     "load_brand_domains",
     "load_primary_source_cues",
     "load_sections",

@@ -17,10 +17,11 @@ from news_agent.adapters.llm.base import (
     RELEVANCE_SYSTEM,
     TRANSLATE_SCHEMA,
     TRANSLATE_SYSTEM,
-    build_classify_user_prompt,
+    build_classify_system,
+    build_classify_user,
     prompt_hash,
 )
-from news_agent.adapters.llm.pricing import estimate_cost
+from news_agent.adapters.llm.pricing import estimate_cost_with_cache
 from news_agent.core.models import (
     Classification,
     FewShotExample,
@@ -88,15 +89,13 @@ class AnthropicLLMClient:
             "Classify news into one section and locality.",
             CLASSIFY_SCHEMA,
         )
-        user = build_classify_user_prompt(
-            title=title,
-            body=body,
-            sections=sections,
-            few_shots=few_shots,
-            portal_country=portal_country,
-        )
+        # cache-friendly split: the sections + few-shots prefix is identical
+        # across all articles in a batch, so we push it to `system` where the
+        # ephemeral cache_control makes cache_read input ~90% cheaper.
+        system = build_classify_system(sections, few_shots, portal_country)
+        user = build_classify_user(title, body)
         data, usage = self._tool_call(
-            system=CLASSIFY_SYSTEM, user=user, tool=tool, max_tokens=500
+            system=system, user=user, tool=tool, max_tokens=500
         )
         return Classification.model_validate(data), usage
 
@@ -125,13 +124,27 @@ class AnthropicLLMClient:
         tool: dict[str, Any],
         max_tokens: int,
     ) -> tuple[dict[str, Any], LLMUsage]:
+        """Call Claude with prompt caching enabled on `system` + `tool`.
+
+        The static prefix (system + tool schema) is identical across all
+        articles in one batch run, so Anthropic prompt caching gives it a
+        ~90% discount on every hit after the first.
+        """
         ph = prompt_hash(system, user, json.dumps(tool))
         t0 = time.monotonic()
+        system_blocks = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        tool_cached = {**tool, "cache_control": {"type": "ephemeral"}}
         resp = self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
-            system=system,
-            tools=[tool],
+            system=system_blocks,
+            tools=[tool_cached],
             tool_choice={"type": "tool", "name": tool["name"]},
             messages=[{"role": "user", "content": user}],
         )
@@ -150,10 +163,15 @@ class AnthropicLLMClient:
             )
         in_tok = getattr(resp.usage, "input_tokens", 0) or 0
         out_tok = getattr(resp.usage, "output_tokens", 0) or 0
+        cache_create = getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
+        cache_read = getattr(resp.usage, "cache_read_input_tokens", 0) or 0
+        cost = estimate_cost_with_cache(
+            "anthropic", self.model, in_tok, out_tok, cache_create, cache_read
+        )
         usage = LLMUsage(
-            input_tokens=in_tok,
+            input_tokens=in_tok + cache_create + cache_read,  # total for reporting
             output_tokens=out_tok,
-            cost_usd=estimate_cost("anthropic", self.model, in_tok, out_tok),
+            cost_usd=cost,
             latency_ms=latency_ms,
             provider="anthropic",
             model=self.model,
@@ -164,8 +182,10 @@ class AnthropicLLMClient:
             model=self.model,
             prompt_hash=ph,
             input_tokens=in_tok,
+            cache_creation=cache_create,
+            cache_read=cache_read,
             output_tokens=out_tok,
-            cost_usd=round(usage.cost_usd, 5),
+            cost_usd=round(cost, 5),
             latency_ms=latency_ms,
         )
         return data, usage
