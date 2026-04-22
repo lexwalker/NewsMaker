@@ -34,3 +34,48 @@ url_rewrites:
   "https://www.uber.com/en-GB/newsroom/news/": "https://www.uber.com/newsroom/"
   # NOTE: gazgroup.ru/news/ returns 404 on all subpaths we tried; needs a
   # fresh URL from the editor. Leaving unrewritten until we get one.
+
+# Domains that require Playwright (headless Chromium) instead of httpx.
+# Two reasons to add a host:
+#   a) Cloudflare / Akamai / custom WAF that rejects httpx's TLS fingerprint
+#      even with a Chrome UA (observed: 403 Forbidden).
+#   b) JS-only SPA — the server returns an empty shell that populates
+#      client-side (observed: 200 OK, 0 articles found in index).
+#
+# Playwright is ~5x slower than httpx, so only add hosts you know need it.
+# Smoke-tested hosts as of 2026-04-22:
+playwright_domains:
+  # Verified Cloudflare-gated
+  - jdpower.com
+  - www.jdpower.com
+  - iz.ru
+  - tass.ru
+  - pressroom.toyota.com
+  - pressroom.lexus.com
+  - cleantechnica.com
+  - autoblog.com
+  - fleetnews.co.uk
+  - rg.ru
+  - ir.tesla.com
+  - media.mbusa.com
+  - media.mitsubishicars.com
+  - uk.nissannews.com
+  - me.nissanmotornews.com
+  - usa.nissannews.com
+  - omodaauto.co.uk
+  - www.kia.ru
+  - topclassactions.com
+
+  # JS-rendered SPA OEM press rooms
+  - media.vw.com
+  - www.hyundainews.com
+  - media.mercedes-benz.com
+  - media.renaultgroup.com
+  - media.jaguar.com
+  - media.stellantisnorthamerica.com
+  - www.globalsuzuki.com
+  - en.kg-mobility.com
+  - www.polestar.com
+  - ir.zeekrgroup.com
+  - www.genesisnewseurope.com
+  - media.lamborghini.com

@@ -50,6 +50,11 @@ from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     to_channel_preview_url,
 )
 from news_agent.adapters.fetchers.base import make_http_client  # noqa: E402
+from news_agent.adapters.fetchers.playwright_fetcher import (  # noqa: E402
+    PLAYWRIGHT_AVAILABLE,
+    PlaywrightAllowlist,
+    PlaywrightFetcher,
+)
 from news_agent.core.config_loader import (  # noqa: E402
     load_blacklist,
     load_brand_domains,
@@ -85,7 +90,7 @@ ITEMS_PER_SOURCE = 5
 HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # press rooms) need more patience. Retries are still
                      # DISABLED on timeouts, so this just widens the window once.
-ENABLE_LLM = True         # flip to False to run pure heuristics again
+ENABLE_LLM = False        # flip to False to run pure heuristics again
 LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
 FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "48"))  # drop articles older than this
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
@@ -115,6 +120,9 @@ DEDUP_STORE = None  # type: ignore[assignment]  # DedupStore instance in main()
 PREVIOUSLY_SEEN: dict[str, dict] = {}
 DEDUP_PORTAL = "RU"  # current batch treats every source as RU portal
 PRIMARY_CUES = None  # type: ignore[assignment]  # PrimarySourceCues from config
+# Playwright fallback — only used when a URL matches PW_ALLOWLIST.
+PW_FETCHER: PlaywrightFetcher | None = None
+PW_ALLOWLIST: PlaywrightAllowlist | None = None
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
@@ -424,6 +432,50 @@ def make_client():  # -> RetryingHttpClient, but annotated loose for httpx.Clien
     )
 
 
+class _PwResponse:
+    """Minimal httpx.Response-like wrapper for Playwright-fetched HTML.
+
+    Only implements the surface that ``process_source`` touches: ``.text``,
+    ``.content``, ``.status_code``, ``.headers``, ``.raise_for_status()``.
+    """
+
+    def __init__(self, url: str, status_code: int, html: str) -> None:
+        self.url = url
+        self.status_code = status_code
+        self.text = html
+        self.content = html.encode("utf-8", errors="replace")
+        self.headers = {"Content-Type": "text/html; charset=utf-8"}
+
+    def raise_for_status(self) -> None:
+        if 400 <= self.status_code < 600:
+            raise httpx.HTTPStatusError(
+                f"{self.status_code} from Playwright",
+                request=None,  # type: ignore[arg-type]
+                response=None,  # type: ignore[arg-type]
+            )
+
+
+def _http_get(client, url: str):
+    """Route ``url`` through Playwright when it's on the allowlist, else httpx.
+
+    Keeps the caller's existing code untouched — returns a duck-typed object
+    with the same three attributes ``process_source`` needs.
+    """
+    if (
+        PW_FETCHER is not None
+        and PW_ALLOWLIST is not None
+        and PW_ALLOWLIST.matches(url)
+    ):
+        try:
+            status, html = PW_FETCHER.fetch(url)
+            return _PwResponse(url, status, html)
+        except Exception as e:  # noqa: BLE001
+            # Fall through to httpx on PW crash — we'd rather lose the JS
+            # rendering than skip the source entirely.
+            print(f"   ! Playwright failed on {url}: {type(e).__name__}: {str(e)[:80]}")
+    return client.get(url)
+
+
 def discover_feed(client: httpx.Client, index_url: str, index_html: str) -> str | None:
     # 1. <link rel="alternate" type="application/rss+xml">
     soup = BeautifulSoup(index_html, "lxml")
@@ -476,7 +528,7 @@ def process_source(
             r.elapsed_ms = int((time.monotonic() - t0) * 1000)
             return r
         try:
-            resp = client.get(preview)
+            resp = _http_get(client, preview)
             r.http_status = resp.status_code
             resp.raise_for_status()
         except Exception as e:  # noqa: BLE001
@@ -508,7 +560,7 @@ def process_source(
         return r
 
     try:
-        resp = client.get(url)
+        resp = _http_get(client, url)
         r.http_status = resp.status_code
         resp.raise_for_status()
     except Exception as e:  # noqa: BLE001
@@ -779,7 +831,7 @@ def _fetch_and_score(
         article_url=link,
     )
     try:
-        resp = client.get(link)
+        resp = _http_get(client, link)
         resp.raise_for_status()
         article = extract_article(
             html=resp.text,
@@ -959,7 +1011,7 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
 # ------------------------------------------------------------- main
 def main() -> int:
     global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
-    global PRIMARY_CUES
+    global PRIMARY_CUES, PW_FETCHER, PW_ALLOWLIST
     WHITELIST = load_whitelist_domains()
     BLACKLIST = load_blacklist()
     BRANDS = load_brand_domains()
@@ -1001,24 +1053,61 @@ def main() -> int:
     results: list[SourceResult] = []
     article_rows: list[ArticleRow] = []
     total_t0 = time.monotonic()
-    with make_client() as client:
-        for i, u in enumerate(urls, start=1):
-            if len(article_rows) >= MAX_ARTICLES:
-                print(f"\nReached MAX_ARTICLES={MAX_ARTICLES}, stopping at source {i - 1}/{len(urls)}")
-                break
-            print(f"\n[{i}/{len(urls)}] {u}  (articles so far: {len(article_rows)})")
-            try:
-                r = process_source(client, u, i, article_rows)
-            except Exception as e:  # noqa: BLE001
-                traceback.print_exc()
-                r = SourceResult(url=u, error=f"crash: {e}"[:200])
-            results.append(r)
+
+    # Playwright context — only spun up if the allowlist has entries AND the
+    # library is importable. The fetch path gracefully degrades to httpx if
+    # Playwright crashes mid-run (see `_http_get`).
+    quirks = load_http_quirks()
+    PW_ALLOWLIST = PlaywrightAllowlist(quirks.playwright_domains)
+    pw_cm = None
+    if PLAYWRIGHT_AVAILABLE and quirks.playwright_domains:
+        try:
+            pw_cm = PlaywrightFetcher(timeout_ms=int(HTTP_TIMEOUT * 1000))
+            PW_FETCHER = pw_cm.__enter__()
             print(
-                f"   → type={r.detected_type:4}  http={r.http_status!s:3}  "
-                f"tried={r.articles_attempted:2}  news_like={r.news_like:2}  "
-                f"is_article={r.passed_is_article:2}  "
-                f"auto={r.passed_auto_topic:2}  elapsed={r.elapsed_ms} ms"
+                f"Playwright fallback enabled for {len(quirks.playwright_domains)} "
+                f"domains (Cloudflare-gated + JS-SPA sites)."
             )
+        except Exception as e:  # noqa: BLE001
+            print(f"Playwright init failed: {type(e).__name__}: {e} — falling back to httpx only.")
+            PW_FETCHER = None
+            pw_cm = None
+    else:
+        if not PLAYWRIGHT_AVAILABLE:
+            print("Playwright not installed — skipping JS fallback.")
+        elif not quirks.playwright_domains:
+            print("No playwright_domains in http_quirks.yaml — JS fallback is a no-op.")
+
+    try:
+        with make_client() as client:
+            for i, u in enumerate(urls, start=1):
+                if len(article_rows) >= MAX_ARTICLES:
+                    print(
+                        f"\nReached MAX_ARTICLES={MAX_ARTICLES}, stopping at "
+                        f"source {i - 1}/{len(urls)}"
+                    )
+                    break
+                print(f"\n[{i}/{len(urls)}] {u}  (articles so far: {len(article_rows)})")
+                try:
+                    r = process_source(client, u, i, article_rows)
+                except Exception as e:  # noqa: BLE001
+                    traceback.print_exc()
+                    r = SourceResult(url=u, error=f"crash: {e}"[:200])
+                results.append(r)
+                print(
+                    f"   → type={r.detected_type:4}  http={r.http_status!s:3}  "
+                    f"tried={r.articles_attempted:2}  news_like={r.news_like:2}  "
+                    f"is_article={r.passed_is_article:2}  "
+                    f"auto={r.passed_auto_topic:2}  elapsed={r.elapsed_ms} ms"
+                )
+    finally:
+        if pw_cm is not None:
+            try:
+                pw_cm.__exit__(None, None, None)
+            except Exception as e:  # noqa: BLE001
+                print(f"Playwright shutdown warning: {type(e).__name__}: {e}")
+            PW_FETCHER = None
+
     total_ms = int((time.monotonic() - total_t0) * 1000)
     print(f"\nTotal: {total_ms} ms ({total_ms / 1000:.1f} s)")
     news_total = sum(r.news_like for r in results)

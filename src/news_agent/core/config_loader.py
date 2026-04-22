@@ -108,6 +108,7 @@ class HttpQuirks(BaseModel):
 
     ssl_insecure: set[str] = Field(default_factory=set)
     url_rewrites: dict[str, str] = Field(default_factory=dict)
+    playwright_domains: set[str] = Field(default_factory=set)
 
 
 def load_http_quirks() -> HttpQuirks:
@@ -115,6 +116,7 @@ def load_http_quirks() -> HttpQuirks:
     return HttpQuirks(
         ssl_insecure={d.strip().lower() for d in data.get("ssl_insecure", []) if d},
         url_rewrites={str(k): str(v) for k, v in (data.get("url_rewrites") or {}).items()},
+        playwright_domains={d.strip().lower() for d in data.get("playwright_domains", []) if d},
     )
 
 
