@@ -46,6 +46,17 @@ except Exception:  # noqa: BLE001
     sync_playwright = None  # type: ignore[assignment]
     PLAYWRIGHT_AVAILABLE = False
 
+# playwright-stealth patches the automation tells (navigator.webdriver,
+# missing chrome.runtime, fake WebGL vendor, etc.) that lets aggressive
+# bot detectors flag a headless Chromium even when its TLS is perfect.
+# Optional — the fetcher works without it, just more detectable.
+try:  # pragma: no cover - import probe
+    from playwright_stealth import Stealth  # type: ignore[import-not-found]
+    STEALTH_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    Stealth = None  # type: ignore[assignment,misc]
+    STEALTH_AVAILABLE = False
+
 
 # Browser-like UA — matches what the real Chromium ships; servers fingerprint
 # the combination of TLS hello + headers.
@@ -85,12 +96,29 @@ class PlaywrightFetcher:
                 "and `playwright install chromium`."
             )
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=True)
+        # Some detectors key on the bare ``HeadlessChrome/`` token in the UA
+        # string. ``--disable-blink-features=AutomationControlled`` hides
+        # the webdriver flag from ``navigator.webdriver`` without needing
+        # stealth. Cheap insurance for the non-stealth path.
+        launch_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+        ]
+        self._browser = self._pw.chromium.launch(headless=True, args=launch_args)
         self._context = self._browser.new_context(
             user_agent=self.user_agent,
             locale="ru-RU",
             viewport={"width": 1366, "height": 768},
         )
+        # Stealth patches — if the plugin is installed, apply it. Patches
+        # ~20 fingerprintable properties (plugins, languages, WebGL vendor,
+        # permissions API, chrome.runtime presence, etc.).
+        if STEALTH_AVAILABLE:
+            try:
+                Stealth().apply_stealth_sync(self._context)
+                log.debug("pw.stealth.applied")
+            except Exception as e:  # noqa: BLE001
+                log.debug("pw.stealth.failed", error=str(e)[:80])
         # Block heavy resources we don't care about — HTML + redirects is
         # all we need to extract articles. Saves 5-10× per-page load time.
         self._context.route(
@@ -170,6 +198,7 @@ class PlaywrightAllowlist:
 __all__ = [
     "DEFAULT_PW_UA",
     "PLAYWRIGHT_AVAILABLE",
+    "STEALTH_AVAILABLE",
     "PlaywrightAllowlist",
     "PlaywrightFetcher",
 ]

@@ -50,8 +50,14 @@ from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     to_channel_preview_url,
 )
 from news_agent.adapters.fetchers.base import make_http_client  # noqa: E402
+from news_agent.adapters.fetchers.impersonate import (  # noqa: E402
+    CURL_CFFI_AVAILABLE,
+    ImpersonateAllowlist,
+    ImpersonateFetcher,
+)
 from news_agent.adapters.fetchers.playwright_fetcher import (  # noqa: E402
     PLAYWRIGHT_AVAILABLE,
+    STEALTH_AVAILABLE,
     PlaywrightAllowlist,
     PlaywrightFetcher,
 )
@@ -123,6 +129,10 @@ PRIMARY_CUES = None  # type: ignore[assignment]  # PrimarySourceCues from config
 # Playwright fallback — only used when a URL matches PW_ALLOWLIST.
 PW_FETCHER: PlaywrightFetcher | None = None
 PW_ALLOWLIST: PlaywrightAllowlist | None = None
+# curl_cffi (Chrome JA3 impersonation) — for sites that block httpx at
+# the TLS layer but serve static HTML once past the gate.
+IMP_FETCHER: ImpersonateFetcher | None = None
+IMP_ALLOWLIST: ImpersonateAllowlist | None = None
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
@@ -456,7 +466,12 @@ class _PwResponse:
 
 
 def _http_get(client, url: str):
-    """Route ``url`` through Playwright when it's on the allowlist, else httpx.
+    """Route ``url`` through the right backend based on allowlist membership.
+
+    Priority:
+      1. Playwright — only when JS rendering is required (SPA / CF challenge)
+      2. curl_cffi  — fast TLS-impersonation for Cloudflare/Akamai 403
+      3. httpx      — the default for everything else
 
     Keeps the caller's existing code untouched — returns a duck-typed object
     with the same three attributes ``process_source`` needs.
@@ -473,6 +488,18 @@ def _http_get(client, url: str):
             # Fall through to httpx on PW crash — we'd rather lose the JS
             # rendering than skip the source entirely.
             print(f"   ! Playwright failed on {url}: {type(e).__name__}: {str(e)[:80]}")
+
+    if (
+        IMP_FETCHER is not None
+        and IMP_ALLOWLIST is not None
+        and IMP_ALLOWLIST.matches(url)
+    ):
+        try:
+            status, html = IMP_FETCHER.fetch(url)
+            return _PwResponse(url, status, html)
+        except Exception as e:  # noqa: BLE001
+            print(f"   ! curl_cffi failed on {url}: {type(e).__name__}: {str(e)[:80]}")
+
     return client.get(url)
 
 
@@ -1011,7 +1038,7 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
 # ------------------------------------------------------------- main
 def main() -> int:
     global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
-    global PRIMARY_CUES, PW_FETCHER, PW_ALLOWLIST
+    global PRIMARY_CUES, PW_FETCHER, PW_ALLOWLIST, IMP_FETCHER, IMP_ALLOWLIST
     WHITELIST = load_whitelist_domains()
     BLACKLIST = load_blacklist()
     BRANDS = load_brand_domains()
@@ -1064,9 +1091,10 @@ def main() -> int:
         try:
             pw_cm = PlaywrightFetcher(timeout_ms=int(HTTP_TIMEOUT * 1000))
             PW_FETCHER = pw_cm.__enter__()
+            stealth_note = " + stealth" if STEALTH_AVAILABLE else ""
             print(
                 f"Playwright fallback enabled for {len(quirks.playwright_domains)} "
-                f"domains (Cloudflare-gated + JS-SPA sites)."
+                f"domains (Cloudflare-gated + JS-SPA sites){stealth_note}."
             )
         except Exception as e:  # noqa: BLE001
             print(f"Playwright init failed: {type(e).__name__}: {e} — falling back to httpx only.")
@@ -1077,6 +1105,22 @@ def main() -> int:
             print("Playwright not installed — skipping JS fallback.")
         elif not quirks.playwright_domains:
             print("No playwright_domains in http_quirks.yaml — JS fallback is a no-op.")
+
+    # curl_cffi (JA3 TLS impersonation) — stateless, zero-cost init.
+    IMP_ALLOWLIST = ImpersonateAllowlist(quirks.impersonate_domains)
+    if CURL_CFFI_AVAILABLE and quirks.impersonate_domains:
+        try:
+            IMP_FETCHER = ImpersonateFetcher(timeout=HTTP_TIMEOUT)
+            print(
+                f"curl_cffi impersonation enabled for "
+                f"{len(quirks.impersonate_domains)} domains "
+                f"(Chrome JA3 TLS)."
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"curl_cffi init failed: {type(e).__name__}: {e} — skipping TLS impersonation.")
+            IMP_FETCHER = None
+    elif not CURL_CFFI_AVAILABLE:
+        print("curl_cffi not installed — skipping TLS impersonation.")
 
     try:
         with make_client() as client:

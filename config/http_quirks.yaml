@@ -35,36 +35,54 @@ url_rewrites:
   # NOTE: gazgroup.ru/news/ returns 404 on all subpaths we tried; needs a
   # fresh URL from the editor. Leaving unrewritten until we get one.
 
-# Domains that require Playwright (headless Chromium) instead of httpx.
-# Two reasons to add a host:
-#   a) Cloudflare / Akamai / custom WAF that rejects httpx's TLS fingerprint
-#      even with a Chrome UA (observed: 403 Forbidden).
-#   b) JS-only SPA — the server returns an empty shell that populates
-#      client-side (observed: 200 OK, 0 articles found in index).
+# Domains that require curl_cffi (Chrome JA3/JA4 TLS impersonation).
+# Use this when the server rejects httpx at the TLS layer but serves static
+# HTML once past the gate. Much faster than Playwright (no browser).
 #
-# Playwright is ~5x slower than httpx, so only add hosts you know need it.
-# Smoke-tested hosts as of 2026-04-22:
+# Verified via smoke test on 2026-04-22 (all returned 200 with real body):
+impersonate_domains:
+  - www.nhtsa.gov
+  - nhtsa.gov
+  - www.media.volvocars.com
+  - media.volvocars.com
+  - www.tuvsud.com
+  - tuvsud.com
+  - www.stellantis.com
+  - hondanews.com
+  - int-media.citroen.com
+  - int-media.peugeot.com
+  - int-media.dsautomobiles.com
+  - iz.ru
+  - www.iz.ru
+  - auto.ru
+  - media.mitsubishicars.com
+  - corporate.ferrari.com       # we get 403 here, but retry-path will try PW next
+  - www.ferrari.com
+  - investor.uber.com
+
+# Domains that require Playwright (headless Chromium) instead of httpx.
+# Use this only when either:
+#   a) the site is a JS-only SPA that needs an actual JS engine to
+#      populate the DOM (no amount of TLS impersonation will help), OR
+#   b) there's a JS challenge page that must be solved before content
+#      is served.
+#
+# Playwright is ~10× slower than curl_cffi. When both work, keep the
+# domain in ``impersonate_domains`` only.
 playwright_domains:
-  # Verified Cloudflare-gated
+  # Cloudflare JS challenge — verified that curl_cffi is not enough
   - jdpower.com
   - www.jdpower.com
-  - iz.ru
   - tass.ru
   - pressroom.toyota.com
   - pressroom.lexus.com
   - cleantechnica.com
-  - autoblog.com
   - fleetnews.co.uk
-  - rg.ru
-  - ir.tesla.com
   - media.mbusa.com
-  - media.mitsubishicars.com
   - uk.nissannews.com
   - me.nissanmotornews.com
   - usa.nissannews.com
   - omodaauto.co.uk
-  - www.kia.ru
-  - topclassactions.com
 
   # JS-rendered SPA OEM press rooms
   - media.vw.com
@@ -79,3 +97,10 @@ playwright_domains:
   - ir.zeekrgroup.com
   - www.genesisnewseurope.com
   - media.lamborghini.com
+
+  # NOTE: these hosts returned 403 from Playwright even with stealth —
+  # they combine JS challenge with IP-reputation checks (datacenter IPs
+  # pre-flagged). Would need residential proxy to rescue. Listed here as
+  # a rationale record, NOT active:
+  #   autoblog.com, www.kia.ru, ir.tesla.com, topclassactions.com,
+  #   rg.ru/tema/*, hondanews.com, infinitinews.com
