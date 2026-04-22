@@ -49,12 +49,21 @@ from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     parse_channel_html,
     to_channel_preview_url,
 )
+from news_agent.adapters.fetchers.base import make_http_client  # noqa: E402
 from news_agent.core.config_loader import (  # noqa: E402
     load_blacklist,
     load_brand_domains,
+    load_http_quirks,
+    load_primary_source_cues,
     load_whitelist_domains,
 )
 from news_agent.core.freshness import is_fresh  # noqa: E402
+from news_agent.core.primary_source import (  # noqa: E402
+    CorpusEntry,
+    detect_earliest_in_corpus,
+    detect_primary_source,
+)
+from news_agent.core.urls import url_hash  # noqa: E402
 from news_agent.core.heuristic_relevance import (  # noqa: E402
     blacklist_hit,
     grade_article,
@@ -63,6 +72,7 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
 )
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
 from news_agent.adapters.llm.base import LLMClient  # noqa: E402
+from news_agent.adapters.storage import DedupStore  # noqa: E402
 from news_agent.core.budget import BudgetExceeded, BudgetTracker  # noqa: E402
 from news_agent.core.config_loader import load_sections  # noqa: E402
 from news_agent.core.urls import canonicalise, domain_of  # noqa: E402
@@ -72,10 +82,13 @@ from news_agent.settings import get_settings  # noqa: E402
 NUM_SOURCES = 400         # effectively all active sources (there are ~357 flagged "1")
 MAX_ARTICLES = 10_000     # soft cap
 ITEMS_PER_SOURCE = 5
-HTTP_TIMEOUT = 10.0
+HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
+                     # press rooms) need more patience. Retries are still
+                     # DISABLED on timeouts, so this just widens the window once.
 ENABLE_LLM = True         # flip to False to run pure heuristics again
 LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
 FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "48"))  # drop articles older than this
+SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
 
 # Real Telegram channels that the editor uses (from 'Новости опубликованные').
 # We prepend them to the source list so the test run actually exercises the
@@ -95,6 +108,13 @@ WHITELIST: set[str] = set()
 SEEN_FINAL_URLS: set[str] = set()
 BLACKLIST = None  # type: ignore[assignment]  # set to a Blacklist instance in main()
 BRANDS: list = []  # type: ignore[type-arg]  # BrandDomainEntry list from config
+DEDUP_STORE = None  # type: ignore[assignment]  # DedupStore instance in main()
+# url_hash → cached classification fields from earlier runs (SQLite).
+# A row whose hash is here doesn't go through the LLM again — instead its
+# cached verdict / section / titles / primary source get copied back.
+PREVIOUSLY_SEEN: dict[str, dict] = {}
+DEDUP_PORTAL = "RU"  # current batch treats every source as RU portal
+PRIMARY_CUES = None  # type: ignore[assignment]  # PrimarySourceCues from config
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
@@ -130,6 +150,13 @@ class ArticleRow:
     llm_title_ru: str = ""
     llm_cost_usd: float | str = ""
     llm_note: str = ""            # e.g. "требует ручной проверки — Test-drive"
+    # Primary-source detection (levels 1+2)
+    primary_url: str = ""
+    primary_domain: str = ""
+    primary_confidence: str = ""  # "high" / "medium" / "low"
+    primary_method: str = ""      # "body-link" / "corpus-earlier" / "self"
+    # Reconstructed from SQLite cache on a repeat run — skip the LLM pass.
+    from_cache: bool = False
 
 
 @dataclass
@@ -245,34 +272,42 @@ HEADER = [
 ]
 
 
+# ----- Re-designed 4-block layout (26 columns, 15 visible, 11 hidden) ------
+# Block 1 (light green):  "Что за новость"        — columns A–G
+# Block 2 (light blue):   "Первоисточник"         — columns H–J
+# Block 3 (light yellow): "Для редактора"          — columns K–O
+# Block 4 (light grey):   "Отладка"  (hidden)     — columns P–Z
 ARTICLES_HEADER = [
-    "Прогон (UTC)",        # A
-    "№ ист.",              # B
-    "URL источника",       # C
-    "№ ст.",               # D
-    "URL статьи",          # E
-    "Заголовок",           # F
-    "Дата публикации",     # G
-    "Тело (симв)",         # H
-    "Картинка",            # I
-    "is_article",          # J
-    "Score",               # K
-    "Причины is_article",  # L
-    "Авто/эконом",         # M
-    "Hits темы",           # N
-    "Итог бота",           # O
-    # --- LLM результаты (только для certain / possible) ---
-    "LLM relevance",       # P
-    "LLM раздел",          # Q
-    "LLM регион",          # R
-    "LLM confidence",      # S
-    "Заголовок EN (LLM)",  # T
-    "Заголовок RU (LLM)",  # U
-    "Стоимость LLM, $",    # V
-    "Пометка редактору",   # W
-    # --- свободные колонки для редактора ---
-    "Ручная проверка (Новость / Не новость)",  # X
-    "Комментарий",         # Y
+    # --- Block 1: «Что за новость» --------------------------------------
+    "Прогон (UTC)",                    # A
+    "Заголовок (EN / RU)",             # B  combined EN+RU, wrapped
+    "URL статьи",                      # C
+    "Раздел",                          # D  LLM section
+    "Регион",                          # E  Local / Global
+    "Дата публикации",                 # F
+    "Картинка",                        # G  «да» / пусто
+    # --- Block 2: «Первоисточник» ---------------------------------------
+    "Первоисточник (домен)",           # H
+    "Первоисточник URL",               # I
+    "Уверенность источника",           # J  high / medium / low
+    # --- Block 3: «Для редактора» ---------------------------------------
+    "Пометка бота",                    # K
+    "Confidence раздела",              # L  0.00-1.00
+    "Итог бота",                       # M  ← colour formatting column
+    "Ручная проверка (Новость / Не новость)",  # N
+    "Комментарий",                     # O
+    # --- Block 4: «Отладка» (hidden by default) --------------------------
+    "URL источника",                   # P
+    "№ ист.",                          # Q
+    "№ ст.",                           # R
+    "Тело (симв)",                     # S
+    "is_article",                      # T
+    "is_article score",                # U
+    "Причины is_article",              # V
+    "Hits темы",                       # W
+    "LLM relevance",                   # X
+    "Стоимость LLM, $",                # Y
+    "Способ поиска источника",         # Z
 ]
 
 
@@ -282,33 +317,50 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
     ).execute()
     out = [ARTICLES_HEADER]
     for r in rows:
+        # Combine EN + RU titles for one-cell display. Falls back to original
+        # scraped title when LLM translation isn't available (rejects etc.).
+        if r.llm_title_en and r.llm_title_ru:
+            combined_title = f"EN: {r.llm_title_en[:220]}\nRU: {r.llm_title_ru[:220]}"
+        elif r.title:
+            combined_title = r.title[:400]
+        else:
+            combined_title = ""
+        # is_article heuristic + topic heuristic — compact debug string
+        is_article_label = "Да" if r.is_article else "Нет"
+        topic_label = "авто/эконом" if r.auto_topic else "не авто"
+        combined_reasons = r.article_reasons[:400]
         out.append(
             [
+                # Block 1 — «Что за новость»
                 run_ts,
-                r.source_idx,
-                r.source_url,
-                r.article_idx,
+                combined_title,
                 r.article_url,
-                r.title[:300],
-                r.published_at,
-                r.body_len,
-                "да" if r.has_image else "",
-                "Новость" if r.is_article else "Не новость",
-                r.article_score,
-                r.article_reasons[:400],
-                "Авто/эконом" if r.auto_topic else "Нет",
-                r.auto_hits[:200],
-                r.verdict,
-                r.llm_relevance,
                 r.llm_section,
                 r.llm_region,
-                r.llm_confidence,
-                r.llm_title_en[:300],
-                r.llm_title_ru[:300],
-                r.llm_cost_usd,
+                r.published_at,
+                "да" if r.has_image else "",
+                # Block 2 — «Первоисточник»
+                r.primary_domain,
+                r.primary_url,
+                r.primary_confidence,
+                # Block 3 — «Для редактора»
                 r.llm_note,
+                r.llm_confidence,
+                r.verdict,
                 "",  # manual check column
                 "",  # free-form comment
+                # Block 4 — «Отладка»
+                r.source_url,
+                r.source_idx,
+                r.article_idx,
+                r.body_len,
+                is_article_label,
+                r.article_score,
+                combined_reasons,
+                f"{topic_label}: {r.auto_hits[:180]}" if r.auto_hits else topic_label,
+                r.llm_relevance,
+                r.llm_cost_usd,
+                r.primary_method,
             ]
         )
     svc.spreadsheets().values().update(
@@ -357,15 +409,18 @@ def write_report(svc, run_ts: str, results: list[SourceResult], tab: str) -> Non
 
 
 # -------------------------------------------------- HTTP + RSS discovery
-def make_client() -> httpx.Client:
-    return httpx.Client(
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ru,en;q=0.9",
-        },
-        follow_redirects=True,
+def make_client():  # -> RetryingHttpClient, but annotated loose for httpx.Client
+    """Return the shared browser-like HTTP client with retries + SSL/URL quirks.
+
+    Quirks come from ``config/http_quirks.yaml``: per-domain TLS-insecure
+    allowlist + old→new URL rewrites for rotten sheet entries.
+    """
+    q = load_http_quirks()
+    return make_http_client(
+        user_agent=USER_AGENT,
         timeout=HTTP_TIMEOUT,
+        ssl_insecure_domains=q.ssl_insecure,
+        url_rewrites=q.url_rewrites,
     )
 
 
@@ -527,17 +582,29 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
     sections = load_sections()
     budget = BudgetTracker(cap_usd=LLM_BUDGET_USD)
 
+    # Only truly fresh rows go through the LLM. Cached rows already have
+    # their classification fields restored from SQLite.
     candidates = [
         r for r in article_rows
-        if r.verdict in {"Точно новость", "Возможно новость"}
+        if r.verdict in {"Точно новость", "Возможно новость"} and not r.from_cache
     ]
+    cached_count = sum(
+        1 for r in article_rows
+        if r.from_cache and r.verdict in {"Точно новость", "Возможно новость"}
+    )
     if not candidates:
-        print("LLM pass: кандидатов для LLM нет.")
+        print(
+            f"LLM pass: кандидатов для LLM нет "
+            f"(из кэша: {cached_count} строк — LLM не вызван)."
+        )
         return
 
-    print(f"\nLLM pass: {len(candidates)} кандидатов "
-          f"(certain={sum(1 for r in candidates if r.verdict == 'Точно новость')}, "
-          f"possible={sum(1 for r in candidates if r.verdict == 'Возможно новость')})")
+    print(
+        f"\nLLM pass: {len(candidates)} свежих кандидатов "
+        f"(из кэша без LLM: {cached_count}, "
+        f"certain={sum(1 for r in candidates if r.verdict == 'Точно новость')}, "
+        f"possible={sum(1 for r in candidates if r.verdict == 'Возможно новость')})"
+    )
     print(f"  provider: {client.provider_name}  model: {client.model}  cap: ${LLM_BUDGET_USD}")
 
     country = "Russia"  # portal country for now; будет параметром позже
@@ -557,6 +624,9 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
             if not rel.is_automotive_or_economy:
                 # drop — not auto/economy; no classify/translate needed
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + "LLM: не авто/эконом"
+                # OVERWRITE verdict so the editor sees the LLM decision —
+                # "Возможно новость" → "Отклонено LLM"
+                r.verdict = "Отклонено LLM"
                 print(f"  [{i}/{len(candidates)}] {r.title[:60]!r} → relevance=Нет (отсечено)")
                 continue
         else:
@@ -596,6 +666,13 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
             r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                 f"translate error: {e!s:100}"
 
+        # Row passed both relevance + classification + translation. If it
+        # came in as "Возможно новость" (yellow), promote it to "Точно
+        # новость" (green) so the editor's colour view matches the LLM's
+        # verdict. "Точно новость" rows stay as they are.
+        if r.verdict == "Возможно новость":
+            r.verdict = "Точно новость"
+
         print(
             f"  [{i}/{len(candidates)}]  {r.llm_section:22}  "
             f"{r.llm_region:6}  conf={r.llm_confidence}  "
@@ -606,6 +683,85 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
     print(f"\nLLM pass done: {snap['calls']} calls, "
           f"${snap['spent_usd']} / ${snap['cap_usd']}  "
           f"({snap['input_tokens']} in / {snap['output_tokens']} out)")
+
+
+def _run_corpus_primary_source_pass(article_rows: list[ArticleRow]) -> None:
+    """Level 2 primary-source detection.
+
+    For every row that (a) is going to the output sheet and (b) does not
+    already have a high-confidence primary source from Level 1, look inside
+    the corpus of THIS run for an earlier-published article with a very
+    similar title. If found — it's most likely the actual primary source.
+    """
+    # Build an in-memory corpus of everything we have scored this run.
+    corpus: list[CorpusEntry] = []
+    for r in article_rows:
+        if not r.article_url or not r.title:
+            continue
+        pub: datetime | None = None
+        if r.published_at:
+            try:
+                pub = datetime.fromisoformat(r.published_at.replace("Z", "+00:00"))
+            except ValueError:
+                pub = None
+        if pub is None:
+            continue  # cannot use an undated entry to establish ordering
+        if pub.tzinfo is None:
+            pub = pub.replace(tzinfo=timezone.utc)
+        corpus.append(
+            CorpusEntry(
+                url=r.article_url,
+                title=r.title,
+                published_at=pub,
+                domain=domain_of(r.article_url),
+            )
+        )
+
+    if not corpus:
+        print("Primary-source L2: corpus empty — skipped.")
+        return
+
+    press_hosts = PRIMARY_CUES.press_release_hosts if PRIMARY_CUES else []
+    upgraded = 0
+    for r in article_rows:
+        # Only act on rows that will actually reach the editor.
+        if r.verdict not in {"Точно новость", "Возможно новость"}:
+            continue
+        # Cached rows already have a primary source from the previous run.
+        if r.from_cache:
+            continue
+        # Already high-confidence → leave as is.
+        if r.primary_confidence == "high":
+            continue
+        # Need a known publication date on the target row.
+        try:
+            target_pub = datetime.fromisoformat(
+                (r.published_at or "").replace("Z", "+00:00")
+            )
+            if target_pub.tzinfo is None:
+                target_pub = target_pub.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+        found = detect_earliest_in_corpus(
+            article_url=r.article_url,
+            article_title=r.title,
+            article_published_at=target_pub,
+            corpus=corpus,
+            whitelist_domains=WHITELIST,
+            press_release_hosts=press_hosts,
+            mirror_hosts=PRIMARY_CUES.mirror_hosts if PRIMARY_CUES else [],
+        )
+        if found is None:
+            continue
+        url, dom, conf = found
+        r.primary_url = url
+        r.primary_domain = dom
+        r.primary_confidence = conf
+        r.primary_method = "corpus-earlier"
+        upgraded += 1
+
+    print(f"Primary-source L2: upgraded {upgraded} rows from corpus.")
 
 
 def _fetch_and_score(
@@ -694,6 +850,35 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         return True
     SEEN_FINAL_URLS.add(canon)
 
+    # SQLite persistent cache — have we already processed this URL?
+    # If yes, restore the cached verdict + LLM fields + primary source
+    # and mark the row as cached. The LLM pass will skip it; the sheet
+    # row looks identical to a fresh classification but costs $0.
+    uh = url_hash(canon)
+    if uh in PREVIOUSLY_SEEN:
+        cached = PREVIOUSLY_SEEN[uh]
+        row.verdict = cached.get("verdict", "") or row.verdict
+        row.llm_relevance = cached.get("llm_relevance", "")
+        row.llm_section = cached.get("llm_section", "")
+        row.llm_region = cached.get("llm_region", "")
+        row.llm_confidence = cached.get("llm_confidence", "")
+        row.llm_title_en = cached.get("llm_title_en", "")
+        row.llm_title_ru = cached.get("llm_title_ru", "")
+        cache_note = "из кэша"
+        row.llm_note = cache_note if not row.llm_note else f"{cache_note} | {row.llm_note}"
+        row.llm_cost_usd = 0  # zero this run
+        row.primary_url = cached.get("primary_url", "")
+        row.primary_domain = cached.get("primary_domain", "")
+        row.primary_confidence = cached.get("primary_confidence", "")
+        row.primary_method = cached.get("primary_method", "") or "cached"
+        row.article_score = cached.get("article_score", row.article_score)
+        row.article_reasons = cached.get("article_reasons", "from-cache")
+        row.is_article = bool(cached.get("is_article", True))
+        row.auto_topic = bool(cached.get("auto_topic", True))
+        row.auto_hits = cached.get("auto_hits", "")
+        row.from_cache = True
+        return True
+
     if article.title:
         r.articles_with_title += 1
         if len(r.sample_titles) < 3:
@@ -730,6 +915,23 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         "off_topic": "Точно не новость (не авто)",
         "not_article": "Точно не новость (не статья)",
     }[grade]
+
+    # ---- Primary-source detection, level 1 (body links + cues) --------------
+    # Only bother computing for rows that will actually reach the output
+    # (certain/possible). For rejects we skip — saves time on 200+ items.
+    if grade in ("certain_news", "possible_news") and PRIMARY_CUES is not None:
+        p_url, p_dom, p_conf = detect_primary_source(
+            article_url=article.url,
+            body=article.body,
+            title=article.title,
+            outbound_links=article.outbound_links,
+            brands=BRANDS,
+            cues=PRIMARY_CUES,
+        )
+        row.primary_url = p_url
+        row.primary_domain = p_dom
+        row.primary_confidence = p_conf
+        row.primary_method = "body-link" if p_conf != "low" else "self"
     return True
 
 
@@ -756,16 +958,27 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
 
 # ------------------------------------------------------------- main
 def main() -> int:
-    global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS
+    global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
+    global PRIMARY_CUES
     WHITELIST = load_whitelist_domains()
     BLACKLIST = load_blacklist()
     BRANDS = load_brand_domains()
+    PRIMARY_CUES = load_primary_source_cues()
     SEEN_FINAL_URLS = set()
     print(f"Whitelist domains loaded: {len(WHITELIST)}")
     print(f"Brand list loaded: {len(BRANDS)} brands (used to whitelist blacklist hits)")
     print(
         f"Blacklist: {len(BLACKLIST.topic_phrases_ru)} RU phrases, "
         f"{len(BLACKLIST.topic_phrases_en)} EN phrases, {len(BLACKLIST.domains)} domains"
+    )
+
+    # --- SQLite dedup + classification cache (persistent across runs) --------
+    DEDUP_STORE = DedupStore(SQLITE_PATH)
+    PREVIOUSLY_SEEN = DEDUP_STORE.load_cache(DEDUP_PORTAL)
+    print(
+        f"SQLite cache loaded: {len(PREVIOUSLY_SEEN)} classified url_hashes "
+        f"for portal={DEDUP_PORTAL} ({SQLITE_PATH}). "
+        f"These will be reconstructed without LLM calls."
     )
 
     svc = sheets_client()
@@ -818,10 +1031,68 @@ def main() -> int:
         except BudgetExceeded as e:
             print(f"\n!!! Бюджет LLM превышен: {e}", file=sys.stderr)
 
+    # ------------------------------------ Primary-source level 2 (corpus-based)
+    _run_corpus_primary_source_pass(article_rows)
+
     write_report(svc, run_ts, results, report_tab)
     write_articles(svc, run_ts, article_rows, articles_tab)
     print(f"Report written to tabs: {report_tab!r}, {articles_tab!r}")
     print(f"Detailed article rows: {len(article_rows)}")
+
+    # Persist the URL hashes + full classification into the SQLite cache.
+    # Next run will see the hash and restore these fields without any LLM
+    # call → cost drops to cents on daily delta-runs.
+    if DEDUP_STORE is not None:
+        import json as _json
+        entries = []
+        for row in article_rows:
+            if not row.article_url:
+                continue
+            # Don't persist rows that ended in a fetch/extract error — we
+            # want the next run to retry them.
+            if row.verdict in {
+                "Отклонить (ошибка загрузки)",
+                "Отклонить (не удалось извлечь)",
+            }:
+                continue
+            canon_u = canonicalise(row.article_url)
+            uh = url_hash(canon_u)
+            # Strip the "из кэша" marker before persisting so a row never
+            # ends up with the marker on its own saved snapshot.
+            note_out = (row.llm_note or "").replace("из кэша", "").strip(" |").strip()
+            cached_row = {
+                "verdict": row.verdict,
+                "is_article": row.is_article,
+                "article_score": row.article_score,
+                "article_reasons": row.article_reasons[:300],
+                "auto_topic": row.auto_topic,
+                "auto_hits": row.auto_hits[:200],
+                "llm_relevance": row.llm_relevance,
+                "llm_section": row.llm_section,
+                "llm_region": row.llm_region,
+                "llm_confidence": row.llm_confidence,
+                "llm_title_en": row.llm_title_en[:300],
+                "llm_title_ru": row.llm_title_ru[:300],
+                "llm_note": note_out,
+                "primary_url": row.primary_url,
+                "primary_domain": row.primary_domain,
+                "primary_confidence": row.primary_confidence,
+                "primary_method": row.primary_method,
+            }
+            entries.append((
+                uh,
+                canon_u,
+                row.title[:500],
+                row.published_at or None,
+                domain_of(canon_u),
+                DEDUP_PORTAL,
+                _json.dumps(cached_row, ensure_ascii=False),
+            ))
+        DEDUP_STORE.mark_many_with_cache(entries)
+        print(
+            f"SQLite cache: +{len(entries)} rows stored with full classification "
+            f"(next run will restore these without LLM)."
+        )
 
     # Apply conditional formatting (colours + frozen header) to the new articles tab
     try:

@@ -32,10 +32,41 @@ SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 TAB_BASE = "ТЕСТ статьи"
-VERDICT_COLUMN_LETTER = "O"  # 15th column — «Итог бота»
-START_COL = 0  # A
-END_COL = 17  # up to Q inclusive
+VERDICT_COLUMN_LETTER = "M"  # 13th column in the new layout — «Итог бота»
+START_COL = 0   # A
+END_COL = 26    # A..Z inclusive = 26 columns
 MAX_ROWS = 2000
+
+# --- Block bands (0-based half-open ranges) ------------------------------
+BLOCK_BANDS: list[tuple[int, int, dict[str, float], str]] = [
+    # (start_col, end_col, bg colour, label)
+    (0,  7,  {"red": 0.80, "green": 0.93, "blue": 0.80}, "«Что за новость»"),
+    (7, 10,  {"red": 0.82, "green": 0.89, "blue": 0.98}, "«Первоисточник»"),
+    (10, 15, {"red": 1.00, "green": 0.95, "blue": 0.80}, "«Для редактора»"),
+    (15, 26, {"red": 0.88, "green": 0.88, "blue": 0.88}, "«Отладка» (скрыто по умолчанию)"),
+]
+# Columns to hide by default (index 15..25 — the whole «Отладка» block).
+HIDDEN_COLUMNS: tuple[int, ...] = tuple(range(15, 26))
+# Columns whose rows should wrap (title, reasons, primary URL, note).
+WRAP_COLUMNS: tuple[int, ...] = (1, 8, 10, 14, 21)
+# Pixel widths (sheet feels a lot less cramped when title is wide enough).
+COL_WIDTHS: dict[int, int] = {
+    0: 145,   # Прогон
+    1: 460,   # Заголовок (EN/RU)
+    2: 320,   # URL статьи
+    3: 140,   # Раздел
+    4: 70,    # Регион
+    5: 165,   # Дата
+    6: 75,    # Картинка
+    7: 200,   # Первоисточник домен
+    8: 340,   # Первоисточник URL
+    9: 110,   # Уверенность
+    10: 280,  # Пометка
+    11: 110,  # Confidence
+    12: 210,  # Итог бота
+    13: 260,  # Ручная проверка
+    14: 260,  # Комментарий
+}
 
 GREEN = {"red": 0.70, "green": 0.92, "blue": 0.72}   # точно новость
 YELLOW = {"red": 1.00, "green": 0.93, "blue": 0.72}  # возможно новость
@@ -51,10 +82,14 @@ RULES: list[tuple[str, dict]] = [
     (f'=$%s2="Точно не новость (не авто)"' % VERDICT_COLUMN_LETTER, GREY),
     (f'=$%s2="Точно не новость (старая)"' % VERDICT_COLUMN_LETTER, GREY),
     (f'=$%s2="Точно не новость (чёрный список)"' % VERDICT_COLUMN_LETTER, GREY),
+    # LLM relevance-check rejection — stays yellow so the editor can still
+    # see what the LLM filtered out, but clearly marked as rejected.
+    (f'=$%s2="Отклонено LLM"' % VERDICT_COLUMN_LETTER, YELLOW),
     # Errors and dedup:
     (f'=$%s2="Отклонить (ошибка загрузки)"' % VERDICT_COLUMN_LETTER, RED),
     (f'=$%s2="Отклонить (не удалось извлечь)"' % VERDICT_COLUMN_LETTER, RED),
     (f'=$%s2="Отклонить (дубль финального URL)"' % VERDICT_COLUMN_LETTER, BLUE),
+    (f'=$%s2="Отклонить (обработан ранее)"' % VERDICT_COLUMN_LETTER, BLUE),
     # Back-compat for older v1/v2 tabs:
     (f'=$%s2="Отправить в LLM"' % VERDICT_COLUMN_LETTER, GREEN),
     (f'=$%s2="Отклонить (не статья)"' % VERDICT_COLUMN_LETTER, GREY),
@@ -97,17 +132,22 @@ def apply_formatting(svc, tab_name: str) -> None:  # type: ignore[no-untyped-def
         requests.append(
             {"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": i}}
         )
+    # Freeze the header row AND the first 3 columns (прогон + заголовок + URL)
     requests.append(
         {
             "updateSheetProperties": {
                 "properties": {
                     "sheetId": sheet_id,
-                    "gridProperties": {"frozenRowCount": 1},
+                    "gridProperties": {
+                        "frozenRowCount": 1,
+                        "frozenColumnCount": 3,
+                    },
                 },
-                "fields": "gridProperties.frozenRowCount",
+                "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
             }
         }
     )
+    # Base header styling: bold + wrap (each block adds its own colour below).
     requests.append(
         {
             "repeatCell": {
@@ -120,15 +160,78 @@ def apply_formatting(svc, tab_name: str) -> None:  # type: ignore[no-untyped-def
                 },
                 "cell": {
                     "userEnteredFormat": {
-                        "backgroundColor": {"red": 0.85, "green": 0.85, "blue": 0.85},
                         "textFormat": {"bold": True},
                         "wrapStrategy": "WRAP",
+                        "verticalAlignment": "MIDDLE",
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,textFormat,wrapStrategy)",
+                "fields": "userEnteredFormat(textFormat,wrapStrategy,verticalAlignment)",
             }
         }
     )
+    # Colour-band each logical block in the header row.
+    for start, end, bg, _label in BLOCK_BANDS:
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 0, "endRowIndex": 1,
+                        "startColumnIndex": start, "endColumnIndex": end,
+                    },
+                    "cell": {"userEnteredFormat": {"backgroundColor": bg}},
+                    "fields": "userEnteredFormat.backgroundColor",
+                }
+            }
+        )
+    # Hide the debug columns by default (editors can unhide via right-click).
+    for col in HIDDEN_COLUMNS:
+        requests.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id, "dimension": "COLUMNS",
+                        "startIndex": col, "endIndex": col + 1,
+                    },
+                    "properties": {"hiddenByUser": True},
+                    "fields": "hiddenByUser",
+                }
+            }
+        )
+    # Per-column pixel widths (visible columns only).
+    for col, px in COL_WIDTHS.items():
+        requests.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id, "dimension": "COLUMNS",
+                        "startIndex": col, "endIndex": col + 1,
+                    },
+                    "properties": {"pixelSize": px},
+                    "fields": "pixelSize",
+                }
+            }
+        )
+    # Enable text wrap + top-align for body-content columns (title, URL, reasons).
+    for col in WRAP_COLUMNS:
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1, "endRowIndex": MAX_ROWS,
+                        "startColumnIndex": col, "endColumnIndex": col + 1,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "wrapStrategy": "WRAP",
+                            "verticalAlignment": "TOP",
+                        }
+                    },
+                    "fields": "userEnteredFormat(wrapStrategy,verticalAlignment)",
+                }
+            }
+        )
     for formula, colour in RULES:
         requests.append(
             {

@@ -34,6 +34,25 @@ phrases:
     - "баспасөз қызметі"
     - "хабарлайды"
 
+# Mirror / cross-posting hosts. A link to one of these is NOT a primary
+# source even if it looks like an external link — usually it's the same
+# author reposting their own content (Telegram post → MAX, VK, OK, etc.).
+# The primary-source detector filters these out before picking a winner.
+mirror_hosts:
+  - max.ru
+  - t.me
+  - telegram.me
+  - telegra.ph
+  - vk.com
+  - vk.ru
+  - ok.ru
+  - dzen.ru
+  - zen.yandex.ru
+  - m.ok.ru
+  - youtu.be
+  - youtube.com
+  - instagram.com
+
 # Hosts that are press-release aggregators or brand pressrooms.
 # Any outbound link to one of these is a near-certain primary source.
 press_release_hosts:

@@ -51,6 +51,7 @@ class PrimarySourceCues(BaseModel):
 
     phrases: dict[str, list[str]] = Field(default_factory=dict)
     press_release_hosts: list[str] = Field(default_factory=list)
+    mirror_hosts: list[str] = Field(default_factory=list)
 
 
 def load_sections() -> list[SectionDefinition]:
@@ -81,6 +82,7 @@ def load_primary_source_cues() -> PrimarySourceCues:
     return PrimarySourceCues(
         phrases=data.get("phrases", {}),
         press_release_hosts=data.get("press_release_hosts", []),
+        mirror_hosts=data.get("mirror_hosts", []),
     )
 
 
@@ -101,6 +103,21 @@ class Blacklist(BaseModel):
         return [*self.topic_phrases_ru, *self.topic_phrases_en]
 
 
+class HttpQuirks(BaseModel):
+    """Per-domain HTTP workarounds (see config/http_quirks.yaml)."""
+
+    ssl_insecure: set[str] = Field(default_factory=set)
+    url_rewrites: dict[str, str] = Field(default_factory=dict)
+
+
+def load_http_quirks() -> HttpQuirks:
+    data = _read_yaml(CONFIG_DIR / "http_quirks.yaml") or {}
+    return HttpQuirks(
+        ssl_insecure={d.strip().lower() for d in data.get("ssl_insecure", []) if d},
+        url_rewrites={str(k): str(v) for k, v in (data.get("url_rewrites") or {}).items()},
+    )
+
+
 def load_blacklist() -> Blacklist:
     data = _read_yaml(CONFIG_DIR / "blacklist.yaml") or {}
     return Blacklist(
@@ -113,11 +130,13 @@ def load_blacklist() -> Blacklist:
 __all__ = [
     "Blacklist",
     "BrandDomainEntry",
+    "HttpQuirks",
     "PrimarySourceCues",
     "SourceOverride",
     "SourcesSchema",
     "load_blacklist",
     "load_brand_domains",
+    "load_http_quirks",
     "load_primary_source_cues",
     "load_sections",
     "load_sources_overrides",

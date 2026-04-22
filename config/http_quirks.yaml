@@ -1,0 +1,36 @@
+# Per-domain HTTP quirks — whitelisted workarounds for broken servers.
+#
+# `ssl_insecure`:  skip TLS verification. Ok ONLY for news/PR sites we just
+#                  READ HTML from. Never add a domain here that we submit
+#                  credentials to.
+#
+# `url_rewrites`:  map an old source URL (the one listed in the Google Sheet)
+#                  to its current canonical location. Prefer updating the
+#                  sheet long-term; this is a quick-win patch.
+
+ssl_insecure:
+  # Sites with expired / broken cert chains that respond fine once we
+  # skip verification. Verified via smoke test.
+  #   autoins.ru  — Russian auto insurer PR feed
+  #   kianewscenter.com  — Kia global PR
+  #   vwpress.co.uk  — VW UK press site
+  - autoins.ru
+  - www.kianewscenter.com
+  - kianewscenter.com
+  - vwpress.co.uk
+
+  # NOTE: the following hosts also error on SSL but with
+  #   UNEXPECTED_EOF_WHILE_READING — that's not a cert problem, the server
+  #   is cutting the TLS stream (most likely geo-IP block or anti-bot WAF).
+  #   Adding them here does nothing; they need a residential proxy.
+  #     portal.elpts.ru
+  #     infiniti-now.ru
+  #     www.infiniti.ru
+  #     press.skoda-avto.ru
+  #     roskazna.gov.ru   (also 20s timeout — geo-blocked)
+
+url_rewrites:
+  # Old sheet URL -> live URL. Applied at fetch time.
+  "https://www.uber.com/en-GB/newsroom/news/": "https://www.uber.com/newsroom/"
+  # NOTE: gazgroup.ru/news/ returns 404 on all subpaths we tried; needs a
+  # fresh URL from the editor. Leaving unrewritten until we get one.
