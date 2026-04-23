@@ -154,6 +154,8 @@ class ArticleRow:
     published_at: str = ""
     body_len: int = 0
     has_image: bool = False
+    image_url: str = ""           # actual URL (P0 — task spec asks for URL, not flag)
+    source_language: str = ""     # e.g. "en" / "de" / "ru" — used in the title tag "(de)"
     is_article: bool = False
     article_score: float = 0.0
     article_reasons: str = ""
@@ -293,60 +295,78 @@ HEADER = [
 ]
 
 
-# ----- Re-designed 4-block layout (27 columns, 16 visible, 11 hidden) ------
-# Block 1 (light green):  "Что за новость"        — columns A–H
-# Block 2 (light blue):   "Первоисточник"         — columns I–K
-# Block 3 (light yellow): "Для редактора"          — columns L–P
-# Block 4 (light grey):   "Отладка"  (hidden)     — columns Q–AA
+# ----- Re-designed 4-block layout (28 columns, 17 visible, 11 hidden) ------
+# Block 1 (light green):  "Что за новость"        — columns A–I
+# Block 2 (light blue):   "Первоисточник"         — columns J–L
+# Block 3 (light yellow): "Для редактора"          — columns M–Q
+# Block 4 (light grey):   "Отладка"  (hidden)     — columns R–AB
 ARTICLES_HEADER = [
     # --- Block 1: «Что за новость» --------------------------------------
     "Прогон (UTC)",                    # A
-    "Заголовок (EN / RU)",             # B  combined EN+RU, wrapped
+    "Заголовок (EN / RU)",             # B  combined EN+RU (+ source lang tag)
     "Лид",                             # C  first ~300 chars of body
     "URL статьи",                      # D
-    "Раздел",                          # E  LLM section
+    "Раздел",                          # E  LLM section (+ "(неактивный)" for Test-drive)
     "Регион",                          # F  Local / Global
-    "Дата публикации",                 # G
-    "Картинка",                        # H  «да» / пусто
+    "Страна",                          # G  Russia / Uzbekistan / Kazakhstan
+    "Дата публикации",                 # H
+    "Картинка (URL)",                  # I  full image URL, not just a flag
     # --- Block 2: «Первоисточник» ---------------------------------------
-    "Первоисточник (домен)",           # I
-    "Первоисточник URL",               # J
-    "Уверенность источника",           # K  high / medium / low
+    "Первоисточник (домен)",           # J
+    "Первоисточник URL",               # K
+    "Уверенность источника",           # L  high / medium / low
     # --- Block 3: «Для редактора» ---------------------------------------
-    "Пометка бота",                    # L
-    "Confidence раздела",              # M  0.00-1.00
-    "Итог бота",                       # N  ← colour formatting column
-    "Ручная проверка (Новость / Не новость)",  # O
-    "Комментарий",                     # P
+    "Пометка бота",                    # M
+    "Confidence раздела",              # N  0.00-1.00
+    "Итог бота",                       # O  ← colour formatting column
+    "Ручная проверка (Новость / Не новость)",  # P
+    "Комментарий",                     # Q
     # --- Block 4: «Отладка» (hidden by default) --------------------------
-    "URL источника",                   # Q
-    "№ ист.",                          # R
-    "№ ст.",                           # S
-    "Тело (симв)",                     # T
-    "is_article",                      # U
-    "is_article score",                # V
-    "Причины is_article",              # W
-    "Hits темы",                       # X
-    "LLM relevance",                   # Y
-    "Стоимость LLM, $",                # Z
-    "Способ поиска источника",         # AA
+    "URL источника",                   # R
+    "№ ист.",                          # S
+    "№ ст.",                           # T
+    "Тело (симв)",                     # U
+    "is_article",                      # V
+    "is_article score",                # W
+    "Причины is_article",              # X
+    "Hits темы",                       # Y
+    "LLM relevance",                   # Z
+    "Стоимость LLM, $",                # AA
+    "Способ поиска источника",         # AB
 ]
+
+# Portal → country label (visible in the sheet) + numeric code (kept for
+# future CMS integration — per the task spec RU=7, UZ=608, KZ=14).
+PORTAL_COUNTRY: dict[str, tuple[str, int]] = {
+    "RU": ("Russia", 7),
+    "UZ": ("Uzbekistan", 608),
+    "KZ": ("Kazakhstan", 14),
+}
 
 
 def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None:  # type: ignore[no-untyped-def]
     svc.spreadsheets().values().clear(
         spreadsheetId=SHEET_ID, range=f"'{tab}'"
     ).execute()
+    country_label, _country_code = PORTAL_COUNTRY.get(DEDUP_PORTAL, ("Russia", 7))
     out = [ARTICLES_HEADER]
     for r in rows:
-        # Combine EN + RU titles for one-cell display. Falls back to original
-        # scraped title when LLM translation isn't available (rejects etc.).
+        # Combine EN + RU titles for one-cell display, with the source
+        # language tag the task spec requested ("Headline (de)").
+        lang_tag = f" ({r.source_language})" if r.source_language else ""
         if r.llm_title_en and r.llm_title_ru:
-            combined_title = f"EN: {r.llm_title_en[:220]}\nRU: {r.llm_title_ru[:220]}"
+            combined_title = (
+                f"EN: {r.llm_title_en[:220]}{lang_tag}\n"
+                f"RU: {r.llm_title_ru[:220]}{lang_tag}"
+            )
         elif r.title:
-            combined_title = r.title[:400]
+            combined_title = f"{r.title[:400]}{lang_tag}"
         else:
             combined_title = ""
+        # Test-drive rows are published with "неактивный" status per spec.
+        section_cell = r.llm_section
+        if section_cell == "Test-drive":
+            section_cell = "Test-drive (неактивный)"
         # is_article heuristic + topic heuristic — compact debug string
         is_article_label = "Да" if r.is_article else "Нет"
         topic_label = "авто/эконом" if r.auto_topic else "не авто"
@@ -362,10 +382,11 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
                 combined_title,
                 lede,
                 r.article_url,
-                r.llm_section,
+                section_cell,
                 r.llm_region,
+                country_label,
                 r.published_at,
-                "да" if r.has_image else "",
+                r.image_url or "",
                 # Block 2 — «Первоисточник»
                 r.primary_domain,
                 r.primary_url,
@@ -905,6 +926,8 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     row.body_excerpt = article.body[:1000]  # ≤1000 chars → ~40% token saving on LLM input
     row.published_at = article.published_at.isoformat() if article.published_at else ""
     row.has_image = bool(article.image_url)
+    row.image_url = article.image_url or ""
+    row.source_language = (article.source_language or "").lower()[:2]
 
     # --- Freshness gate ------------------------------------------------------
     # If the article has a known publication timestamp and it's older than

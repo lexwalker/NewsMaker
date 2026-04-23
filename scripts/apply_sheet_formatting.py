@@ -32,23 +32,23 @@ SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 TAB_BASE = "ТЕСТ статьи"
-VERDICT_COLUMN_LETTER = "N"  # 14th column in the new layout — «Итог бота»
+VERDICT_COLUMN_LETTER = "O"  # 15th column — «Итог бота» (shifted after Country insert)
 START_COL = 0   # A
-END_COL = 27    # A..AA inclusive = 27 columns (one more after the Лид insert)
+END_COL = 28    # A..AB inclusive = 28 columns (after Лид + Country inserts)
 MAX_ROWS = 2000
 
 # --- Block bands (0-based half-open ranges) ------------------------------
 BLOCK_BANDS: list[tuple[int, int, dict[str, float], str]] = [
     # (start_col, end_col, bg colour, label)
-    (0,  8,  {"red": 0.80, "green": 0.93, "blue": 0.80}, "«Что за новость»"),
-    (8, 11,  {"red": 0.82, "green": 0.89, "blue": 0.98}, "«Первоисточник»"),
-    (11, 16, {"red": 1.00, "green": 0.95, "blue": 0.80}, "«Для редактора»"),
-    (16, 27, {"red": 0.88, "green": 0.88, "blue": 0.88}, "«Отладка» (скрыто по умолчанию)"),
+    (0,  9,  {"red": 0.80, "green": 0.93, "blue": 0.80}, "«Что за новость»"),
+    (9, 12,  {"red": 0.82, "green": 0.89, "blue": 0.98}, "«Первоисточник»"),
+    (12, 17, {"red": 1.00, "green": 0.95, "blue": 0.80}, "«Для редактора»"),
+    (17, 28, {"red": 0.88, "green": 0.88, "blue": 0.88}, "«Отладка» (скрыто по умолчанию)"),
 ]
-# Columns to hide by default (index 16..26 — the whole «Отладка» block).
-HIDDEN_COLUMNS: tuple[int, ...] = tuple(range(16, 27))
-# Columns whose rows should wrap (title, lede, primary URL, note, reasons).
-WRAP_COLUMNS: tuple[int, ...] = (1, 2, 9, 11, 15, 22)
+# Columns to hide by default (index 17..27 — the whole «Отладка» block).
+HIDDEN_COLUMNS: tuple[int, ...] = tuple(range(17, 28))
+# Columns whose rows should wrap (title, lede, image URL, primary URL, note, reasons).
+WRAP_COLUMNS: tuple[int, ...] = (1, 2, 8, 10, 12, 16, 23)
 # Pixel widths (sheet feels a lot less cramped when title is wide enough).
 COL_WIDTHS: dict[int, int] = {
     0: 145,   # Прогон
@@ -57,16 +57,17 @@ COL_WIDTHS: dict[int, int] = {
     3: 300,   # URL статьи
     4: 140,   # Раздел
     5: 70,    # Регион
-    6: 165,   # Дата
-    7: 75,    # Картинка
-    8: 200,   # Первоисточник домен
-    9: 320,   # Первоисточник URL
-    10: 110,  # Уверенность
-    11: 260,  # Пометка
-    12: 110,  # Confidence
-    13: 210,  # Итог бота
-    14: 260,  # Ручная проверка
-    15: 260,  # Комментарий
+    6: 100,   # Страна
+    7: 165,   # Дата
+    8: 260,   # Картинка URL
+    9: 200,   # Первоисточник домен
+    10: 320,  # Первоисточник URL
+    11: 110,  # Уверенность
+    12: 260,  # Пометка
+    13: 110,  # Confidence
+    14: 210,  # Итог бота
+    15: 260,  # Ручная проверка
+    16: 260,  # Комментарий
 }
 
 GREEN = {"red": 0.70, "green": 0.92, "blue": 0.72}   # точно новость

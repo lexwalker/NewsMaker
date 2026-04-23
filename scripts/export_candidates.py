@@ -53,10 +53,10 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CANDIDATE_VERDICTS = {"Точно новость", "Возможно новость"}
 
 # Column indices from the articles tab (matches write_articles()).
-# Layout after the "Лид" insert (post-v16):
+# Layout after "Лид" (C) + "Country" (G) inserts (post-v16):
 COL_TITLE_CELL = 1   # B — "EN: ...\nRU: ..." or plain title
 COL_URL = 3          # D
-COL_VERDICT = 13     # N
+COL_VERDICT = 14     # O
 
 # Cap body excerpt — ~1800 chars is plenty for classification and keeps
 # the overall JSON portable.
