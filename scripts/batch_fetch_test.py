@@ -101,7 +101,7 @@ HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # DISABLED on timeouts, so this just widens the window once.
 ENABLE_LLM = False        # flip to False to run pure heuristics again
 LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
-FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "48"))  # drop articles older than this
+FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # drop articles older than this
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
 
 # Real Telegram channels that the editor uses (from 'Новости опубликованные').
@@ -293,42 +293,43 @@ HEADER = [
 ]
 
 
-# ----- Re-designed 4-block layout (26 columns, 15 visible, 11 hidden) ------
-# Block 1 (light green):  "Что за новость"        — columns A–G
-# Block 2 (light blue):   "Первоисточник"         — columns H–J
-# Block 3 (light yellow): "Для редактора"          — columns K–O
-# Block 4 (light grey):   "Отладка"  (hidden)     — columns P–Z
+# ----- Re-designed 4-block layout (27 columns, 16 visible, 11 hidden) ------
+# Block 1 (light green):  "Что за новость"        — columns A–H
+# Block 2 (light blue):   "Первоисточник"         — columns I–K
+# Block 3 (light yellow): "Для редактора"          — columns L–P
+# Block 4 (light grey):   "Отладка"  (hidden)     — columns Q–AA
 ARTICLES_HEADER = [
     # --- Block 1: «Что за новость» --------------------------------------
     "Прогон (UTC)",                    # A
     "Заголовок (EN / RU)",             # B  combined EN+RU, wrapped
-    "URL статьи",                      # C
-    "Раздел",                          # D  LLM section
-    "Регион",                          # E  Local / Global
-    "Дата публикации",                 # F
-    "Картинка",                        # G  «да» / пусто
+    "Лид",                             # C  first ~300 chars of body
+    "URL статьи",                      # D
+    "Раздел",                          # E  LLM section
+    "Регион",                          # F  Local / Global
+    "Дата публикации",                 # G
+    "Картинка",                        # H  «да» / пусто
     # --- Block 2: «Первоисточник» ---------------------------------------
-    "Первоисточник (домен)",           # H
-    "Первоисточник URL",               # I
-    "Уверенность источника",           # J  high / medium / low
+    "Первоисточник (домен)",           # I
+    "Первоисточник URL",               # J
+    "Уверенность источника",           # K  high / medium / low
     # --- Block 3: «Для редактора» ---------------------------------------
-    "Пометка бота",                    # K
-    "Confidence раздела",              # L  0.00-1.00
-    "Итог бота",                       # M  ← colour formatting column
-    "Ручная проверка (Новость / Не новость)",  # N
-    "Комментарий",                     # O
+    "Пометка бота",                    # L
+    "Confidence раздела",              # M  0.00-1.00
+    "Итог бота",                       # N  ← colour formatting column
+    "Ручная проверка (Новость / Не новость)",  # O
+    "Комментарий",                     # P
     # --- Block 4: «Отладка» (hidden by default) --------------------------
-    "URL источника",                   # P
-    "№ ист.",                          # Q
-    "№ ст.",                           # R
-    "Тело (симв)",                     # S
-    "is_article",                      # T
-    "is_article score",                # U
-    "Причины is_article",              # V
-    "Hits темы",                       # W
-    "LLM relevance",                   # X
-    "Стоимость LLM, $",                # Y
-    "Способ поиска источника",         # Z
+    "URL источника",                   # Q
+    "№ ист.",                          # R
+    "№ ст.",                           # S
+    "Тело (симв)",                     # T
+    "is_article",                      # U
+    "is_article score",                # V
+    "Причины is_article",              # W
+    "Hits темы",                       # X
+    "LLM relevance",                   # Y
+    "Стоимость LLM, $",                # Z
+    "Способ поиска источника",         # AA
 ]
 
 
@@ -350,11 +351,16 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
         is_article_label = "Да" if r.is_article else "Нет"
         topic_label = "авто/эконом" if r.auto_topic else "не авто"
         combined_reasons = r.article_reasons[:400]
+        # Lede — first ~300 chars of body, cleaned of leading/trailing
+        # whitespace. Lets the editor skim and judge articles with generic
+        # titles like "Соллерс" or "Новости" without opening the URL.
+        lede = (r.body_excerpt or "").strip().replace("\n\n", "\n")[:300]
         out.append(
             [
                 # Block 1 — «Что за новость»
                 run_ts,
                 combined_title,
+                lede,
                 r.article_url,
                 r.llm_section,
                 r.llm_region,

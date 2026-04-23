@@ -190,6 +190,121 @@ def test_lifestyle_title_is_rejected() -> None:
     assert not v.is_article
 
 
+def test_auto_topic_german() -> None:
+    raw = _article(
+        title="Mercedes-Benz stellt neues Elektroauto vor",
+        body=(
+            "Der Stuttgarter Automobilhersteller Mercedes-Benz präsentierte heute "
+            "ein neues Elektrofahrzeug mit verbessertem Antrieb und modernem "
+            "Verbrennungsmotor-Alternative. Das Modell wird im Werk Sindelfingen "
+            "produziert. Der Händler-Vertrieb startet im September." * 3
+        ),
+    )
+    t = is_auto_or_economy(raw)
+    assert t.is_auto_or_economy
+    assert t.auto_hits >= 2
+
+
+def test_auto_topic_french() -> None:
+    raw = _article(
+        title="Renault dévoile un nouveau véhicule électrique",
+        body=(
+            "Le constructeur français Renault a dévoilé sa nouvelle berline "
+            "électrique. La motorisation hybride rechargeable offre plus "
+            "d'autonomie. Le modèle sera produit dans l'usine de Douai et "
+            "distribué par le réseau de concessionnaires." * 3
+        ),
+    )
+    t = is_auto_or_economy(raw)
+    assert t.is_auto_or_economy
+    assert t.auto_hits >= 2
+
+
+def test_auto_topic_italian() -> None:
+    raw = _article(
+        title="Ferrari presenta una nuova vettura ibrida",
+        body=(
+            "La casa automobilistica Ferrari ha presentato una nuova "
+            "automobile ibrida. Il modello utilizza un motore elettrico "
+            "combinato con un endotermico. La produzione inizierà nello "
+            "stabilimento di Maranello." * 3
+        ),
+    )
+    t = is_auto_or_economy(raw)
+    assert t.is_auto_or_economy
+
+
+def test_auto_topic_chinese() -> None:
+    raw = _article(
+        title="比亚迪发布新款电动汽车车型",
+        body=(
+            "比亚迪汽车今日发布全新新能源车型。新车搭载先进的电动汽车技术，"
+            "采用混合动力系统。制造商将在深圳工厂生产，预计销量将达到历史新高。" * 3
+        ),
+    )
+    t = is_auto_or_economy(raw)
+    assert t.is_auto_or_economy
+
+
+def test_auto_topic_japanese() -> None:
+    raw = _article(
+        title="トヨタが新型自動車を発表",
+        body=(
+            "トヨタ自動車は本日、新型の電気自動車を発表しました。"
+            "ハイブリッド車のラインナップを拡充し、新しいエンジンを"
+            "搭載しています。メーカーは生産工場を拡大予定です。" * 3
+        ),
+    )
+    t = is_auto_or_economy(raw)
+    assert t.is_auto_or_economy
+
+
+def test_uncovered_language_soft_fallback() -> None:
+    """Korean article with no keyword hits — soft-pass via source_language."""
+    raw = _article(
+        title="현대자동차가 신형 전기차를 공개했다",
+        body="현대차 그룹이 오늘 새로운 전기차를 공개했다. " * 30,
+        source_language="ko",
+    )
+    t = is_auto_or_economy(raw)
+    assert t.is_auto_or_economy
+    assert any("lang-fallback" in s for s in t.hit_samples)
+
+
+def test_uncovered_language_no_fallback_when_negative() -> None:
+    """Korean with negative sports keyword should NOT soft-pass."""
+    raw = _article(
+        title="축구 결승전 결과",
+        body="축구 경기 football match results. " * 30,
+        source_language="ko",
+    )
+    t = is_auto_or_economy(raw)
+    # "football" is in negative keywords → no soft-pass
+    assert not t.is_auto_or_economy
+
+
+def test_no_source_language_no_fallback() -> None:
+    """Missing source_language must not trigger the fallback."""
+    raw = _article(
+        title="Generic headline on agriculture policy",
+        body="A piece about wheat harvest schedules and state subsidies. " * 20,
+        source_language="",
+    )
+    t = is_auto_or_economy(raw)
+    assert not t.is_auto_or_economy
+
+
+def test_covered_language_no_fallback() -> None:
+    """English with 0 auto keywords must NOT soft-pass — covered by lexicon."""
+    raw = _article(
+        title="A piece on flower gardening trends",
+        body="Growing tulips and roses this spring. " * 20,
+        source_language="en",
+    )
+    t = is_auto_or_economy(raw)
+    assert not t.is_auto_or_economy
+
+
 def test_whitelist_domain_gets_bonus() -> None:
     raw = _article(
         url="https://www.autostat.ru/news/12345/",

@@ -269,6 +269,64 @@ _AUTO_KEYWORDS_RU = (
     "москвич", "чери", "хавейл", "джили",
 )
 
+# German — Mercedes / BMW / VW press rooms often serve DE-only releases.
+_AUTO_KEYWORDS_DE = (
+    "automobil", "fahrzeug", "kraftfahrzeug", "pkw", " wagen", "modell",
+    "elektroauto", "elektrofahrzeug", "hybrid", "verbrennungsmotor",
+    "motor", "antrieb", "getriebe", "karosserie",
+    " werk", "produktion", "fertigung", "werkstatt",
+    "händler", "vertrieb", "marke", "hersteller", "autobauer",
+    "neuwagen", "gebrauchtwagen", "rückruf", "vorstellen", "premiere",
+    "limousine", "kombi", "geländewagen", "stadtauto",
+)
+
+# French — Renault / Citroën / Peugeot / ACEA press rooms.
+_AUTO_KEYWORDS_FR = (
+    "voiture", "véhicule", "vehicule", "automobile", "constructeur",
+    "marque", "modèle", "modele", "motorisation", "moteur",
+    "hybride", "électrique", "electrique", "thermique",
+    "berline", "citadine", "utilitaire", "monospace",
+    "concessionnaire", "concession", "production", "usine",
+    "fabricant", "rappel ", "lancement", "dévoile", "devoile",
+    "salon de l'auto", "marché auto", "marche auto",
+)
+
+# Italian — Ferrari / Lamborghini / Fiat corporate pages.
+_AUTO_KEYWORDS_IT = (
+    "automobile", "autovettura", "vettura", "veicolo", "automotive",
+    "modello", "motore", "ibrido", "elettrico", "endotermico",
+    "berlina", "utilitaria", "suv", "produzione", "stabilimento",
+    "costruttore", "casa automobilistica", "mercato auto",
+    "concessionario", "presentazione", "richiamo",
+)
+
+# Spanish — SEAT / Latin America markets.
+_AUTO_KEYWORDS_ES = (
+    "coche", "vehículo", "vehiculo", "automóvil", "automovil",
+    "fabricante", "marca", "modelo", "motor", "eléctrico", "electrico",
+    "híbrido", "hibrido", "concesionario", "concesión",
+    "berlina", "todoterreno", "mercado automotriz", "ventas de autos",
+    "producción", "planta", "lanzamiento", "retiro del mercado",
+)
+
+# Chinese — CarNewsChina sometimes serves EN, Gasgoo mixes languages,
+# but native Chinese sites publish in ZH. Match core ideographs.
+_AUTO_KEYWORDS_ZH = (
+    "汽车", "车辆", "轿车", "越野车", "皮卡", "车型",
+    "电动车", "电动汽车", "新能源", "混合动力", "插电混动",
+    "发动机", "变速箱", "底盘",
+    "制造商", "厂商", "销量", "销售", "工厂",
+    "车展", "发布", "召回", "上市",
+)
+
+# Japanese — Toyota / Honda / Subaru global sites sometimes serve JP.
+_AUTO_KEYWORDS_JA = (
+    "自動車", "車両", "乗用車", "クルマ", "車種",
+    "電気自動車", "ハイブリッド", "エンジン", "モーター",
+    "メーカー", "ディーラー", "販売", "生産", "工場",
+    "モーターショー", "発表", "リコール",
+)
+
 _NEGATIVE_KEYWORDS = (
     # sport
     "football", "soccer", "basketball", "hockey ", "nba ", "nfl ",
@@ -291,16 +349,35 @@ class TopicVerdict:
     hit_samples: list[str]
 
 
+_ALL_AUTO_KEYWORDS: tuple[str, ...] = (
+    _AUTO_KEYWORDS_EN
+    + _AUTO_KEYWORDS_RU
+    + _AUTO_KEYWORDS_DE
+    + _AUTO_KEYWORDS_FR
+    + _AUTO_KEYWORDS_IT
+    + _AUTO_KEYWORDS_ES
+    + _AUTO_KEYWORDS_ZH
+    + _AUTO_KEYWORDS_JA
+)
+
+
 def is_auto_or_economy(raw: RawArticle) -> TopicVerdict:
     """Keyword-based topic filter. Non-perfect: ~80% precision.
 
     Strategy: lower-case title + first 2000 chars of body, count auto-keyword
-    hits and negative-keyword hits. Pass if auto_hits ≥ 1 and
-    auto_hits > negative_hits.
+    hits across seven language families (EN/RU/DE/FR/IT/ES/ZH/JA) and
+    negative-keyword hits. Pass if auto_hits ≥ 1 and auto_hits > negative_hits.
+
+    Soft fallback for other languages: if ``raw.source_language`` is set and
+    NOT in {en, ru, de, fr, it, es, zh, ja}, we assume the heuristic lexicon
+    does not cover this language and pass-through with a synthetic single hit
+    so the LLM gets a chance to evaluate. Tuned to avoid false negatives on
+    Korean / Portuguese / Polish / Czech / Dutch press rooms — at worst it
+    sends ~2-3 more articles per run to the cheap LLM relevance check.
     """
     text = (raw.title + "\n" + raw.body[:2000]).lower()
     auto_hits: list[str] = []
-    for kw in _AUTO_KEYWORDS_EN + _AUTO_KEYWORDS_RU:
+    for kw in _ALL_AUTO_KEYWORDS:
         if kw in text:
             auto_hits.append(kw.strip())
     neg_hits: list[str] = [kw.strip() for kw in _NEGATIVE_KEYWORDS if kw in text]
@@ -310,6 +387,19 @@ def is_auto_or_economy(raw: RawArticle) -> TopicVerdict:
     auto_unique = [h for h in auto_hits if not (h in seen or seen.add(h))]
 
     passes = len(auto_unique) >= 1 and len(auto_unique) > len(neg_hits)
+
+    # Soft fallback — uncovered language, no positive hits. Trust LLM pass.
+    if not passes and not auto_unique:
+        lang = (raw.source_language or "").lower()[:2]
+        covered = {"en", "ru", "de", "fr", "it", "es", "zh", "ja"}
+        if lang and lang not in covered and len(neg_hits) == 0:
+            return TopicVerdict(
+                is_auto_or_economy=True,
+                auto_hits=1,
+                negative_hits=0,
+                hit_samples=[f"lang-fallback:{lang}"],
+            )
+
     return TopicVerdict(
         is_auto_or_economy=passes,
         auto_hits=len(auto_unique),
@@ -353,6 +443,18 @@ _AUTO_STRONG_MARKERS = (
     "automotive", "car market", "passenger car", "crossover", "sedan",
     "hatchback", "auto industry", "carmaker", "automaker", "suv",
     "ev market", "electric vehicle",
+    # german
+    "automobil", "automarkt", "pkw-markt", "fahrzeugherstell",
+    "autobauer", "elektroauto",
+    # french
+    "automobile", "marché auto", "marche auto", "constructeur auto",
+    "véhicule particulier", "vehicule particulier",
+    # italian
+    "automobilistic", "mercato auto", "casa automobilistica",
+    # spanish
+    "automóvil", "automovil", "mercado automotriz", "fabricante de auto",
+    # chinese / japanese (strong single-token markers)
+    "汽车", "乘用车", "自動車",
 )
 
 

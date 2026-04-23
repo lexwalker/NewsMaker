@@ -32,40 +32,41 @@ SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 TAB_BASE = "ТЕСТ статьи"
-VERDICT_COLUMN_LETTER = "M"  # 13th column in the new layout — «Итог бота»
+VERDICT_COLUMN_LETTER = "N"  # 14th column in the new layout — «Итог бота»
 START_COL = 0   # A
-END_COL = 26    # A..Z inclusive = 26 columns
+END_COL = 27    # A..AA inclusive = 27 columns (one more after the Лид insert)
 MAX_ROWS = 2000
 
 # --- Block bands (0-based half-open ranges) ------------------------------
 BLOCK_BANDS: list[tuple[int, int, dict[str, float], str]] = [
     # (start_col, end_col, bg colour, label)
-    (0,  7,  {"red": 0.80, "green": 0.93, "blue": 0.80}, "«Что за новость»"),
-    (7, 10,  {"red": 0.82, "green": 0.89, "blue": 0.98}, "«Первоисточник»"),
-    (10, 15, {"red": 1.00, "green": 0.95, "blue": 0.80}, "«Для редактора»"),
-    (15, 26, {"red": 0.88, "green": 0.88, "blue": 0.88}, "«Отладка» (скрыто по умолчанию)"),
+    (0,  8,  {"red": 0.80, "green": 0.93, "blue": 0.80}, "«Что за новость»"),
+    (8, 11,  {"red": 0.82, "green": 0.89, "blue": 0.98}, "«Первоисточник»"),
+    (11, 16, {"red": 1.00, "green": 0.95, "blue": 0.80}, "«Для редактора»"),
+    (16, 27, {"red": 0.88, "green": 0.88, "blue": 0.88}, "«Отладка» (скрыто по умолчанию)"),
 ]
-# Columns to hide by default (index 15..25 — the whole «Отладка» block).
-HIDDEN_COLUMNS: tuple[int, ...] = tuple(range(15, 26))
-# Columns whose rows should wrap (title, reasons, primary URL, note).
-WRAP_COLUMNS: tuple[int, ...] = (1, 8, 10, 14, 21)
+# Columns to hide by default (index 16..26 — the whole «Отладка» block).
+HIDDEN_COLUMNS: tuple[int, ...] = tuple(range(16, 27))
+# Columns whose rows should wrap (title, lede, primary URL, note, reasons).
+WRAP_COLUMNS: tuple[int, ...] = (1, 2, 9, 11, 15, 22)
 # Pixel widths (sheet feels a lot less cramped when title is wide enough).
 COL_WIDTHS: dict[int, int] = {
     0: 145,   # Прогон
-    1: 460,   # Заголовок (EN/RU)
-    2: 320,   # URL статьи
-    3: 140,   # Раздел
-    4: 70,    # Регион
-    5: 165,   # Дата
-    6: 75,    # Картинка
-    7: 200,   # Первоисточник домен
-    8: 340,   # Первоисточник URL
-    9: 110,   # Уверенность
-    10: 280,  # Пометка
-    11: 110,  # Confidence
-    12: 210,  # Итог бота
-    13: 260,  # Ручная проверка
-    14: 260,  # Комментарий
+    1: 380,   # Заголовок (EN/RU)
+    2: 420,   # Лид
+    3: 300,   # URL статьи
+    4: 140,   # Раздел
+    5: 70,    # Регион
+    6: 165,   # Дата
+    7: 75,    # Картинка
+    8: 200,   # Первоисточник домен
+    9: 320,   # Первоисточник URL
+    10: 110,  # Уверенность
+    11: 260,  # Пометка
+    12: 110,  # Confidence
+    13: 210,  # Итог бота
+    14: 260,  # Ручная проверка
+    15: 260,  # Комментарий
 }
 
 GREEN = {"red": 0.70, "green": 0.92, "blue": 0.72}   # точно новость

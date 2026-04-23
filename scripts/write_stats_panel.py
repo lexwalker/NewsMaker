@@ -30,17 +30,18 @@ SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # Column indices (0-based) — must match write_articles() in batch_fetch_test.py
-COL_SECTION = 3          # D  — Раздел
-COL_REGION = 4           # E  — Регион
-COL_PRIMARY_DOM = 7      # H
-COL_PRIMARY_CONF = 9     # J
-COL_VERDICT = 12         # M  — Итог бота
-COL_LLM_REL = 23         # X  — LLM relevance
-COL_COST = 24            # Y  — Стоимость LLM, $
-COL_METHOD = 25          # Z  — Способ поиска источника
+# Layout after adding the "Лид" column (post-v16):
+COL_SECTION = 4          # E  — Раздел
+COL_REGION = 5           # F  — Регион
+COL_PRIMARY_DOM = 8      # I
+COL_PRIMARY_CONF = 10    # K
+COL_VERDICT = 13         # N  — Итог бота
+COL_LLM_REL = 24         # Y  — LLM relevance
+COL_COST = 25            # Z  — Стоимость LLM, $
+COL_METHOD = 26          # AA — Способ поиска источника
 
-STATS_START_COL_LETTER = "AB"  # column 28
-STATS_RANGE_CLEAR = "AB1:AD200"
+STATS_START_COL_LETTER = "AC"  # column 29 (one past the shifted debug block)
+STATS_RANGE_CLEAR = "AC1:AE200"
 
 
 def _svc():
@@ -59,7 +60,7 @@ def _get_sheet_id(svc, tab: str) -> int:
 def _fetch_rows(svc, tab: str) -> list[list[str]]:
     resp = svc.spreadsheets().values().get(
         spreadsheetId=SHEET_ID,
-        range=f"'{tab}'!A2:Z",
+        range=f"'{tab}'!A2:AA",
     ).execute()
     return resp.get("values", []) or []
 
@@ -189,7 +190,7 @@ def build_stats(rows: list[list[str]]) -> list[list[str]]:
     return out
 
 
-def _ensure_columns(svc, sheet_id: int, min_cols: int = 30) -> None:
+def _ensure_columns(svc, sheet_id: int, min_cols: int = 31) -> None:
     """Expand the sheet so it has at least ``min_cols`` columns.
 
     A freshly-created tab has 26 columns (A..Z). The stats panel lives at
@@ -223,11 +224,11 @@ def _ensure_columns(svc, sheet_id: int, min_cols: int = 30) -> None:
 
 def _format_panel(svc, tab: str, sheet_id: int, n_rows: int) -> None:
     """Bold headers + widen columns + grey fill on title cells."""
-    # Columns AB=27, AC=28 (0-based: 27, 28)
-    col_ab = 27
-    col_ac = 28
+    # Columns AC=28, AD=29 (0-based: 28, 29) — shifted after the "Лид" insert.
+    col_ab = 28  # kept variable name for brevity — now actually column AC
+    col_ac = 29
     requests = [
-        # Widen AB to 380, AC to 220
+        # Widen AC to 380, AD to 220
         {
             "updateDimensionProperties": {
                 "range": {
@@ -285,8 +286,8 @@ def main() -> int:
     print(f"Loaded {len(rows)} article rows from '{tab}'.")
     stats = build_stats(rows)
 
-    # Grid has only 26 columns by default — expand to fit AB:AC.
-    _ensure_columns(svc, sheet_id, min_cols=30)
+    # Grid has only 27 columns after the "Лид" insert — expand to fit AC:AD.
+    _ensure_columns(svc, sheet_id, min_cols=31)
 
     # Clear the target block first (covers the possible previous run's stats)
     svc.spreadsheets().values().clear(

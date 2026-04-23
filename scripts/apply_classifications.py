@@ -71,7 +71,9 @@ def main() -> int:
 
     svc = _svc()
 
-    # Build per-cell value updates — Sheets batchUpdate values
+    # Build per-cell value updates — Sheets batchUpdate values.
+    # Column letters reflect the post-"Лид" layout (B=Title, C=Лид, D=URL,
+    # E=Section, F=Region, L=Note, N=Verdict, Y=LLM relevance).
     data_updates: list[dict] = []
     for row, c in classifications.items():
         combined = _combined_title(c)
@@ -85,25 +87,25 @@ def main() -> int:
         data_updates.append(
             {"range": f"'{tab}'!B{row}", "values": [[combined]]}
         )
-        # Col D — section
+        # Col E — section
         data_updates.append(
-            {"range": f"'{tab}'!D{row}", "values": [[section]]}
+            {"range": f"'{tab}'!E{row}", "values": [[section]]}
         )
-        # Col E — region
+        # Col F — region
         data_updates.append(
-            {"range": f"'{tab}'!E{row}", "values": [[region]]}
+            {"range": f"'{tab}'!F{row}", "values": [[region]]}
         )
-        # Col K — note
+        # Col L — note
         data_updates.append(
-            {"range": f"'{tab}'!K{row}", "values": [[note]]}
+            {"range": f"'{tab}'!L{row}", "values": [[note]]}
         )
-        # Col M — verdict
+        # Col N — verdict
         data_updates.append(
-            {"range": f"'{tab}'!M{row}", "values": [[verdict]]}
+            {"range": f"'{tab}'!N{row}", "values": [[verdict]]}
         )
-        # Col X — relevance
+        # Col Y — relevance
         data_updates.append(
-            {"range": f"'{tab}'!X{row}", "values": [[relevance]]}
+            {"range": f"'{tab}'!Y{row}", "values": [[relevance]]}
         )
 
     # Write in chunks (Sheets API limit: 10MB body, 1000 ranges per request is comfortable).
