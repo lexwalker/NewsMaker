@@ -92,7 +92,10 @@ from news_agent.settings import get_settings  # noqa: E402
 # ----------------------------------------------------------------- config
 NUM_SOURCES = 400         # effectively all active sources (there are ~357 flagged "1")
 MAX_ARTICLES = 10_000     # soft cap
-ITEMS_PER_SOURCE = 5
+ITEMS_PER_SOURCE = 15  # was 5 — active news sites (motortrend, iz.ru,
+                       # carnewschina) publish 10-20 articles/day. Cap of 5
+                       # was clipping real coverage. Downside: fetch time
+                       # goes up ~2x and LLM cost scales linearly.
 HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # press rooms) need more patience. Retries are still
                      # DISABLED on timeouts, so this just widens the window once.
