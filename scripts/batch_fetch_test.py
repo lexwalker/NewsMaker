@@ -343,6 +343,43 @@ PORTAL_COUNTRY: dict[str, tuple[str, int]] = {
     "KZ": ("Kazakhstan", 14),
 }
 
+# Source language → (EN-title tag, RU-title tag), matching the format the
+# editorial team uses in "Новости опубликованные".
+#   EN line gets the ISO code in Latin uppercase: (EN), (RU), (DE)...
+#   RU line gets a 3-letter Russian abbreviation: (АНГЛ), (РУС), (ДЕ)...
+_LANG_TAG_MAP: dict[str, tuple[str, str]] = {
+    "en": ("EN", "АНГЛ"),
+    "ru": ("RU", "РУС"),
+    "de": ("DE", "ДЕ"),
+    "fr": ("FR", "ФР"),
+    "it": ("IT", "ИТ"),
+    "es": ("ES", "ИСП"),
+    "zh": ("ZH", "КИТ"),
+    "ja": ("JA", "ЯП"),
+    "ko": ("KO", "КОР"),
+    "pl": ("PL", "ПОЛ"),
+    "pt": ("PT", "ПОР"),
+    "nl": ("NL", "НИД"),
+    "cs": ("CS", "ЧЕШ"),
+    "tr": ("TR", "ТУР"),
+    "uk": ("UK", "УКР"),
+}
+
+
+def _lang_tags_for(lang: str) -> tuple[str, str]:
+    """Return (EN-tag, RU-tag) for a given ISO-639-1 language code.
+
+    Falls back to the uppercase code itself if we don't have a specific
+    Russian abbreviation for that language.
+    """
+    if not lang:
+        return ("", "")
+    key = lang.strip().lower()[:2]
+    if key in _LANG_TAG_MAP:
+        return _LANG_TAG_MAP[key]
+    up = key.upper()
+    return (up, up)
+
 
 def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None:  # type: ignore[no-untyped-def]
     svc.spreadsheets().values().clear(
@@ -351,16 +388,19 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
     country_label, _country_code = PORTAL_COUNTRY.get(DEDUP_PORTAL, ("Russia", 7))
     out = [ARTICLES_HEADER]
     for r in rows:
-        # Combine EN + RU titles for one-cell display, with the source
-        # language tag the task spec requested ("Headline (de)").
-        lang_tag = f" ({r.source_language})" if r.source_language else ""
+        # Source-language tags in the format the editorial team uses in
+        # "Новости опубликованные": Latin uppercase on the EN line and a
+        # Russian 3-letter abbreviation on the RU line.
+        lang_en, lang_ru = _lang_tags_for(r.source_language)
+        en_tag = f" ({lang_en})" if lang_en else ""
+        ru_tag = f" ({lang_ru})" if lang_ru else ""
         if r.llm_title_en and r.llm_title_ru:
             combined_title = (
-                f"EN: {r.llm_title_en[:220]}{lang_tag}\n"
-                f"RU: {r.llm_title_ru[:220]}{lang_tag}"
+                f"EN: {r.llm_title_en[:220]}{en_tag}\n"
+                f"RU: {r.llm_title_ru[:220]}{ru_tag}"
             )
         elif r.title:
-            combined_title = f"{r.title[:400]}{lang_tag}"
+            combined_title = f"{r.title[:400]}{en_tag}"
         else:
             combined_title = ""
         # Test-drive rows are published with "неактивный" status per spec.
@@ -770,6 +810,10 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
             budget.record(u)
             r.llm_title_en = tp.english
             r.llm_title_ru = tp.russian
+            # LLM's language detection is more reliable than trafilatura's
+            # HTML-lang guess, so prefer it when available.
+            if tp.source_language:
+                r.source_language = tp.source_language.lower()[:2]
             r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
         except Exception as e:  # noqa: BLE001
             r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
