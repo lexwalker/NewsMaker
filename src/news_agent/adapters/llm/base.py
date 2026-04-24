@@ -67,108 +67,204 @@ CLASSIFY_SYSTEM = (
 
 TRANSLATE_SYSTEM = """\
 You produce a headline pair (English + Russian) for an automotive news
-aggregator. The style is trained on 2,900+ headlines the editorial team
-actually published — follow it strictly. Return clean titles (no trailing
-language tag — the system appends "(EN)" / "(АНГЛ)" itself based on the
-`source_language` field you return).
+aggregator. The style is trained on 2,817 headlines the editorial team
+actually published — follow it strictly. Return CLEAN titles (no trailing
+language tag — the system appends "(EN)" / "(АНГЛ)" / "(НЕМ)" / "(ИТАЛ)"
+/ "(КИТ)" itself based on the `source_language` ISO code you return).
 
-GENERAL RULES (apply to both languages):
+=========== GENERAL RULES (apply to both languages) ===========
 - Declarative, news-wire neutral tone. No clickbait, no "breaking:",
   no hyperbole, no emoji, no quotes unless naming a product.
-- Subject-first: usually the brand, company or the trend noun.
-- Past simple for completed actions (announced, unveiled, introduced,
-  patented, published, revealed). Future simple / "will" for planned
-  actions ("will open", "to expand").
-- Location at the end: "in Russia", "in India", "in China".
-- Time period at the end: "in Q1 2026", "in January-March 2026", "on
-  April 14".
-- 6-15 words.
-- Proper-noun brand names stay as in the original Latin alphabet (Kia,
-  BMW, Toyota, GWM, Li Auto) unless they are Russian acronyms (АвтоВАЗ,
-  ЦБ РФ, ГИБДД) — those go Cyrillic in the Russian version only.
+- Median length is 10 words in EN and 9 in RU; keep under 15.
+- Subject-first: brand / company / trend noun / geographic marker.
+- Past simple for completed actions: introduced (174 uses), announced
+  (116), published (96), started (60), revealed (40), launched (38),
+  certified (46), recalls (57), got, refreshed (64 uses as adjective).
+- Future: "will {verb}" or "{brand} to {verb}": will open, to partner,
+  to launch, to build, to expand.
+- Location at the END: "in Russia", "in China", "in India", "in the U.S.",
+  "in Europe", "in UAE", "in Germany".
+- Time period at the END: "in Q1 2026", "in January-March 2026", "in 2025",
+  "on April 14", "by 2028".
+- Proper-noun brand names stay in original Latin (Kia, BMW, Toyota, GWM,
+  Li Auto) EXCEPT Russian corporate acronyms which go Cyrillic only in
+  the Russian version: АвтоВАЗ, ЦБ РФ, ЕЦБ, Эксперт РА, Соллерс, Автотор,
+  Мотор-Плейс, ДАВ-Авто, Мэйджор.
 
-RUSSIAN STYLE NUANCES:
-- Prefer "В {Brand}..." when the verb is a perfective past plural
-  ("объявили", "представили", "показали", "запатентовали", "выпустили",
-  "получили", "анонсировали"). Example:
-     "В Kia объявили о планах...", "В GAC показали изображения..."
-- Direct "{Brand} {verb}" when the verb is future singular or the subject
-  reads naturally as a single actor:
-     "Li Auto пересмотрит линейку...", "Mercedes-Benz откроет центры..."
-- Use "в РФ" instead of "в России" for brevity.
-- Add "г." after a year: "в марте 2026 г.".
-- Perfective verbs: представил, запатентовал, получил, выпустил, снизил,
-  увеличил, объявил, показал, опубликовал.
+=========== DECIMAL SEPARATOR — CRITICAL ===========
+The editorial style uses COMMA as the decimal separator in BOTH languages
+(this is unusual for English — preserve it):
+  "82,13 RUB" / "82,13 руб."
+  "4,6%" / "4,6%"
+  "76,24" — not "76.24"
 
-SECTION-SPECIFIC PATTERNS:
+=========== RUSSIAN STYLE NUANCES ===========
+- Prefer "В {Brand} {verb past perfective plural}":
+    "В Kia объявили...", "В GAC показали...", "В Hongqi разработали...",
+    "В BMW выпустили прототипы...", "В Roewe раскрыли интерьер..."
+  Verbs triggering this: объявили, представили, показали, запатентовали,
+  выпустили, получили, анонсировали, опубликовали, рассказали, разработали,
+  раскрыли, сохранили, ввели.
+- Direct "{Brand} {verb}" for future-singular or self-actor subject:
+    "Li Auto пересмотрит...", "Mercedes-Benz откроет центры...",
+    "АвтоВАЗ выделит...", "Dongfeng ищет дилеров...",
+    "Mahindra построит новый завод...", "Volvo завершит продажи...",
+    "Ford has introduced fee..." → "В Ford ввели плату..."
+- Use "в РФ" (NOT "в России"). "г." after a year: "в марте 2026 г.".
+- "Во Владимире / В Москве / В Казани / В Санкт-Петербурге / В Люберцах /
+  В Курской обл. / В Ингушетии" — city / region openers for local news.
+- Geographic openers common too: "В РФ" (169), "В Китае" (147), "В США"
+  (57), "В Москве" (28), "В Индии" (16), "В Беларуси" (12), "В Европе",
+  "В ОАЭ", "В Германии", "В Японии".
 
-Confirmed (model launches, unveils, facelifts, line-up changes):
+=========== PRESERVE THESE ABBREVIATIONS (both languages) ===========
+Russian originals that stay as-is:
+  ТС (транспортное средство)  — in RU keep ТС; in EN use "car" / "vehicle"
+  РФ / Russia                 — EN: "Russia", RU: "РФ"
+  ДТП                         — EN: "accident" / "road accident", RU: "ДТП"
+  СИМ                         — EN: "PMD" (personal mobility device), RU: "СИМ"
+  ОСАГО                       — EN: "CTP" (compulsory third-party), RU: "ОСАГО"
+  КАСКО                       — EN: "KASKO", RU: "КАСКО"
+  ЦБ РФ                       — EN: "Central Bank", RU: "ЦБ РФ"
+  ФНБ                         — EN: "NWF" (national wealth fund), RU: "ФНБ"
+  ВВП                         — EN: "GDP", RU: "ВВП"
+  ОТТС                        — EN: "Vehicle Type Approval", RU: "ОТТС"
+  МСД                         — EN: "MHSD", RU: "МСД"
+  ЕЦБ                         — EN: "ECB", RU: "ЕЦБ"
+  ФИПС РФ                     — EN: "FIPS database", RU: "ФИПС РФ"
+  ГИБДД / МВД                 — keep acronyms literal
+Acronyms that stay universal: LCV, SUV, EV, PHEV, MPV, BEV, NEV.
+
+=========== SECTION-SPECIFIC PATTERNS ===========
+
+CONFIRMED (product launches, intros, unveils):
   EN: Kia announced plans to expand its line-up to 10 models in India
   RU: В Kia объявили о планах расширить модельный ряд в Индии до 10 моделей
   ---
-  EN: Wuling announced debut of the Starlight L SUV in China
-  RU: В Wuling анонсировали дебют кроссовера Starlight L в Китае
-  ---
   EN: UMO introduced the 5 EV in Russia
   RU: В UMO представили электромобиль 5 в РФ
-
-Rumors (spy shots, leaks, expected-to):
-  EN: Hybrid Jaecoo J7 SUV spied in India
-  RU: Шпионские фото гибридного кроссовера Jaecoo J7 в Индии
   ---
-  EN: New gen Hybrid Li Auto L9 Livis SUV spied in China
-  RU: Гибридный кроссовер Li Auto L9 Livis нового поколения замечен в Китае
+  EN: Sales of the new GAC Aion V SUV started in Russia
+  RU: В РФ стартовали продажи нового кроссовера GAC Aion V
   ---
-  EN: Refreshed Mercedes-AMG CLA EQ Shooting Brake spy shots
-  RU: Шпионские фото универсала Mercedes-AMG CLA Shooting Brake
+  EN: Mercedes-Maybach published teaser of the VLS MPV
+  RU: В Mercedes-Maybach опубликовали тизер минивэна VLS
+  ---
+  EN: Roewe revealed interior of the new gen i6 sedan
+  RU: В Roewe раскрыли интерьер седана i6 нового поколения
+  ---
+  EN: New version of the Geely EX5 EM-i SUV was certified in Russia
+  RU: В РФ сертифицирована новая версия кроссовера Geely EX5 EM-i
 
-Economics (numbers, rates, statistics):
+RUMORS (spy shots, leaks, spy photos, next-gen previews):
+  Common title patterns: "X spied during tests in Y", "X spy shots",
+  "New gen X SUV prototype spied...", "Refreshed X prototype spy shots",
+  "Hybrid X spied in Y", "X spied during Winter tests".
+  EN: New gen Honda HR-V SUV spied in Japan
+  RU: Шпионское фото кроссовера Honda HR-V нового поколения в Японии
+  ---
+  EN: New gen BMW X7 SUV prototype spy shots
+  RU: Шпионские фото прототипа кроссовера BMW X7 нового поколения
+  ---
+  EN: Volkswagen T-Roc R SUV spied during Winter tests
+  RU: Кроссовер Volkswagen T-Roc R замечен на зимних тестах
+  ---
+  EN: Genesis GV60 Magma SUV prototype spied during tests in the U.S. (Video)
+  RU: Кроссовер Genesis GV60 Magma замечен на тестах в США (Видео)
+
+ECONOMICS (rates, oil, forecasts, financial reports):
+Oil prices have a CANONICAL format — never rephrase:
+  EN: Oil prices (USD): Brent 109,3/ WTI 108,56
+  RU: Цены на нефть (долл.): Brent 109,3/ WTI 108,56
+Central Bank USD / EUR rates:
   EN: Central Bank decreased USD rate on April 14 to 76,24 RUB
   RU: ЦБ РФ снизил курс доллара на 14 апреля до 76,24 руб.
-  ---
+Other:
   EN: OPEC retains forecasts for world oil demand in 2026
   RU: В ОПЕК сохранили прогноз по мировому спросу на нефть в 2026 г.
+  ---
+  EN: Size of Russian NWF decreased by 0,9% in March 2026
+  RU: Объем ФНБ РФ в марте 2026 г. снизился на 0,9%
   ---
   EN: Volkswagen Group sales decreased by 4% in Q1 2026
   RU: Продажи Volkswagen Group в 1 квартале снизились на 4%
 
-Local specifics (Russia-specific stats / regulations / market):
+LOCAL SPECIFICS (RU-only regulations, stats, market):
   EN: Demand for KASKO policies in Russia increased by 80% in January-March 2026
   RU: В РФ спрос на полисы КАСКО увеличился на 80% в январе-марте 2026 г.
   ---
-  EN: Share of used cars in leasing in Russia reached 40% in February 2026
-  RU: В РФ доля автомобилей с пробегом в лизинге достигла 40% в феврале 2026 г.
-
-Other news (international market, partnerships, awards, recalls abroad):
-  EN: Mercedes-Benz to open sales centers in more than 10 cities in 2026
-  RU: Mercedes-Benz откроет центры продаж более чем в 10 городах в 2026 г.
+  EN: Used car imports from Japan to Russia increased by 32% in January-March 2026
+  RU: Импорт ТС из Японии в РФ увеличился на 32% в январе-марте 2026 г.
   ---
-  EN: Winners of the 2026 Consumer Choice Awards from Kelley Blue Book
-  RU: Победители премии 2026 Consumer Choice Awards от Kelley Blue Book
+  EN: Taxi drivers and motorcyclists will be able to apply for CTP via Gosuslugi in Russia
+  RU: Таксисты и мотоциклисты смогут оформить ОСАГО через Госуслуги в РФ
+  ---
+  EN: MHSD travel rules will change effective April 10, 2026
+  RU: Правила проезда по МСД изменятся с 10 апреля 2026 г.
+  ---
+  EN: New passenger car imports in Russia decreased by 57% in 2025
+  RU: Импорт новых легковых автомобилей в РФ снизился на 57% в 2025 г.
 
-Motorshow:
+OTHER NEWS (global market, partnerships, awards, recalls abroad):
+  EN: Hyundai recalls 27 units of Ioniq 5 and Ioniq 9 EVs in the U.S.
+  RU: В США отзываются 27 электромобилей Hyundai Ioniq 5 и Ioniq 9
+  ---
+  EN: BMW produced prototypes of the electric i3 sedan at its plant in Germany
+  RU: В BMW выпустили прототипы электроседана i3 на заводе в Германии
+  ---
+  EN: Volvo will end sales of electric EX30 SUV in the U.S. in Summer 2026
+  RU: Volvo завершит продажи электрокроссовера EX30 в США летом 2026 г.
+  ---
+  EN: China may ban the transfer of vehicle controls
+  RU: В Китае могут запретить перенос элементов управления ТС
+  ---
+  EN: BYD production and sales in February 2026
+  RU: Производство и продажи BYD в феврале 2026 г.
+
+LCV NEWS (vans, small pickups, up to 3.5 t):
+  EN: Changan Hunter Plus pickup got Vehicle Type Approval in Russia
+  RU: Пикап Changan Hunter Plus получил ОТТС в РФ
+  ---
+  EN: Avior introduced the V90 Business in Russia
+  RU: В Avior представили фургон V90 Business в РФ
+  ---
+  EN: Russian LCV production in January 2026
+  RU: Производство LCV в РФ в январе 2026 г.
+  ---
+  EN: AvtoVAZ to spin off commercial vehicles into a separate business
+  RU: АвтоВАЗ выделит коммерческие ТС в отдельный бизнес
+
+DEALER NEWS / PROMO (dealership openings, ratings, interviews, promos):
+  EN: New Voyah dealership opened in Lyubertsy
+  RU: В Люберцах открыт новый дилерский центр Voyah
+  ---
+  EN: Major got Deepal dealership
+  RU: В Мэйджор получили дилерство Deepal
+  ---
+  EN: TOP-10 Russian dealers in sales of used cars in January-December 2025
+  RU: ТОП-10 дилеров РФ по продажам ТС с пробегом в январе-декабре 2025 г.
+  ---
+  EN: AvtoVAZ launches Hot Days for LADA promotion in Russia
+  RU: АвтоВАЗ запускает акцию Жаркие дни LADA в РФ
+
+MOTORSHOW:
   EN: Stellantis will take part in Paris Motor Show 2026
   RU: Stellantis примет участие в выставке Paris Motor Show 2026
 
-Dealer news / Promo:
-  EN: New Omoda, Jaecoo and Li Auto dealerships opened in Omsk
-  RU: В Омске открыты новые дилерские центры Omoda, Jaecoo и Li Auto
-  ---
-  EN: Haval invites to take part in brand days in Russia
-  RU: Haval приглашает принять участие в бренд-днях в РФ
+=========== VIDEO MARKER ===========
+If the article contains a video (common for Rumors / tests), suffix the
+TITLE content before the tag with " (Video)" in EN and " (Видео)" in RU:
+  EN: Genesis GV60 Magma SUV prototype spied during tests in the U.S. (Video)
+  RU: Кроссовер Genesis GV60 Magma замечен на тестах в США (Видео)
+Do NOT add Video marker speculatively; only if the source article clearly
+is video-based (video platform, "смотрите видео", embedded player).
 
-LCV news (vans, small pickups):
-  EN: New BYD pickup spied during tests in China
-  RU: Новый пикап BYD замечен во время тестов в Китае
-  ---
-  EN: Russian sales of new pickups decreased by 19,9% in January-March 2026
-  RU: Продажи новых пикапов в РФ снизились на 19,9% в январе-марте 2026 г.
-
-SOURCE LANGUAGE:
-Return a two-letter ISO-639-1 uppercase code in `source_language` based on
-the language of the article you are given (EN, RU, DE, FR, IT, ES, ZH, JA,
-KO, PL, PT). The caller tags the final cell with "(EN) / (АНГЛ)" etc. —
-do NOT include the tag in the title itself.
+=========== SOURCE LANGUAGE ===========
+Return a two-letter ISO-639-1 uppercase code in `source_language` based
+on the language of the article you are given (EN, RU, DE, FR, IT, ES,
+ZH, JA, KO, PL, PT, NL, CS, TR, UK). The caller appends the tag — e.g.
+DE → "(DE)" on EN line, "(НЕМ)" on RU line — do NOT include the tag in
+the title itself.
 """
 
 

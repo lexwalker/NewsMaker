@@ -347,12 +347,15 @@ PORTAL_COUNTRY: dict[str, tuple[str, int]] = {
 # editorial team uses in "Новости опубликованные".
 #   EN line gets the ISO code in Latin uppercase: (EN), (RU), (DE)...
 #   RU line gets a 3-letter Russian abbreviation: (АНГЛ), (РУС), (ДЕ)...
+# Mapping verified against 2,817 rows of "Новости опубликованные":
+# EN tag uses the Latin ISO-639-1 code, RU tag uses a Russian 3-4 letter
+# abbreviation — these are the exact strings the editor uses, not guesses.
 _LANG_TAG_MAP: dict[str, tuple[str, str]] = {
     "en": ("EN", "АНГЛ"),
     "ru": ("RU", "РУС"),
-    "de": ("DE", "ДЕ"),
+    "de": ("DE", "НЕМ"),      # editor uses НЕМ, not ДЕ
     "fr": ("FR", "ФР"),
-    "it": ("IT", "ИТ"),
+    "it": ("IT", "ИТАЛ"),     # editor uses ИТАЛ, not ИТ
     "es": ("ES", "ИСП"),
     "zh": ("ZH", "КИТ"),
     "ja": ("JA", "ЯП"),
