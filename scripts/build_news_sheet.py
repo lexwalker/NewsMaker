@@ -1,29 +1,21 @@
-"""Build (or refresh) the persistent 'Новости' sheet from a clusters JSON.
+"""Build / refresh the persistent 'Новости' tab — the editor's working list.
 
 Behaviour:
-  - Reads data/clusters_<tab>.json
+  - Reads data/clusters_<input_tab>.json
   - Filters out junk clusters (aggregator / nav / "{Brand}" stub titles)
-  - Flags year-mismatch (future verb + past year) rows for editor review
-  - Creates the 'Новости' tab if missing, sets header / formatting
-  - Writes / refreshes rows. New clusters land at the TOP (insertDimension)
+  - Flags year-mismatch (future verb + past year, or year present in only
+    one of the two language lines) for editor review
+  - Creates the 'Новости' tab on first call; on subsequent calls just
+    prepends new clusters at the top via insertDimension
+  - Dedups against the canonical_url AND primary_url already present in
+    column J of the sheet — already-seen stories aren't re-added, so
+    editor's manual edits in cols O/P keep their attachment
+  - Applies visual formatting on first creation: green header band, frozen
+    rows/cols, per-section background tint in column D, multi-source
+    highlight on column L, flag highlight on column N, alternating row
+    bands, sensible column widths
 
-Columns of the Новости sheet (16 visible + 5 hidden debug):
-   A  Прогон (UTC)
-   B  Заголовок (EN / RU)
-   C  Лид
-   D  Раздел
-   E  Регион
-   F  Страна
-   G  Дата публикации
-   H  Картинка (URL)
-   I  Первоисточник (домен)
-   J  Первоисточник URL
-   K  Уверенность источника
-   L  Источников
-   M  Все URL источников
-   N  Флаг проверки
-   O  Ручная проверка
-   P  Комментарий
+Run:  python scripts/build_news_sheet.py "ТЕСТ статьи v18"
 """
 
 from __future__ import annotations
@@ -51,36 +43,33 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 NEWS_TAB = "Новости"
 
 HEADER = [
-    "Прогон (UTC)",
-    "Заголовок (EN / RU)",
-    "Лид",
-    "Раздел",
-    "Регион",
-    "Страна",
-    "Дата публикации",
-    "Картинка (URL)",
-    "Первоисточник (домен)",
-    "Первоисточник URL",
-    "Уверенность источника",
-    "Источников",
-    "Все URL источников",
-    "Флаг проверки",
-    "Ручная проверка",
-    "Комментарий",
+    "Прогон (UTC)",          # A
+    "Заголовок (EN / RU)",   # B
+    "Лид",                   # C
+    "Раздел",                # D — colour-tinted per section
+    "Регион",                # E
+    "Страна",                # F
+    "Дата публикации",       # G
+    "Картинка (URL)",        # H
+    "Первоисточник (домен)", # I
+    "Первоисточник URL",     # J — also the dedup key
+    "Уверенность",           # K
+    "Источников",            # L — numeric, blue when >1
+    "Все URL источников",    # M
+    "Флаг проверки",         # N — orange when filled
+    "Ручная проверка",       # O — editor input, never overwritten
+    "Комментарий",           # P — editor input, never overwritten
 ]
 
 
-# Detect garbage / aggregator titles that slipped past the heuristic.
+# ----- Junk filter --------------------------------------------------------
 def _is_junk_cluster(c: dict) -> bool:
     title = c["canonical_title"].strip()
-    # Strip "EN: ... RU: ..." prefixes for length analysis
     text = re.sub(r"\s*EN:\s*", "", title)
     text = re.sub(r"\s*RU:\s*", " ", text)
     text = re.sub(r"\s*\([A-Za-zА-Яа-яЁё]{2,4}\)\s*", "", text).strip()
-    # Single-word titles that are essentially the brand only
     if len(text.split()) <= 2:
         return True
-    # PressClub / Newsroom landing-page heuristics
     junk_patterns = (
         "PressClub", "PRESSCLUB", "Press Club",
         "Newsroom", "NEWSROOM",
@@ -96,13 +85,13 @@ def _is_junk_cluster(c: dict) -> bool:
     )
     if any(p.lower() in title.lower() for p in junk_patterns):
         return True
-    # Empty lede + short title = likely a nav page
     lede = c.get("canonical_lede", "").strip()
     if len(lede) < 50 and len(text.split()) < 6:
         return True
     return False
 
 
+# ----- Year-drift detector ------------------------------------------------
 _PAST_YEARS = {y for y in range(2020, 2026)}
 _FUTURE_VERBS = (
     "will ", "to arrive", "to launch", "to open", "to expand",
@@ -111,13 +100,6 @@ _FUTURE_VERBS = (
     "стартует", "дебютирует",
 )
 _YEAR_RE = re.compile(r"\b(20\d{2})\b")
-# Match every number ≥ 3 digits OR a smaller number with a clear unit.
-# We intentionally ignore tiny numbers like "5 моделей" — too noisy.
-_BIG_NUMBER_RE = re.compile(r"\b\d{3,}(?:[.,]\d+)?\b")
-_UNIT_NUMBER_RE = re.compile(
-    r"\b\d+(?:[.,]\d+)?\s*(?:%|млн|млрд|тыс|million|billion|trillion|thousand)\b",
-    re.IGNORECASE,
-)
 
 
 def _split_lines(combined: str) -> tuple[str, str]:
@@ -137,61 +119,14 @@ def _strip_lang_tag(s: str) -> str:
     return re.sub(r"\s*\([A-Za-zА-Яа-яЁё]{2,4}\)\s*$", "", s).strip()
 
 
-def _extract_entities(s: str) -> tuple[set[str], set[str]]:
-    """Return (years, numeric tokens) found in the headline.
-
-    Numeric tokens are normalised: ``925,7`` and ``925.7`` collapse to
-    the same key, units are stripped. We only keep numbers that are
-    "big" (≥3 digits) or carry an explicit magnitude unit (млн, billion,
-    %) — small standalone digits like "5" in "5 моделей" are too noisy
-    to compare across languages.
-    """
-    s = _strip_lang_tag(s)
-    years = set(_YEAR_RE.findall(s))
-
-    def _norm(num: str) -> str:
-        return num.replace(",", ".")
-
-    nums: set[str] = set()
-    # Big multi-digit numbers
-    for m in _BIG_NUMBER_RE.finditer(s):
-        token = m.group(0)
-        if token in years:  # don't double-count years as generic numbers
-            continue
-        nums.add(_norm(token))
-    # Small numbers with explicit magnitude unit
-    for m in _UNIT_NUMBER_RE.finditer(s):
-        # Pick out just the digits part
-        num_part = re.search(r"\d+(?:[.,]\d+)?", m.group(0)).group(0)
-        nums.add(_norm(num_part))
-    return years, nums
-
-
 def _flag_review(title: str) -> str:
-    """Return a non-empty marker if the row deserves manual review.
-
-    Two cases are caught:
-      - Past year + future tense (will arrive in 2024) — the LLM picked up
-        a stale date from the body.
-      - Year present in only one of the two language lines — usually the
-        LLM dropped a key time qualifier.
-
-    Numeric mismatches (percentages, thousand-separated large numbers)
-    used to be flagged too but produced too many false positives because
-    of "300,000" vs "300 000" and untranslated unit words. Trust the LLM
-    on numbers; rely on editor review for the rest.
-    """
     en, ru = _split_lines(title)
-
-    # 1) Past-year-as-future check
     for line, lang in ((en, "EN"), (ru, "RU")):
         text_lower = line.lower()
         if any(v in text_lower for v in _FUTURE_VERBS):
             for y in _PAST_YEARS:
                 if str(y) in line:
                     return f"⚠ возможно неверный год {y} (в {lang}-строке)"
-
-    # 2) Year missing in one language but present in the other
     if en and ru:
         en_years = set(_YEAR_RE.findall(_strip_lang_tag(en)))
         ru_years = set(_YEAR_RE.findall(_strip_lang_tag(ru)))
@@ -200,14 +135,21 @@ def _flag_review(title: str) -> str:
         if only_en or only_ru:
             both = sorted(only_en | only_ru)
             return f"⚠ EN/RU расходятся по годам: {', '.join(both)}"
-
     return ""
 
 
-# Compatibility shim for older callers that imported _flag_year
-def _flag_year(title: str) -> str | None:
-    res = _flag_review(title)
-    return res or None
+# ----- Section colour palette --------------------------------------------
+SECTION_TINT: dict[str, dict[str, float]] = {
+    "Confirmed":          {"red": 0.78, "green": 0.95, "blue": 0.78},  # mint
+    "Local specifics":    {"red": 1.00, "green": 0.95, "blue": 0.74},  # cream
+    "Other news":         {"red": 0.85, "green": 0.92, "blue": 0.99},  # ice blue
+    "Rumors":             {"red": 0.99, "green": 0.85, "blue": 0.92},  # blush
+    "Economics":          {"red": 1.00, "green": 0.88, "blue": 0.78},  # peach
+    "LCV news":           {"red": 0.92, "green": 0.86, "blue": 0.99},  # lavender
+    "Test-drive":         {"red": 0.92, "green": 0.92, "blue": 0.92},  # grey
+    "Dealer news / Promo":{"red": 0.99, "green": 0.93, "blue": 0.85},  # latte
+    "Motorshow":          {"red": 0.84, "green": 0.96, "blue": 0.94},  # mint-teal
+}
 
 
 def _svc():
@@ -215,31 +157,52 @@ def _svc():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 
-def _ensure_tab(svc, tab: str) -> int:
-    """Create the tab if missing; return its sheetId."""
+def _ensure_tab(svc, tab: str) -> tuple[int, bool]:
+    """Create tab if missing. Return (sheetId, was_created)."""
     meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
     for s in meta["sheets"]:
         if s["properties"]["title"] == tab:
-            return int(s["properties"]["sheetId"])
-    # Create
+            return int(s["properties"]["sheetId"]), False
     resp = svc.spreadsheets().batchUpdate(
         spreadsheetId=SHEET_ID,
         body={"requests": [{"addSheet": {"properties": {"title": tab}}}]},
     ).execute()
     new = resp["replies"][0]["addSheet"]["properties"]
-    return int(new["sheetId"])
+    return int(new["sheetId"]), True
 
 
-def _existing_urls(svc, tab: str) -> set[str]:
-    """Return all primary URLs already present in the news tab."""
+def _existing_keys(svc, tab: str) -> set[str]:
+    """Pull existing primary URLs (column J) from the news tab for dedup.
+
+    Treats both the canonical_url and primary_url as identifying keys —
+    if either is already in the sheet, the cluster is skipped.
+    """
+    keys: set[str] = set()
     try:
+        # Column J = Первоисточник URL
         resp = svc.spreadsheets().values().get(
             spreadsheetId=SHEET_ID, range=f"'{tab}'!J2:J"
         ).execute()
+        for row in resp.get("values", []) or []:
+            if row and row[0]:
+                keys.add(row[0])
     except Exception:  # noqa: BLE001
-        return set()
-    vals = resp.get("values", []) or []
-    return {row[0] for row in vals if row and row[0]}
+        pass
+    try:
+        # Column M holds the newline-separated URL list — pull all of those too
+        resp = svc.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID, range=f"'{tab}'!M2:M"
+        ).execute()
+        for row in resp.get("values", []) or []:
+            if not row or not row[0]:
+                continue
+            for u in row[0].splitlines():
+                u = u.strip()
+                if u:
+                    keys.add(u)
+    except Exception:  # noqa: BLE001
+        pass
+    return keys
 
 
 def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
@@ -260,61 +223,85 @@ def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
         str(c["size"]),
         members_urls,
         flag,
-        "",  # Ручная проверка
-        "",  # Комментарий
+        "",
+        "",
     ]
 
 
-def _apply_formatting(svc, sheet_id: int, n_data_rows: int) -> None:
-    """One-time formatting: header style, freeze, col widths, wrap."""
-    requests = [
-        # Frozen header
-        {
-            "updateSheetProperties": {
-                "properties": {
-                    "sheetId": sheet_id,
-                    "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 2},
-                },
-                "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
-            }
-        },
-        # Header bold + green band
-        {
-            "repeatCell": {
-                "range": {
-                    "sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
-                    "startColumnIndex": 0, "endColumnIndex": len(HEADER),
-                },
-                "cell": {
-                    "userEnteredFormat": {
-                        "textFormat": {"bold": True, "fontSize": 11},
-                        "backgroundColor": {"red": 0.80, "green": 0.93, "blue": 0.80},
-                        "wrapStrategy": "WRAP",
-                        "verticalAlignment": "MIDDLE",
-                    }
-                },
-                "fields": "userEnteredFormat(textFormat,backgroundColor,wrapStrategy,verticalAlignment)",
-            }
-        },
-    ]
-    # Col widths
+def _apply_full_formatting(svc, sheet_id: int) -> None:
+    """One-shot styling applied right after the tab is created.
+
+    Header band, freeze, widths, body wrap, alternating bands, and
+    conditional rules for multi-source / flag highlights. Idempotent —
+    callers may re-run after deleting old conditional rules.
+    """
+    requests: list[dict] = []
+    end_row = 2000
+    n_cols = len(HEADER)
+
+    requests.append({
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": sheet_id,
+                "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 2},
+            },
+            "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+        }
+    })
+    # Header — solid green band, white bold text
+    requests.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
+                "startColumnIndex": 0, "endColumnIndex": n_cols,
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "textFormat": {
+                        "bold": True, "fontSize": 11,
+                        "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                    },
+                    "backgroundColor": {"red": 0.27, "green": 0.45, "blue": 0.30},
+                    "wrapStrategy": "WRAP",
+                    "verticalAlignment": "MIDDLE",
+                    "horizontalAlignment": "CENTER",
+                }
+            },
+            "fields": (
+                "userEnteredFormat(textFormat,backgroundColor,wrapStrategy,"
+                "verticalAlignment,horizontalAlignment)"
+            ),
+        }
+    })
+    # Header row a bit taller for wrapped multi-line headings
+    requests.append({
+        "updateDimensionProperties": {
+            "range": {
+                "sheetId": sheet_id, "dimension": "ROWS",
+                "startIndex": 0, "endIndex": 1,
+            },
+            "properties": {"pixelSize": 44},
+            "fields": "pixelSize",
+        }
+    })
+
     widths = {
-        0: 145,   # Прогон
-        1: 380,   # Заголовок
-        2: 360,   # Лид
-        3: 140,   # Раздел
-        4: 70,    # Регион
-        5: 100,   # Страна
-        6: 165,   # Дата
-        7: 240,   # Картинка URL
-        8: 200,   # Первоисточник домен
-        9: 320,   # Первоисточник URL
-        10: 110,  # Уверенность
+        0: 110,   # Прогон
+        1: 420,   # Заголовок
+        2: 380,   # Лид
+        3: 160,   # Раздел
+        4: 80,    # Регион
+        5: 95,    # Страна
+        6: 145,   # Дата
+        7: 220,   # Картинка URL
+        8: 180,   # Первоисточник домен
+        9: 280,   # Первоисточник URL
+        10: 100,  # Уверенность
         11: 90,   # Источников
-        12: 320,  # Все URL
-        13: 220,  # Флаг
-        14: 200,  # Ручная проверка
-        15: 220,  # Комментарий
+        12: 260,  # Все URL
+        13: 200,  # Флаг проверки
+        14: 180,  # Ручная проверка
+        15: 200,  # Комментарий
     }
     for col, px in widths.items():
         requests.append({
@@ -327,8 +314,9 @@ def _apply_formatting(svc, sheet_id: int, n_data_rows: int) -> None:
                 "fields": "pixelSize",
             }
         })
-    # Wrap on text-heavy columns
-    end_row = max(n_data_rows + 1, 2000)
+
+    # Body wrap + top-align on text-heavy columns (B title, C lede, J URL,
+    # M url-list, N flag, P comment)
     for col in (1, 2, 9, 12, 13, 15):
         requests.append({
             "repeatCell": {
@@ -340,50 +328,180 @@ def _apply_formatting(svc, sheet_id: int, n_data_rows: int) -> None:
                     "userEnteredFormat": {
                         "wrapStrategy": "WRAP",
                         "verticalAlignment": "TOP",
+                        "textFormat": {"fontSize": 10},
                     }
                 },
-                "fields": "userEnteredFormat(wrapStrategy,verticalAlignment)",
+                "fields": "userEnteredFormat(wrapStrategy,verticalAlignment,textFormat)",
             }
         })
-    # Conditional formatting: rows with year flag get a soft red highlight
-    requests.append({
-        "addConditionalFormatRule": {
-            "rule": {
-                "ranges": [{
+    # Middle-align + wrap on the rest of body cells (compact)
+    for col in (0, 3, 4, 5, 6, 7, 8, 10, 11, 14):
+        requests.append({
+            "repeatCell": {
+                "range": {
                     "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
-                    "startColumnIndex": 0, "endColumnIndex": len(HEADER),
-                }],
-                "booleanRule": {
-                    "condition": {
-                        "type": "CUSTOM_FORMULA",
-                        "values": [{"userEnteredValue": '=$N2<>""'}],
-                    },
-                    "format": {"backgroundColor": {"red": 1.0, "green": 0.86, "blue": 0.78}},
+                    "startColumnIndex": col, "endColumnIndex": col + 1,
                 },
-            },
-            "index": 0,
+                "cell": {
+                    "userEnteredFormat": {
+                        "wrapStrategy": "WRAP",
+                        "verticalAlignment": "MIDDLE",
+                        "textFormat": {"fontSize": 10},
+                    }
+                },
+                "fields": "userEnteredFormat(wrapStrategy,verticalAlignment,textFormat)",
+            }
+        })
+    # Centre-align numeric columns
+    for col in (10, 11):
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
+                    "startColumnIndex": col, "endColumnIndex": col + 1,
+                },
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
+                "fields": "userEnteredFormat.horizontalAlignment",
+            }
+        })
+
+    # Alternating row bands — subtle grey on every other row, applied to
+    # cols left-of-D and right-of-D (D has its own per-section tint).
+    requests.append({
+        "addBanding": {
+            "bandedRange": {
+                "range": {
+                    "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
+                    "startColumnIndex": 0, "endColumnIndex": 3,
+                },
+                "rowProperties": {
+                    "firstBandColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
+                    "secondBandColorStyle": {"rgbColor": {"red": 0.97, "green": 0.97, "blue": 0.97}},
+                },
+            }
         }
     })
-    # Row with size > 1 gets a soft blue (multi-source story)
+    requests.append({
+        "addBanding": {
+            "bandedRange": {
+                "range": {
+                    "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
+                    "startColumnIndex": 4, "endColumnIndex": n_cols,
+                },
+                "rowProperties": {
+                    "firstBandColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
+                    "secondBandColorStyle": {"rgbColor": {"red": 0.97, "green": 0.97, "blue": 0.97}},
+                },
+            }
+        }
+    })
+
+    # Multi-source highlight on Источников cell (column L = index 11)
     requests.append({
         "addConditionalFormatRule": {
             "rule": {
                 "ranges": [{
                     "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
-                    "startColumnIndex": 0, "endColumnIndex": len(HEADER),
+                    "startColumnIndex": 11, "endColumnIndex": 12,
                 }],
                 "booleanRule": {
                     "condition": {
                         "type": "NUMBER_GREATER",
                         "values": [{"userEnteredValue": "1"}],
                     },
-                    "format": {"backgroundColor": {"red": 0.82, "green": 0.92, "blue": 0.98}},
+                    "format": {
+                        "backgroundColor": {"red": 0.45, "green": 0.65, "blue": 0.95},
+                        "textFormat": {
+                            "bold": True,
+                            "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                        },
+                    },
+                },
+            },
+            "index": 0,
+        }
+    })
+
+    # Flag highlight on column N = index 13 — orange when non-empty
+    requests.append({
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [{
+                    "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
+                    "startColumnIndex": 13, "endColumnIndex": 14,
+                }],
+                "booleanRule": {
+                    "condition": {"type": "NOT_BLANK"},
+                    "format": {
+                        "backgroundColor": {"red": 1.0, "green": 0.78, "blue": 0.55},
+                        "textFormat": {"bold": True},
+                    },
                 },
             },
             "index": 1,
         }
     })
-    svc.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": requests}).execute()
+
+    # Send in chunks
+    CHUNK = 60
+    for i in range(0, len(requests), CHUNK):
+        svc.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID, body={"requests": requests[i:i + CHUNK]}
+        ).execute()
+
+
+def _tint_section_cells(
+    svc,
+    sheet_id: int,
+    *,
+    start_data_row: int,
+    sections_in_order: list[str],
+) -> None:
+    """Colour the Раздел cell (column D) by section tint for the freshly
+    inserted rows. Group consecutive same-section rows to minimise calls.
+    """
+    if not sections_in_order:
+        return
+    requests: list[dict] = []
+    i = 0
+    while i < len(sections_in_order):
+        sec = sections_in_order[i]
+        j = i
+        while j < len(sections_in_order) and sections_in_order[j] == sec:
+            j += 1
+        sec_clean = sec.replace(" (неактивный)", "").strip()
+        tint = SECTION_TINT.get(sec_clean)
+        if tint:
+            requests.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": start_data_row + i,
+                        "endRowIndex": start_data_row + j,
+                        "startColumnIndex": 3, "endColumnIndex": 4,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": tint,
+                            "textFormat": {"bold": True, "fontSize": 10},
+                            "horizontalAlignment": "CENTER",
+                            "verticalAlignment": "MIDDLE",
+                        }
+                    },
+                    "fields": (
+                        "userEnteredFormat(backgroundColor,textFormat,"
+                        "horizontalAlignment,verticalAlignment)"
+                    ),
+                }
+            })
+        i = j
+    if not requests:
+        return
+    CHUNK = 60
+    for i in range(0, len(requests), CHUNK):
+        svc.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID, body={"requests": requests[i:i + CHUNK]}
+        ).execute()
 
 
 def main() -> int:
@@ -391,41 +509,58 @@ def main() -> int:
     clusters_path = ROOT / "data" / f"clusters_{src_tab.replace(' ', '_')}.json"
     if not clusters_path.exists():
         print(f"Clusters file not found: {clusters_path}", file=sys.stderr)
-        print(f"Run scripts/build_news_clusters.py first.", file=sys.stderr)
+        print("Run scripts/build_news_clusters.py first.", file=sys.stderr)
         return 2
 
     clusters = json.loads(clusters_path.read_text(encoding="utf-8"))
     print(f"Loaded {len(clusters)} clusters from {clusters_path.name}")
 
-    # Filter junk
     clean: list[dict] = []
-    junk_count = 0
+    junk = 0
     for c in clusters:
         if _is_junk_cluster(c):
-            junk_count += 1
+            junk += 1
             continue
         clean.append(c)
-    print(f"After junk filter: {len(clean)} clusters ({junk_count} junk dropped)")
+    print(f"After junk filter: {len(clean)} ({junk} junk dropped)")
 
     svc = _svc()
-    sheet_id = _ensure_tab(svc, NEWS_TAB)
+    sheet_id, was_created = _ensure_tab(svc, NEWS_TAB)
 
-    # Make sure the header row is there (idempotent — write only if A1 empty).
-    cur_header = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"'{NEWS_TAB}'!A1:P1"
-    ).execute().get("values", [[]])
-    if not cur_header or not cur_header[0]:
+    # First-time setup — write header + apply formatting
+    if was_created:
         svc.spreadsheets().values().update(
             spreadsheetId=SHEET_ID, range=f"'{NEWS_TAB}'!A1",
             valueInputOption="USER_ENTERED",
             body={"values": [HEADER]},
         ).execute()
-        _apply_formatting(svc, sheet_id, n_data_rows=len(clean))
+        _apply_full_formatting(svc, sheet_id)
         print(f"Created '{NEWS_TAB}' tab with header + formatting.")
+    else:
+        # Make sure header row is present even if user accidentally cleared it
+        cur = svc.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID, range=f"'{NEWS_TAB}'!A1:P1"
+        ).execute().get("values", [[]])
+        if not cur or not cur[0]:
+            svc.spreadsheets().values().update(
+                spreadsheetId=SHEET_ID, range=f"'{NEWS_TAB}'!A1",
+                valueInputOption="USER_ENTERED",
+                body={"values": [HEADER]},
+            ).execute()
+            _apply_full_formatting(svc, sheet_id)
+            print(f"Re-applied formatting to existing '{NEWS_TAB}' tab.")
 
     # Dedup against URLs already in the sheet
-    seen = _existing_urls(svc, NEWS_TAB)
-    fresh = [c for c in clean if c["primary_url"] not in seen and c["canonical_url"] not in seen]
+    seen = _existing_keys(svc, NEWS_TAB)
+    fresh: list[dict] = []
+    for c in clean:
+        if c["primary_url"] in seen or c["canonical_url"] in seen:
+            continue
+        # Also skip if any cluster member URL is already in the sheet — avoids
+        # adding the same story under a different "canonical" URL.
+        if any(m["url"] in seen for m in c["members"]):
+            continue
+        fresh.append(c)
     print(f"After dedup against existing sheet: {len(fresh)} new clusters")
     if not fresh:
         print("Nothing new to write.")
@@ -433,8 +568,9 @@ def main() -> int:
 
     run_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     new_rows = [_row_for_cluster(c, run_ts) for c in fresh]
+    sections_in_order = [c.get("section", "") or "" for c in fresh]
 
-    # Prepend at top: insert N rows after the header (row index 1, 0-based)
+    # Prepend new rows just below the header (row index 1, 0-based)
     svc.spreadsheets().batchUpdate(
         spreadsheetId=SHEET_ID,
         body={"requests": [{
@@ -452,9 +588,19 @@ def main() -> int:
         valueInputOption="USER_ENTERED",
         body={"values": new_rows},
     ).execute()
+
+    # Tint the section cells for the newly inserted rows (row 2 .. 2+N)
+    _tint_section_cells(
+        svc, sheet_id,
+        start_data_row=1,  # 0-based index of the first new row
+        sections_in_order=sections_in_order,
+    )
+
     flagged = sum(1 for r in new_rows if r[13])
+    multi = sum(1 for c in fresh if c["size"] > 1)
     print(f"Prepended {len(new_rows)} new clusters to '{NEWS_TAB}'.")
-    print(f"  - flagged for review (year mismatch): {flagged}")
+    print(f"  - multi-source clusters: {multi}")
+    print(f"  - flagged for review: {flagged}")
     return 0
 
 
