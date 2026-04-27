@@ -577,6 +577,84 @@ def _apply_full_formatting(svc, sheet_id: int) -> None:
         ).execute()
 
 
+def _apply_body_format_block(
+    svc,
+    sheet_id: int,
+    *,
+    start_row_zero_based: int,
+    end_row_zero_based: int,
+) -> None:
+    """Re-apply the body-cell formatting (wrap, align, font) to a slice of
+    rows. Required after insertDimension because newly-inserted rows are
+    created with default cell formatting, ignoring whatever we set on the
+    range at sheet-creation time.
+    """
+    requests: list[dict] = []
+    n_cols = len(HEADER)
+
+    # Wrap + top-align on text-heavy columns
+    for col in (1, 2, 9, 12, 13, 15):
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": start_row_zero_based,
+                    "endRowIndex": end_row_zero_based,
+                    "startColumnIndex": col, "endColumnIndex": col + 1,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "wrapStrategy": "WRAP",
+                        "verticalAlignment": "TOP",
+                        "textFormat": {"fontSize": 10},
+                    }
+                },
+                "fields": "userEnteredFormat(wrapStrategy,verticalAlignment,textFormat)",
+            }
+        })
+    # Middle-align + wrap on metadata columns
+    for col in (0, 3, 4, 5, 6, 7, 8, 10, 11, 14):
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": start_row_zero_based,
+                    "endRowIndex": end_row_zero_based,
+                    "startColumnIndex": col, "endColumnIndex": col + 1,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "wrapStrategy": "WRAP",
+                        "verticalAlignment": "MIDDLE",
+                        "textFormat": {"fontSize": 10},
+                    }
+                },
+                "fields": "userEnteredFormat(wrapStrategy,verticalAlignment,textFormat)",
+            }
+        })
+    # Centre-align numeric columns
+    for col in (10, 11):
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": start_row_zero_based,
+                    "endRowIndex": end_row_zero_based,
+                    "startColumnIndex": col, "endColumnIndex": col + 1,
+                },
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
+                "fields": "userEnteredFormat.horizontalAlignment",
+            }
+        })
+
+    # Send in chunks
+    CHUNK = 60
+    for i in range(0, len(requests), CHUNK):
+        svc.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID, body={"requests": requests[i:i + CHUNK]}
+        ).execute()
+
+
 def _tint_section_cells(
     svc,
     sheet_id: int,
@@ -796,6 +874,18 @@ def main() -> int:
         valueInputOption="USER_ENTERED",
         body={"values": [separator_row] + new_rows},
     ).execute()
+
+    # Re-apply body formatting to the newly-inserted data rows. Inserted
+    # rows arrive with default cell format (no wrap, no fontSize, bottom-
+    # aligned) which makes them look broken next to the previously styled
+    # block below the separator.
+    first_data_zero_based = 2  # row index 2 = separator at idx 1, data starts here
+    last_data_zero_based = first_data_zero_based + len(new_rows)
+    _apply_body_format_block(
+        svc, sheet_id,
+        start_row_zero_based=first_data_zero_based,
+        end_row_zero_based=last_data_zero_based,
+    )
 
     # Style the separator: merge, dark background, white bold text, taller row
     _style_separator_row(svc, sheet_id, row_index_zero_based=1)
