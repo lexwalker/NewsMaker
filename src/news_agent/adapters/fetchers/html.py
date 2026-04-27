@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -137,7 +138,13 @@ def extract_article(
         return None
 
     body = _pick_body(html) or _fallback_body(soup)
-    published = _pick_published(soup) or fallback_published
+    published = (
+        _pick_published(soup)
+        or _pick_published_from_url(url)
+        or _pick_published_from_text(title, body)
+        or _pick_published_trafilatura(html, url)
+        or fallback_published
+    )
 
     image_url, images = _pick_images(soup, url)
     outbound = _pick_outbound_links(soup, url)
@@ -199,6 +206,16 @@ def _pick_published(soup: BeautifulSoup) -> datetime | None:
         ("meta", {"name": "article:published_time"}),
         ("meta", {"itemprop": "datePublished"}),
         ("meta", {"property": "og:article:published_time"}),
+        # Modified-time fallback: for news pages it's usually close enough
+        # to the publication time, and saves ~15% of "no date" cases.
+        ("meta", {"property": "article:modified_time"}),
+        ("meta", {"name": "last-modified"}),
+        ("meta", {"itemprop": "dateModified"}),
+        # Site-specific tags some Russian portals use
+        ("meta", {"name": "pubdate"}),
+        ("meta", {"name": "publishdate"}),
+        ("meta", {"name": "publish_date"}),
+        ("meta", {"name": "date"}),
     ]:
         tag = soup.find(sel[0], attrs=sel[1])
         if isinstance(tag, Tag) and tag.get("content"):
@@ -215,9 +232,148 @@ def _pick_published(soup: BeautifulSoup) -> datetime | None:
         if dt:
             return dt
     # 3. <time datetime="...">
-    t = soup.find("time")
-    if isinstance(t, Tag) and t.get("datetime"):
-        return _parse_dt(str(t.get("datetime")))
+    for t in soup.find_all("time"):
+        if isinstance(t, Tag):
+            dt_attr = t.get("datetime") or t.get("pubdate")
+            if dt_attr:
+                dt = _parse_dt(str(dt_attr))
+                if dt:
+                    return dt
+    return None
+
+
+# ----- URL-pattern date extraction ----------------------------------------
+# Many news sites embed the publish date in the URL path, e.g.:
+#   /2026/04/27/article-slug
+#   /news/2026-04-27-something
+#   /20260427/article  (russian.news.cn)
+_URL_DATE_PATTERNS = (
+    re.compile(r"/(\d{4})/(\d{1,2})/(\d{1,2})(?:/|$)"),
+    re.compile(r"[/_-](\d{4})-(\d{1,2})-(\d{1,2})(?:[/_.-]|$)"),
+    re.compile(r"/(\d{4})(\d{2})(\d{2})/"),  # /20260427/
+)
+
+
+def _pick_published_from_url(url: str) -> datetime | None:
+    parsed = urlparse(url)
+    path = parsed.path
+    for rx in _URL_DATE_PATTERNS:
+        m = rx.search(path)
+        if not m:
+            continue
+        try:
+            y, mth, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        except (ValueError, IndexError):
+            continue
+        # Sanity: 2015-2030, valid month/day
+        if not (2015 <= y <= 2030 and 1 <= mth <= 12 and 1 <= d <= 31):
+            continue
+        try:
+            return datetime(y, mth, d, tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+# ----- Body / title text date extraction ----------------------------------
+_RU_MONTHS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
+    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+_EN_MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+    "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_RU_DATE_RE = re.compile(
+    r"\b(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+_EN_DATE_RE_1 = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|October|November|December|"
+    r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+_EN_DATE_RE_2 = re.compile(
+    r"\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December|"
+    r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+_NUMERIC_DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b")
+_ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+
+def _pick_published_from_text(title: str, body: str) -> datetime | None:
+    """Scan title + first 1500 chars of body for a date phrase.
+
+    Looks for Russian ("27 апреля 2026"), English ("April 27, 2026" or
+    "27 April 2026"), numeric ("27.04.2026", "27/04/2026") and ISO
+    ("2026-04-27") formats. Returns the FIRST match — most articles put
+    the publish date near the headline / dateline.
+    """
+    text = (title or "") + "\n" + (body or "")[:1500]
+
+    m = _RU_DATE_RE.search(text)
+    if m:
+        try:
+            d, mth_word, y = int(m.group(1)), m.group(2).lower(), int(m.group(3))
+            mth = _RU_MONTHS.get(mth_word)
+            if mth and 2015 <= y <= 2030:
+                return datetime(y, mth, d, tzinfo=timezone.utc)
+        except (ValueError, KeyError):
+            pass
+
+    for rx in (_EN_DATE_RE_1, _EN_DATE_RE_2):
+        m = rx.search(text)
+        if m:
+            try:
+                groups = m.groups()
+                # _EN_DATE_RE_1: month, day, year
+                # _EN_DATE_RE_2: day, month, year
+                if rx is _EN_DATE_RE_1:
+                    mth_word, d, y = groups[0].lower(), int(groups[1]), int(groups[2])
+                else:
+                    d, mth_word, y = int(groups[0]), groups[1].lower(), int(groups[2])
+                mth = _EN_MONTHS.get(mth_word.replace(".", ""))
+                if mth and 2015 <= y <= 2030 and 1 <= d <= 31:
+                    return datetime(y, mth, d, tzinfo=timezone.utc)
+            except (ValueError, KeyError):
+                pass
+
+    m = _NUMERIC_DATE_RE.search(text)
+    if m:
+        try:
+            d, mth, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 2015 <= y <= 2030 and 1 <= mth <= 12 and 1 <= d <= 31:
+                return datetime(y, mth, d, tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+    m = _ISO_DATE_RE.search(text)
+    if m:
+        try:
+            y, mth, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 2015 <= y <= 2030 and 1 <= mth <= 12 and 1 <= d <= 31:
+                return datetime(y, mth, d, tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+    return None
+
+
+def _pick_published_trafilatura(html: str, url: str) -> datetime | None:
+    """Last-resort fallback to trafilatura's metadata heuristics — it
+    knows tricks beyond what we hand-coded (Schema.org variants, embedded
+    dateline conventions, OpenGraph fallbacks, language-aware patterns).
+    """
+    try:
+        from trafilatura.metadata import extract_metadata  # type: ignore[import-not-found]
+        meta = extract_metadata(html, default_url=url)
+        if meta and getattr(meta, "date", None):
+            return _parse_dt(str(meta.date))
+    except Exception:  # noqa: BLE001
+        return None
     return None
 
 
@@ -246,16 +402,38 @@ def _parse_dt(raw: str) -> datetime | None:
     raw = raw.strip()
     if not raw:
         return None
-    # ISO 8601 with 'Z'
+    # ISO 8601 with 'Z' or +offset
     try:
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        dt = datetime.fromisoformat(raw)
+        s = raw
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
     except ValueError:
-        return None
+        pass
+    # Common alternative formats encountered on news sites
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d.%m.%Y %H:%M",
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%a, %d %b %Y %H:%M:%S %z",   # RFC 2822 (Last-Modified header)
+        "%a, %d %b %Y %H:%M:%S GMT",
+    ):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    return None
 
 
 def _pick_images(soup: BeautifulSoup, page_url: str) -> tuple[str | None, list[str]]:
