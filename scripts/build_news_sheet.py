@@ -63,6 +63,19 @@ HEADER = [
 
 
 # ----- Junk filter --------------------------------------------------------
+# Spec-sheet / static-document URL fragments — these pages have an URL like
+# "/technical-specifications-of-the-mini-…-valid-from-11/2024" and they are
+# archived reference documents, not news. They have no `published_at` so the
+# freshness filter can't reject them upstream.
+_STATIC_DOC_URL_HINTS = (
+    "/technical-specifications-",
+    "valid-from-",
+    "/specifications/",
+    "/data-sheet",
+    "/factsheet",
+)
+
+
 def _is_junk_cluster(c: dict) -> bool:
     title = c["canonical_title"].strip()
     text = re.sub(r"\s*EN:\s*", "", title)
@@ -84,6 +97,19 @@ def _is_junk_cluster(c: dict) -> bool:
         "Главная страница",
     )
     if any(p.lower() in title.lower() for p in junk_patterns):
+        return True
+    # Static reference documents (spec sheets) detected by URL pattern
+    canon_url = (c.get("canonical_url") or "").lower()
+    primary_url = (c.get("primary_url") or "").lower()
+    member_urls = " ".join(m.get("url", "").lower() for m in c.get("members", []))
+    haystack = canon_url + " " + primary_url + " " + member_urls
+    if any(h in haystack for h in _STATIC_DOC_URL_HINTS):
+        return True
+    # LLM-failed clusters: title is just the original scraped string,
+    # no "EN:"/"RU:" prefix → LLM didn't translate. Skip them to avoid
+    # half-broken rows on the sheet. These will be re-classified after
+    # the API cap resets.
+    if "EN:" not in title and "RU:" not in title:
         return True
     lede = c.get("canonical_lede", "").strip()
     if len(lede) < 50 and len(text.split()) < 6:
@@ -205,6 +231,31 @@ def _existing_keys(svc, tab: str) -> set[str]:
     return keys
 
 
+# Generic / corporate images that some press sites pin into og:image for
+# every article. Filtering them out prevents misleading thumbnails like
+# "BMW HQ building 2016" appearing next to a story about a specific car.
+_GENERIC_IMAGE_HINTS = (
+    "corporate-headquarters",
+    "corporate_headquarters",
+    "logo.svg",
+    "logo.png",
+    "default-og",
+    "default_og",
+    "placeholder",
+    "/share-default",
+    "social-default",
+)
+
+
+def _clean_image_url(url: str) -> str:
+    if not url:
+        return ""
+    low = url.lower()
+    if any(h in low for h in _GENERIC_IMAGE_HINTS):
+        return ""
+    return url
+
+
 def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
     members_urls = "\n".join(m["url"] for m in c["members"])
     flag = _flag_review(c["canonical_title"])
@@ -216,7 +267,7 @@ def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
         c.get("region", "") or "",
         c.get("country", "") or "",
         c.get("published", "") or "",
-        c.get("image_url", "") or "",
+        _clean_image_url(c.get("image_url", "") or ""),
         c.get("primary_domain", "") or "",
         c.get("primary_url", "") or "",
         c.get("primary_conf", "") or "",
