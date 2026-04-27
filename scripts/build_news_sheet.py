@@ -562,6 +562,36 @@ def _apply_full_formatting(svc, sheet_id: int) -> None:
         ).execute()
 
 
+def _auto_resize_rows(
+    svc,
+    sheet_id: int,
+    *,
+    start_row_zero_based: int,
+    end_row_zero_based: int,
+) -> None:
+    """Auto-fit row heights so wrapped lede / multi-line title cells
+    show all their content. Sheets does NOT auto-grow rows after
+    insertDimension by default — they stay at the ~21 px default unless
+    we trigger a resize. Without this, newly-inserted rows look
+    compressed compared to the original sheet creation pass.
+    """
+    if end_row_zero_based <= start_row_zero_based:
+        return
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [{
+            "autoResizeDimensions": {
+                "dimensions": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": start_row_zero_based,
+                    "endIndex": end_row_zero_based,
+                }
+            }
+        }]},
+    ).execute()
+
+
 def _apply_body_format_block(
     svc,
     sheet_id: int,
@@ -927,6 +957,13 @@ def main() -> int:
         svc, sheet_id,
         start_data_row=2,  # 0-based: separator was 1, first data row is 2
         sections_in_order=sections_in_order,
+    )
+
+    # Auto-resize rows so the wrapped multi-line lede / title shows fully.
+    _auto_resize_rows(
+        svc, sheet_id,
+        start_row_zero_based=2,
+        end_row_zero_based=last_data_zero_based,
     )
 
     flagged = sum(1 for r in new_rows if r[13])
