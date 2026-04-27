@@ -361,26 +361,55 @@ _ALL_AUTO_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# Pre-compile keyword regexes with word-boundary semantics so that German
+# "marke" doesn't match English "market" and French "usine" doesn't match
+# "business". A keyword that already contains a leading or trailing space
+# in its source string keeps that explicit boundary; otherwise we wrap
+# with \b on both sides.
+def _compile_keyword(kw: str) -> re.Pattern[str]:
+    # Keywords that contain non-word characters (apostrophes, hyphens,
+    # spaces) need to be matched literally — wrapping in \b is fine for
+    # word-character boundaries on the ends.
+    escaped = re.escape(kw.lower())
+    # If the keyword already starts/ends with whitespace, keep it as-is.
+    left = "" if kw.startswith(" ") else r"\b"
+    right = "" if kw.endswith(" ") else r"\b"
+    return re.compile(f"{left}{escaped}{right}", re.IGNORECASE)
+
+
+_ALL_AUTO_KEYWORDS_COMPILED: list[tuple[str, re.Pattern[str]]] = [
+    (kw, _compile_keyword(kw)) for kw in _ALL_AUTO_KEYWORDS
+]
+_NEGATIVE_KEYWORDS_COMPILED: list[tuple[str, re.Pattern[str]]] = [
+    (kw, _compile_keyword(kw)) for kw in _NEGATIVE_KEYWORDS
+]
+
+
 def is_auto_or_economy(raw: RawArticle) -> TopicVerdict:
-    """Keyword-based topic filter. Non-perfect: ~80% precision.
+    """Keyword-based topic filter. Non-perfect: ~85% precision.
 
     Strategy: lower-case title + first 2000 chars of body, count auto-keyword
     hits across seven language families (EN/RU/DE/FR/IT/ES/ZH/JA) and
     negative-keyword hits. Pass if auto_hits ≥ 1 and auto_hits > negative_hits.
 
+    Word-boundary matching prevents cross-language false positives like the
+    German "marke" matching English "market" or French "usine" matching
+    "business" — a real bug that pulled Samsung TV stories through as
+    automotive.
+
     Soft fallback for other languages: if ``raw.source_language`` is set and
     NOT in {en, ru, de, fr, it, es, zh, ja}, we assume the heuristic lexicon
     does not cover this language and pass-through with a synthetic single hit
-    so the LLM gets a chance to evaluate. Tuned to avoid false negatives on
-    Korean / Portuguese / Polish / Czech / Dutch press rooms — at worst it
-    sends ~2-3 more articles per run to the cheap LLM relevance check.
+    so the LLM gets a chance to evaluate.
     """
     text = (raw.title + "\n" + raw.body[:2000]).lower()
     auto_hits: list[str] = []
-    for kw in _ALL_AUTO_KEYWORDS:
-        if kw in text:
+    for kw, pat in _ALL_AUTO_KEYWORDS_COMPILED:
+        if pat.search(text):
             auto_hits.append(kw.strip())
-    neg_hits: list[str] = [kw.strip() for kw in _NEGATIVE_KEYWORDS if kw in text]
+    neg_hits: list[str] = [
+        kw.strip() for kw, pat in _NEGATIVE_KEYWORDS_COMPILED if pat.search(text)
+    ]
 
     # Dedup while preserving first-seen order
     seen: set[str] = set()

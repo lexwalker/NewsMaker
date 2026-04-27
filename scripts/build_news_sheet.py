@@ -502,36 +502,11 @@ def _apply_full_formatting(svc, sheet_id: int) -> None:
             }
         })
 
-    # Alternating row bands — subtle grey on every other row, applied to
-    # cols left-of-D and right-of-D (D has its own per-section tint).
-    requests.append({
-        "addBanding": {
-            "bandedRange": {
-                "range": {
-                    "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
-                    "startColumnIndex": 0, "endColumnIndex": 3,
-                },
-                "rowProperties": {
-                    "firstBandColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
-                    "secondBandColorStyle": {"rgbColor": {"red": 0.97, "green": 0.97, "blue": 0.97}},
-                },
-            }
-        }
-    })
-    requests.append({
-        "addBanding": {
-            "bandedRange": {
-                "range": {
-                    "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": end_row,
-                    "startColumnIndex": 4, "endColumnIndex": n_cols,
-                },
-                "rowProperties": {
-                    "firstBandColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
-                    "secondBandColorStyle": {"rgbColor": {"red": 0.97, "green": 0.97, "blue": 0.97}},
-                },
-            }
-        }
-    })
+    # NOTE: alternating row-band striping was removed. Every row now gets
+    # its full section tint (see _tint_section_cells), so the per-section
+    # colour dominates the entire row instead of being buried in a grey
+    # zebra pattern. Multi-source / flag highlights still override via
+    # conditional formatting.
 
     # Multi-source highlight on Источников cell (column L = index 11)
     requests.append({
@@ -672,11 +647,16 @@ def _tint_section_cells(
     start_data_row: int,
     sections_in_order: list[str],
 ) -> None:
-    """Colour the Раздел cell (column D) by section tint for the freshly
-    inserted rows. Group consecutive same-section rows to minimise calls.
+    """Tint the ENTIRE row by section colour, plus mark column D bold.
+
+    Editor wanted the section colour to dominate the whole row, not just
+    the Раздел cell — alternating-band striping made everything look
+    uniformly grey otherwise. Conditional-formatting rules (multi-source
+    blue, flag orange) still override on their specific cells.
     """
     if not sections_in_order:
         return
+    n_cols = len(HEADER)
     requests: list[dict] = []
     i = 0
     while i < len(sections_in_order):
@@ -687,6 +667,22 @@ def _tint_section_cells(
         sec_clean = sec.replace(" (неактивный)", "").strip()
         tint = SECTION_TINT.get(sec_clean)
         if tint:
+            # Whole row tint — every column gets the section background
+            requests.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": start_data_row + i,
+                        "endRowIndex": start_data_row + j,
+                        "startColumnIndex": 0, "endColumnIndex": n_cols,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {"backgroundColor": tint},
+                    },
+                    "fields": "userEnteredFormat.backgroundColor",
+                }
+            })
+            # Раздел cell stays bold + centred so the section name pops
             requests.append({
                 "repeatCell": {
                     "range": {
@@ -697,15 +693,14 @@ def _tint_section_cells(
                     },
                     "cell": {
                         "userEnteredFormat": {
-                            "backgroundColor": tint,
                             "textFormat": {"bold": True, "fontSize": 10},
                             "horizontalAlignment": "CENTER",
                             "verticalAlignment": "MIDDLE",
                         }
                     },
                     "fields": (
-                        "userEnteredFormat(backgroundColor,textFormat,"
-                        "horizontalAlignment,verticalAlignment)"
+                        "userEnteredFormat(textFormat,horizontalAlignment,"
+                        "verticalAlignment)"
                     ),
                 }
             })
