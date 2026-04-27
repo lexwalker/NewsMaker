@@ -1041,16 +1041,15 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             row.llm_confidence = cached.get("llm_confidence", "")
             row.llm_title_en = cached.get("llm_title_en", "")
             row.llm_title_ru = cached.get("llm_title_ru", "")
-            # Only mark "из кэша" when the cache carries an actual LLM
-            # classification. Heuristic-only rejects (не статья / не авто /
-            # blacklist / дубль) don't need a cache tag — it just adds
-            # noise and confuses the editor into thinking real news came
-            # from a stale source.
-            if has_llm_classification:
-                cache_note = "из кэша"
-                row.llm_note = (
-                    cache_note if not row.llm_note else f"{cache_note} | {row.llm_note}"
-                )
+            # Always mark every cache restoration with "из кэша" so the
+            # editor can see at a glance that the row wasn't re-evaluated
+            # this run. Cached rows still carry the full verdict / section
+            # / region / titles the previous run produced — they look just
+            # like fresh rows, just with this lineage tag in column M.
+            cache_note = "из кэша"
+            row.llm_note = (
+                cache_note if not row.llm_note else f"{cache_note} | {row.llm_note}"
+            )
             row.llm_cost_usd = 0  # zero this run
             row.primary_url = cached.get("primary_url", "")
             row.primary_domain = cached.get("primary_domain", "")
