@@ -136,6 +136,7 @@ def build_stats(rows: list[list[str]]) -> list[tuple[str, str, str]]:
     # 1) СТАТИСТИКА
     out.append(_h("СТАТИСТИКА"))
     out.append(_b("Всего строк", str(total)))
+    out.append(_b("В т.ч. «Точно новость»", str(accepted_n)))
     out.append(_b("Стоимость LLM, $", f"{total_cost:.4f}"))
     out.append(_s())
 

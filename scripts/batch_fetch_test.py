@@ -99,7 +99,7 @@ ITEMS_PER_SOURCE = 15  # was 5 — active news sites (motortrend, iz.ru,
 HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # press rooms) need more patience. Retries are still
                      # DISABLED on timeouts, so this just widens the window once.
-ENABLE_LLM = False        # flip to False to run pure heuristics again
+ENABLE_LLM = True         # flip to False to run pure heuristics again
 LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
 FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # drop articles older than this
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
@@ -1009,33 +1009,62 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     SEEN_FINAL_URLS.add(canon)
 
     # SQLite persistent cache — have we already processed this URL?
-    # If yes, restore the cached verdict + LLM fields + primary source
-    # and mark the row as cached. The LLM pass will skip it; the sheet
-    # row looks identical to a fresh classification but costs $0.
+    # We only honour the cache when it carries a real LLM verdict OR a
+    # hard-reject heuristic verdict (no LLM ever needed for those). A
+    # row left over from a fetch-only run (LLM was disabled, llm_section
+    # blank for would-be candidates) does NOT short-circuit — we let LLM
+    # do its job this time around.
     uh = url_hash(canon)
     if uh in PREVIOUSLY_SEEN:
         cached = PREVIOUSLY_SEEN[uh]
-        row.verdict = cached.get("verdict", "") or row.verdict
-        row.llm_relevance = cached.get("llm_relevance", "")
-        row.llm_section = cached.get("llm_section", "")
-        row.llm_region = cached.get("llm_region", "")
-        row.llm_confidence = cached.get("llm_confidence", "")
-        row.llm_title_en = cached.get("llm_title_en", "")
-        row.llm_title_ru = cached.get("llm_title_ru", "")
-        cache_note = "из кэша"
-        row.llm_note = cache_note if not row.llm_note else f"{cache_note} | {row.llm_note}"
-        row.llm_cost_usd = 0  # zero this run
-        row.primary_url = cached.get("primary_url", "")
-        row.primary_domain = cached.get("primary_domain", "")
-        row.primary_confidence = cached.get("primary_confidence", "")
-        row.primary_method = cached.get("primary_method", "") or "cached"
-        row.article_score = cached.get("article_score", row.article_score)
-        row.article_reasons = cached.get("article_reasons", "from-cache")
-        row.is_article = bool(cached.get("is_article", True))
-        row.auto_topic = bool(cached.get("auto_topic", True))
-        row.auto_hits = cached.get("auto_hits", "")
-        row.from_cache = True
-        return True
+        cached_verdict = cached.get("verdict", "")
+        has_llm_classification = bool(cached.get("llm_section"))
+        # Verdicts where LLM is never invoked (heuristic-only). These are
+        # safe to restore even without llm_section.
+        _heuristic_only_verdicts = {
+            "Точно не новость (не статья)",
+            "Точно не новость (не авто)",
+            "Точно не новость (старая)",
+            "Точно не новость (чёрный список)",
+            "Отклонить (дубль)",
+            "Отклонить (дубль финального URL)",
+            "Отклонить (обработан ранее)",
+        }
+        cache_is_authoritative = (
+            has_llm_classification or cached_verdict in _heuristic_only_verdicts
+        )
+        if cache_is_authoritative:
+            row.verdict = cached_verdict or row.verdict
+            row.llm_relevance = cached.get("llm_relevance", "")
+            row.llm_section = cached.get("llm_section", "")
+            row.llm_region = cached.get("llm_region", "")
+            row.llm_confidence = cached.get("llm_confidence", "")
+            row.llm_title_en = cached.get("llm_title_en", "")
+            row.llm_title_ru = cached.get("llm_title_ru", "")
+            # Only mark "из кэша" when the cache carries an actual LLM
+            # classification. Heuristic-only rejects (не статья / не авто /
+            # blacklist / дубль) don't need a cache tag — it just adds
+            # noise and confuses the editor into thinking real news came
+            # from a stale source.
+            if has_llm_classification:
+                cache_note = "из кэша"
+                row.llm_note = (
+                    cache_note if not row.llm_note else f"{cache_note} | {row.llm_note}"
+                )
+            row.llm_cost_usd = 0  # zero this run
+            row.primary_url = cached.get("primary_url", "")
+            row.primary_domain = cached.get("primary_domain", "")
+            row.primary_confidence = cached.get("primary_confidence", "")
+            row.primary_method = cached.get("primary_method", "") or "cached"
+            row.article_score = cached.get("article_score", row.article_score)
+            row.article_reasons = cached.get("article_reasons", "from-cache")
+            row.is_article = bool(cached.get("is_article", True))
+            row.auto_topic = bool(cached.get("auto_topic", True))
+            row.auto_hits = cached.get("auto_hits", "")
+            row.from_cache = True
+            return True
+        # Else: cache exists but is incomplete (fetch-only run). Fall through
+        # so the normal heuristic + LLM pipeline picks this row up fresh.
 
     if article.title:
         r.articles_with_title += 1
