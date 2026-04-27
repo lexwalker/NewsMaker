@@ -307,10 +307,13 @@ def main() -> int:
         }
         out_clusters.append(cluster)
 
-    # Sort clusters: largest first (more sources = more important story),
-    # then by published desc as tie-breaker.
+    # Sort clusters strictly by published timestamp descending — newest first.
+    # Multi-source size is no longer a tie-breaker; the editor wants a
+    # chronological feed. Undated clusters (where the source page didn't
+    # expose a publish time) sink to the end.
     out_clusters.sort(
-        key=lambda c: (-c["size"], -(_parse_dt(c["published"]) or datetime.min.replace(tzinfo=timezone.utc)).timestamp())
+        key=lambda c: -(_parse_dt(c["published"])
+                        or datetime.min.replace(tzinfo=timezone.utc)).timestamp()
     )
 
     out_path = ROOT / "data" / f"clusters_{tab.replace(' ', '_')}.json"

@@ -31,10 +31,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from rapidfuzz import fuzz
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
+
+from news_agent.core.config_loader import load_brand_domains  # noqa: E402
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
@@ -197,38 +201,110 @@ def _ensure_tab(svc, tab: str) -> tuple[int, bool]:
     return int(new["sheetId"]), True
 
 
-def _existing_keys(svc, tab: str) -> set[str]:
-    """Pull existing primary URLs (column J) from the news tab for dedup.
+def _existing_state(svc, tab: str) -> dict:
+    """Load everything from the Новости tab needed for dedup + anti-dup.
 
-    Treats both the canonical_url and primary_url as identifying keys —
-    if either is already in the sheet, the cluster is skipped.
+    Returns a dict with:
+      - ``url_to_row``: every URL → 1-based sheet row that already holds it
+        (covers both column J primary URL and the newline list in column M)
+      - ``rows_meta``: list of {sheet_row, title, normalised, member_urls}
+        used by the fuzzy anti-dup matcher
     """
-    keys: set[str] = set()
     try:
-        # Column J = Первоисточник URL
         resp = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range=f"'{tab}'!J2:J"
+            spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:P"
         ).execute()
-        for row in resp.get("values", []) or []:
-            if row and row[0]:
-                keys.add(row[0])
+    except Exception:  # noqa: BLE001
+        return {"url_to_row": {}, "rows_meta": []}
+    rows = resp.get("values", []) or []
+    url_to_row: dict[str, int] = {}
+    rows_meta: list[dict] = []
+    for i, r in enumerate(rows, start=2):  # row index 2 = first data row
+        title = r[1] if len(r) > 1 else ""
+        primary_url = r[9] if len(r) > 9 else ""
+        member_urls_cell = r[12] if len(r) > 12 else ""
+        members: list[str] = []
+        if primary_url:
+            url_to_row[primary_url] = i
+            members.append(primary_url)
+        for u in (member_urls_cell or "").splitlines():
+            u = u.strip()
+            if u:
+                url_to_row[u] = i
+                if u not in members:
+                    members.append(u)
+        if title:
+            rows_meta.append({
+                "sheet_row": i,
+                "title": title,
+                "normalised": _normalise_for_match(title),
+                "members": members,
+            })
+    return {"url_to_row": url_to_row, "rows_meta": rows_meta}
+
+
+# ----- Fuzzy anti-dup matcher --------------------------------------------
+def _normalise_for_match(t: str) -> str:
+    """Strip lang tags / EN: / RU: prefixes / source suffix, keep only the
+    semantic skeleton for fuzzy comparison."""
+    if not t:
+        return ""
+    t = t.lower()
+    # Drop "EN:" / "RU:" prefixes (sometimes both lines appear)
+    t = re.sub(r"^en:\s*", "", t)
+    t = re.sub(r"\n\s*ru:\s*", " | ", t)
+    t = re.sub(r"^ru:\s*", "", t)
+    # Drop language tags
+    t = re.sub(r"\([a-zа-яё]{2,4}\)", "", t)
+    # Drop "— Source" / "| Source" trailing names
+    t = re.sub(r"[—\-|]\s*[a-zа-я0-9 \.&]+$", "", t)
+    # Collapse whitespace
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _build_brand_lexicon() -> list[str]:
+    """List of lowercase brand names (≥4 chars) used as the cluster guard."""
+    out: list[str] = []
+    try:
+        for b in load_brand_domains():
+            out.append(b.brand.lower())
+            for a in getattr(b, "aliases", []) or []:
+                out.append(a.lower())
     except Exception:  # noqa: BLE001
         pass
-    try:
-        # Column M holds the newline-separated URL list — pull all of those too
-        resp = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range=f"'{tab}'!M2:M"
-        ).execute()
-        for row in resp.get("values", []) or []:
-            if not row or not row[0]:
-                continue
-            for u in row[0].splitlines():
-                u = u.strip()
-                if u:
-                    keys.add(u)
-    except Exception:  # noqa: BLE001
-        pass
-    return keys
+    return [b for b in out if len(b) >= 4]
+
+
+def _find_existing_match(
+    new_cluster: dict,
+    existing_meta: list[dict],
+    brand_lex: list[str],
+    threshold: int = 72,
+) -> int | None:
+    """Return the sheet row of an existing cluster that the new cluster
+    duplicates (different URL but same story), or None."""
+    new_norm = _normalise_for_match(new_cluster["canonical_title"])
+    if not new_norm:
+        return None
+    new_brands = {b for b in brand_lex if b in new_norm}
+    best: tuple[int, int] | None = None  # (similarity, sheet_row)
+    for ex in existing_meta:
+        ex_norm = ex["normalised"]
+        if not ex_norm:
+            continue
+        sim = fuzz.token_set_ratio(new_norm, ex_norm)
+        if sim < threshold:
+            continue
+        ex_brands = {b for b in brand_lex if b in ex_norm}
+        # Brand guard — both sides have brand tokens AND they share at
+        # least one. If neither side has a brand, fall through (purely
+        # title-based — riskier but rare).
+        if new_brands and ex_brands and not (new_brands & ex_brands):
+            continue
+        if best is None or sim > best[0]:
+            best = (sim, ex["sheet_row"])
+    return best[1] if best else None
 
 
 # Generic / corporate images that some press sites pin into og:image for
@@ -601,34 +677,115 @@ def main() -> int:
             _apply_full_formatting(svc, sheet_id)
             print(f"Re-applied formatting to existing '{NEWS_TAB}' tab.")
 
-    # Dedup against URLs already in the sheet
-    seen = _existing_keys(svc, NEWS_TAB)
-    fresh: list[dict] = []
+    # Pull existing state — URLs already in the sheet and per-row meta
+    # for fuzzy anti-dup matching.
+    state = _existing_state(svc, NEWS_TAB)
+    url_to_row: dict[str, int] = state["url_to_row"]
+    existing_meta: list[dict] = state["rows_meta"]
+    brand_lex = _build_brand_lexicon()
+
+    fresh: list[dict] = []          # truly new clusters → prepend at top
+    merge_into: list[tuple[int, dict]] = []  # (existing_row, cluster) — extend the row
+    skip_exact = 0                   # exact URL already there → no-op
+
     for c in clean:
-        if c["primary_url"] in seen or c["canonical_url"] in seen:
+        # 1) Exact URL hit — story already on the sheet, do nothing
+        urls_in_cluster = {c["primary_url"], c["canonical_url"]}
+        urls_in_cluster.update(m["url"] for m in c["members"])
+        urls_in_cluster.discard("")
+        existing_row_by_url = None
+        for u in urls_in_cluster:
+            if u in url_to_row:
+                existing_row_by_url = url_to_row[u]
+                break
+        if existing_row_by_url:
+            skip_exact += 1
             continue
-        # Also skip if any cluster member URL is already in the sheet — avoids
-        # adding the same story under a different "canonical" URL.
-        if any(m["url"] in seen for m in c["members"]):
+
+        # 2) Fuzzy anti-dup — same story, different URL (e.g. another
+        # outlet picked it up). Append the new URLs to that row instead
+        # of creating a new entry.
+        match_row = _find_existing_match(c, existing_meta, brand_lex)
+        if match_row:
+            merge_into.append((match_row, c))
             continue
+
+        # 3) Truly new — schedule for prepend
         fresh.append(c)
-    print(f"After dedup against existing sheet: {len(fresh)} new clusters")
+
+    print(
+        f"Dedup result:\n"
+        f"  - already on sheet (exact URL): {skip_exact}\n"
+        f"  - merged into existing row (fuzzy match): {len(merge_into)}\n"
+        f"  - new (will be prepended): {len(fresh)}"
+    )
+
+    # ---- Apply the fuzzy-merge: extend the existing row's URL list +1 ---
+    if merge_into:
+        # Build per-row updates for cols L (Источников) and M (Все URL)
+        # Group by sheet_row in case multiple clusters merge into one.
+        per_row: dict[int, dict] = {}
+        for sheet_row, c in merge_into:
+            new_urls = [m["url"] for m in c["members"] if m["url"]]
+            entry = per_row.setdefault(sheet_row, {"new_urls": []})
+            for u in new_urls:
+                if u not in entry["new_urls"]:
+                    entry["new_urls"].append(u)
+        # Read current Источников counts and URL lists in one call
+        read = svc.spreadsheets().values().batchGet(
+            spreadsheetId=SHEET_ID,
+            ranges=[f"'{NEWS_TAB}'!L{r}:M{r}" for r in per_row],
+        ).execute().get("valueRanges", [])
+        update_data: list[dict] = []
+        for sheet_row, vr in zip(per_row.keys(), read):
+            cells = vr.get("values", [[]])[0] if vr.get("values") else []
+            current_count = int(cells[0]) if cells and cells[0].isdigit() else 1
+            current_urls_cell = cells[1] if len(cells) > 1 else ""
+            current_urls = [u.strip() for u in current_urls_cell.splitlines() if u.strip()]
+            for u in per_row[sheet_row]["new_urls"]:
+                if u not in current_urls:
+                    current_urls.append(u)
+                    current_count += 1
+            update_data.append({
+                "range": f"'{NEWS_TAB}'!L{sheet_row}",
+                "values": [[str(current_count)]],
+            })
+            update_data.append({
+                "range": f"'{NEWS_TAB}'!M{sheet_row}",
+                "values": [["\n".join(current_urls)]],
+            })
+        svc.spreadsheets().values().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"valueInputOption": "USER_ENTERED", "data": update_data},
+        ).execute()
+
+    # ---- Prepend truly new clusters --------------------------------------
     if not fresh:
-        print("Nothing new to write.")
+        print("Nothing new to add at the top.")
         return 0
 
     run_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     new_rows = [_row_for_cluster(c, run_ts) for c in fresh]
     sections_in_order = [c.get("section", "") or "" for c in fresh]
 
-    # Prepend new rows just below the header (row index 1, 0-based)
+    # Build a separator row that visually divides today's batch from the
+    # previously-loaded news. Goes at row 2, everything else shifts down.
+    run_human = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+    n_clusters = len(new_rows)
+    separator_text = (
+        f"━━  Прогон от {run_human}: добавлено {n_clusters} новых сюжетов  ━━"
+    )
+    separator_row = [separator_text] + [""] * (len(HEADER) - 1)
+
+    # 1 separator + N data rows = N+1 inserted rows
+    n_insert = 1 + len(new_rows)
     svc.spreadsheets().batchUpdate(
         spreadsheetId=SHEET_ID,
         body={"requests": [{
             "insertDimension": {
                 "range": {
                     "sheetId": sheet_id, "dimension": "ROWS",
-                    "startIndex": 1, "endIndex": 1 + len(new_rows),
+                    "startIndex": 1, "endIndex": 1 + n_insert,
                 },
                 "inheritFromBefore": False,
             }
@@ -637,22 +794,95 @@ def main() -> int:
     svc.spreadsheets().values().update(
         spreadsheetId=SHEET_ID, range=f"'{NEWS_TAB}'!A2",
         valueInputOption="USER_ENTERED",
-        body={"values": new_rows},
+        body={"values": [separator_row] + new_rows},
     ).execute()
 
-    # Tint the section cells for the newly inserted rows (row 2 .. 2+N)
+    # Style the separator: merge, dark background, white bold text, taller row
+    _style_separator_row(svc, sheet_id, row_index_zero_based=1)
+
+    # Tint section cells for the new data rows (rows 3 .. 2+N+1)
     _tint_section_cells(
         svc, sheet_id,
-        start_data_row=1,  # 0-based index of the first new row
+        start_data_row=2,  # 0-based: separator was 1, first data row is 2
         sections_in_order=sections_in_order,
     )
 
     flagged = sum(1 for r in new_rows if r[13])
     multi = sum(1 for c in fresh if c["size"] > 1)
-    print(f"Prepended {len(new_rows)} new clusters to '{NEWS_TAB}'.")
-    print(f"  - multi-source clusters: {multi}")
+    print(f"Prepended {len(new_rows)} new clusters under run-separator '{run_human}'.")
+    print(f"  - multi-source clusters within new batch: {multi}")
     print(f"  - flagged for review: {flagged}")
     return 0
+
+
+def _style_separator_row(svc, sheet_id: int, *, row_index_zero_based: int) -> None:
+    """Visually mark a separator row: dark slate band across all columns,
+    bold white text in column A, taller row.
+
+    Cells aren't merged because Sheets refuses to merge across frozen /
+    non-frozen column boundaries. Painting the whole row + putting text
+    only in column A produces the same visual effect.
+    """
+    n_cols = len(HEADER)
+    requests = [
+        # Dark band across the whole row
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_index_zero_based,
+                    "endRowIndex": row_index_zero_based + 1,
+                    "startColumnIndex": 0, "endColumnIndex": n_cols,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": {"red": 0.20, "green": 0.25, "blue": 0.30},
+                    }
+                },
+                "fields": "userEnteredFormat.backgroundColor",
+            }
+        },
+        # Bold white centred text in the first cell — that's where the
+        # separator caption lives (column A, value of `separator_row[0]`).
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_index_zero_based,
+                    "endRowIndex": row_index_zero_based + 1,
+                    "startColumnIndex": 0, "endColumnIndex": 1,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "textFormat": {
+                            "bold": True, "fontSize": 11,
+                            "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                        },
+                        "horizontalAlignment": "LEFT",
+                        "verticalAlignment": "MIDDLE",
+                        "wrapStrategy": "OVERFLOW_CELL",
+                    }
+                },
+                "fields": (
+                    "userEnteredFormat(textFormat,horizontalAlignment,"
+                    "verticalAlignment,wrapStrategy)"
+                ),
+            }
+        },
+        # Slightly taller row for the band to read clearly
+        {
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id, "dimension": "ROWS",
+                    "startIndex": row_index_zero_based,
+                    "endIndex": row_index_zero_based + 1,
+                },
+                "properties": {"pixelSize": 32},
+                "fields": "pixelSize",
+            }
+        },
+    ]
+    svc.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": requests}).execute()
 
 
 if __name__ == "__main__":
