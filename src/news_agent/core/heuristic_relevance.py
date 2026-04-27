@@ -361,17 +361,36 @@ _ALL_AUTO_KEYWORDS: tuple[str, ...] = (
 )
 
 
-# Pre-compile keyword regexes with word-boundary semantics so that German
-# "marke" doesn't match English "market" and French "usine" doesn't match
-# "business". A keyword that already contains a leading or trailing space
-# in its source string keeps that explicit boundary; otherwise we wrap
-# with \b on both sides.
+# Different scripts need different match strategies:
+#   - Latin (EN/DE/FR/IT/ES) — full word-boundary on both sides. Catches
+#     real false positives like German "marke" matching English "market"
+#     or French "usine" matching "business".
+#   - Cyrillic (RU) — substring match. Most RU keywords are stems
+#     ("автомобил", "электромобил", "сборк") meant to match every
+#     declension, so a right-side \b would skip "автомобиль", "автомобилях"
+#     etc.
+#   - CJK (ZH/JA) — substring. Each ideograph is meaningful on its own,
+#     no substring collisions like Latin.
+def _is_cjk(s: str) -> bool:
+    return any(
+        "぀" <= ch <= "ヿ"   # Hiragana / Katakana
+        or "一" <= ch <= "鿿"  # CJK Unified Ideographs
+        or "㐀" <= ch <= "䶿"  # CJK Extension A
+        for ch in s
+    )
+
+
+def _is_cyrillic(s: str) -> bool:
+    return any("Ѐ" <= ch <= "ӿ" for ch in s)
+
+
 def _compile_keyword(kw: str) -> re.Pattern[str]:
-    # Keywords that contain non-word characters (apostrophes, hyphens,
-    # spaces) need to be matched literally — wrapping in \b is fine for
-    # word-character boundaries on the ends.
     escaped = re.escape(kw.lower())
-    # If the keyword already starts/ends with whitespace, keep it as-is.
+    if _is_cjk(kw) or _is_cyrillic(kw):
+        # Plain substring — preserves morphology / ideograph semantics.
+        return re.compile(escaped)
+    # Latin: word-boundary on either side, unless the keyword already
+    # encodes its own with leading/trailing whitespace.
     left = "" if kw.startswith(" ") else r"\b"
     right = "" if kw.endswith(" ") else r"\b"
     return re.compile(f"{left}{escaped}{right}", re.IGNORECASE)
