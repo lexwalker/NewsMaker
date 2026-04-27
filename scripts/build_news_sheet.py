@@ -209,20 +209,26 @@ def _existing_state(svc, tab: str) -> dict:
         (covers both column J primary URL and the newline list in column M)
       - ``rows_meta``: list of {sheet_row, title, normalised, member_urls}
         used by the fuzzy anti-dup matcher
+      - ``date_by_row``: 1-based row → current value of column G (Дата
+        публикации); empty string if the cell is blank. Lets the dedup
+        logic patch missing dates without rewriting other cells.
     """
     try:
         resp = svc.spreadsheets().values().get(
             spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:P"
         ).execute()
     except Exception:  # noqa: BLE001
-        return {"url_to_row": {}, "rows_meta": []}
+        return {"url_to_row": {}, "rows_meta": [], "date_by_row": {}}
     rows = resp.get("values", []) or []
     url_to_row: dict[str, int] = {}
     rows_meta: list[dict] = []
+    date_by_row: dict[int, str] = {}
     for i, r in enumerate(rows, start=2):  # row index 2 = first data row
         title = r[1] if len(r) > 1 else ""
         primary_url = r[9] if len(r) > 9 else ""
         member_urls_cell = r[12] if len(r) > 12 else ""
+        date_value = r[6] if len(r) > 6 else ""
+        date_by_row[i] = date_value or ""
         members: list[str] = []
         if primary_url:
             url_to_row[primary_url] = i
@@ -240,7 +246,11 @@ def _existing_state(svc, tab: str) -> dict:
                 "normalised": _normalise_for_match(title),
                 "members": members,
             })
-    return {"url_to_row": url_to_row, "rows_meta": rows_meta}
+    return {
+        "url_to_row": url_to_row,
+        "rows_meta": rows_meta,
+        "date_by_row": date_by_row,
+    }
 
 
 # ----- Fuzzy anti-dup matcher --------------------------------------------
@@ -760,14 +770,27 @@ def main() -> int:
     state = _existing_state(svc, NEWS_TAB)
     url_to_row: dict[str, int] = state["url_to_row"]
     existing_meta: list[dict] = state["rows_meta"]
+    date_by_row: dict[int, str] = state["date_by_row"]
     brand_lex = _build_brand_lexicon()
 
-    fresh: list[dict] = []          # truly new clusters → prepend at top
-    merge_into: list[tuple[int, dict]] = []  # (existing_row, cluster) — extend the row
-    skip_exact = 0                   # exact URL already there → no-op
+    fresh: list[dict] = []                         # truly new → prepend
+    merge_into: list[tuple[int, dict]] = []         # fuzzy match → extend row
+    date_patches: dict[int, str] = {}               # row → ISO date to write
+    skip_exact = 0                                  # exact URL already there
+
+    def _maybe_patch_date(row: int, c: dict) -> None:
+        """If the existing row has no date but the new cluster does, copy it."""
+        new_date = c.get("published") or ""
+        if not new_date:
+            return
+        if (date_by_row.get(row) or "").strip():
+            return  # existing row already has a date — don't overwrite
+        # Avoid double-scheduling: keep the first non-empty value we see
+        if row not in date_patches:
+            date_patches[row] = new_date
 
     for c in clean:
-        # 1) Exact URL hit — story already on the sheet, do nothing
+        # 1) Exact URL hit — story already on the sheet
         urls_in_cluster = {c["primary_url"], c["canonical_url"]}
         urls_in_cluster.update(m["url"] for m in c["members"])
         urls_in_cluster.discard("")
@@ -778,14 +801,14 @@ def main() -> int:
                 break
         if existing_row_by_url:
             skip_exact += 1
+            _maybe_patch_date(existing_row_by_url, c)
             continue
 
-        # 2) Fuzzy anti-dup — same story, different URL (e.g. another
-        # outlet picked it up). Append the new URLs to that row instead
-        # of creating a new entry.
+        # 2) Fuzzy anti-dup — same story, different URL
         match_row = _find_existing_match(c, existing_meta, brand_lex)
         if match_row:
             merge_into.append((match_row, c))
+            _maybe_patch_date(match_row, c)
             continue
 
         # 3) Truly new — schedule for prepend
@@ -795,8 +818,22 @@ def main() -> int:
         f"Dedup result:\n"
         f"  - already on sheet (exact URL): {skip_exact}\n"
         f"  - merged into existing row (fuzzy match): {len(merge_into)}\n"
+        f"  - date patches (existing row was missing date): {len(date_patches)}\n"
         f"  - new (will be prepended): {len(fresh)}"
     )
+
+    # ---- Date patches into existing rows --------------------------------
+    if date_patches:
+        patch_data = [
+            {"range": f"'{NEWS_TAB}'!G{row}", "values": [[iso]]}
+            for row, iso in date_patches.items()
+        ]
+        CHUNK = 200
+        for i in range(0, len(patch_data), CHUNK):
+            svc.spreadsheets().values().batchUpdate(
+                spreadsheetId=SHEET_ID,
+                body={"valueInputOption": "USER_ENTERED", "data": patch_data[i:i + CHUNK]},
+            ).execute()
 
     # ---- Apply the fuzzy-merge: extend the existing row's URL list +1 ---
     if merge_into:
