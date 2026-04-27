@@ -56,21 +56,30 @@ mirror_hosts:
 # Hosts that are press-release aggregators or brand pressrooms.
 # Any outbound link to one of these is a near-certain primary source.
 press_release_hosts:
+  # Generic press-release wires
   - prnewswire.com
   - businesswire.com
   - globenewswire.com
+  # RU news wires (treated as primary when articles cite them)
   - tass.ru
   - interfax.ru
   - ria.ru
+  - 1prime.ru
+  - finmarket.ru
+  # Brand pressrooms — global
   - press.mini.com
   - media.mercedes-benz.com
+  - mbusa.com
   - press.bmwgroup.com
   - media.ford.com
   - media.gm.com
   - pressroom.toyota.com
+  - global.toyota
+  - pressroom.lexus.com
   - hyundainews.com
   - hyundai.news
   - press.kia.com
+  - kianewscenter.com
   - volkswagen-newsroom.com
   - audi-mediacenter.com
   - newsroom.porsche.com
@@ -81,3 +90,40 @@ press_release_hosts:
   - nissannews.com
   - hondanews.com
   - insidemazda.mazdausa.com
+  - subaru.co.jp
+  - media.subaru.com
+  - globalsuzuki.com
+  - bentleymedia.com
+  - press.rolls-roycemotorcars.com
+  - media.lamborghini.com
+  - lamborghini.com
+  - rivian.com
+  # Brand pressrooms — RU
+  - mir.hyundai.ru
+  - hyundai.ru
+  - haval.ru
+  - chery.ru
+  - geely-motors.com
+  - solarsauto.ru
+  - mbrus.ru
+  - voyah.su
+  - evolute.ru
+  - suzuki-motor.ru
+  - sollers-auto.com
+  - life.uaz.ru
+  - chinamashina.com
+  - asroad.org
+  - jaccar.ru
+  # Industry / association
+  - gasgoo.com
+  - autonews.gasgoo.com
+  - en.caam.org.cn
+  - naamsa.net
+  - smmt.co.uk
+  - acea.auto
+  - aebrus.ru
+  - autostat.ru
+  - napinfo.ru
+  # Aggregators we trust as authoritative when cited
+  - frankrg.com
+  - banki.ru

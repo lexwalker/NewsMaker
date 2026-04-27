@@ -19,6 +19,94 @@ CUES = PrimarySourceCues(
 )
 
 
+def test_facebook_share_link_ignored() -> None:
+    """Share buttons must never become primary sources."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://autoblog.example/news/some-story",
+        body="Some article body about cars without explicit source.",
+        title="Some auto headline",
+        outbound_links=[
+            "https://www.facebook.com/sharer/sharer.php?u=https://autoblog.example/news/some-story",
+            "https://twitter.com/intent/tweet?text=foo",
+            "https://t.me/share/url?url=foo",
+        ],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    # Should fall through to "self with low confidence" because all
+    # outbound candidates are junk share buttons.
+    assert url == "https://autoblog.example/news/some-story"
+    assert conf == "low"
+
+
+def test_root_homepage_link_ignored() -> None:
+    """Root-only URLs (no path) shouldn't be picked as primary."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://autoblog.example/news/toyota-x",
+        body="According to Toyota, a new model is coming.",
+        title="Toyota announces something",
+        outbound_links=[
+            "https://www.toyota.com/",  # root — junk
+            "https://www.toyota.com",   # root — junk
+        ],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    # No usable primary in outbound → fall back to self
+    assert url == "https://autoblog.example/news/toyota-x"
+    assert conf == "low"
+
+
+def test_login_page_link_ignored() -> None:
+    """Login / auth URLs shouldn't be picked as primary."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://example.com/news/x",
+        body="Some text mentioning Toyota.",
+        title="Toyota story",
+        outbound_links=[
+            "https://example.com/login",
+            "https://example.com/signin",
+            "https://www.toyota.com/news/launch-2026",
+        ],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    # Toyota brand domain match should win — login URLs filtered.
+    assert "toyota.com" in dom
+    assert "/news/launch-2026" in url
+
+
+def test_self_is_press_release_host_promoted_to_high() -> None:
+    """When the article URL itself is on a press-release host, mark as
+    high-confidence self-source instead of returning 'low' fallback."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://pressroom.toyota.com/2026/04/camry-launch",
+        body="Toyota today announced the new Camry.",
+        title="Toyota Camry launches in 2026",
+        outbound_links=[],  # no outbound at all
+        brands=BRANDS,
+        cues=CUES,
+    )
+    assert url == "https://pressroom.toyota.com/2026/04/camry-launch"
+    assert conf == "high"
+
+
+def test_whitelist_article_promoted_to_high() -> None:
+    """Editor-trusted whitelist domains also become primary at high
+    confidence when no better external source is found."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://carnewschina.com/2026/04/byd-x",
+        body="BYD revealed a new model today.",
+        title="BYD reveals new model",
+        outbound_links=[],
+        brands=BRANDS,
+        cues=CUES,
+        whitelist_domains={"carnewschina.com"},
+    )
+    assert url == "https://carnewschina.com/2026/04/byd-x"
+    assert conf == "high"
+
+
 def test_press_release_host_wins() -> None:
     url, dom, conf = detect_primary_source(
         article_url="https://autoblog.example/news/toyota-x",

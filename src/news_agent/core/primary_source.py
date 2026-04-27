@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Iterable, Literal
+from urllib.parse import urlparse
 
 from rapidfuzz import fuzz
 
@@ -37,6 +38,51 @@ _SUBDOMAIN_STRIP = re.compile(r"^(?:www|m|amp)\.")
 
 def _normalise_domain(d: str) -> str:
     return _SUBDOMAIN_STRIP.sub("", d.lower())
+
+
+# ---------------------------------- junk-link filters ---------------------
+# Outbound links that must NEVER be picked as a primary source. The full
+# string is checked case-insensitive against URL.
+_JUNK_URL_FRAGMENTS = (
+    # Share buttons
+    "facebook.com/sharer/", "facebook.com/share/",
+    "twitter.com/intent/", "twitter.com/share",
+    "t.me/share", "vk.com/share",
+    "linkedin.com/share", "pinterest.com/pin/create",
+    "wa.me/", "api.whatsapp.com/send",
+    "ok.ru/share", "reddit.com/submit",
+    # Print / email-this widgets
+    "/print/", "?print=", "/print.html",
+    "mailto:", "/email-this", "/sendtofriend",
+    # Login / auth pages
+    "/login", "/signin", "/sign-in", "/auth/", "/oauth",
+    "/register", "/signup", "/sign-up",
+    # Tracking redirectors
+    "doubleclick.net", "googleadservices", "google.com/url?",
+    "googletagmanager.com", "ga4-",
+    "/redir?", "/redirect?", "/click?", "/r.php?",
+    # Generic search results pages
+    "/search?", "/search/", "?q=",
+)
+
+
+def _is_junk_link(url: str) -> bool:
+    """Reject share buttons, login pages, tracking redirectors, root-only
+    URLs and similar non-source links."""
+    if not url:
+        return True
+    u = url.lower()
+    if any(frag in u for frag in _JUNK_URL_FRAGMENTS):
+        return True
+    # Reject root-only URLs: a press release should have a path. We accept
+    # any URL whose path has more than just "/". This filter catches
+    # "https://www.gazeta.ru/" or "https://toyota.jp/" homepage links.
+    parsed = urlparse(url)
+    path = (parsed.path or "").rstrip("/")
+    if not path or path == "/":
+        # URL has no meaningful path
+        return True
+    return False
 
 
 def _matches_brand(link_domain: str, brands: list[BrandDomainEntry]) -> BrandDomainEntry | None:
@@ -89,22 +135,38 @@ def detect_primary_source(
     outbound_links: list[str],
     brands: list[BrandDomainEntry],
     cues: PrimarySourceCues,
+    whitelist_domains: set[str] | None = None,
 ) -> tuple[str, str, Confidence]:
     """Return (primary_url, primary_domain, confidence).
 
-    Mirror hosts (t.me, max.ru, vk.com, telegra.ph …) are filtered out of
-    outbound-link candidates: they usually are the same author cross-posting
-    their own content, not a primary source.
+    Mirror hosts (t.me, max.ru, vk.com, telegra.ph …) and junk URLs
+    (share buttons, login pages, root-only homepages, tracking redirects)
+    are filtered out of outbound-link candidates.
+
+    Tier 0 — if the article URL itself is on a press-release host or in
+    the editor-trusted whitelist, the article IS the primary source. This
+    avoids picking a random brand-domain link from the body when the
+    article we're processing is the canonical release.
     """
     article_domain = _normalise_domain(domain_of(article_url))
     mentioned = _mentions_brand(title + "\n" + body, brands)
-    # Keep only outbound links that are NOT mirrors of the current post.
+    whitelist_norm = {_normalise_domain(d) for d in (whitelist_domains or set())}
+
+    # Tier 0 — article itself is a press release / whitelist source.
+    if _press_release_host(article_domain, cues.press_release_hosts):
+        return article_url, domain_of(article_url), "high"
+    if article_domain in whitelist_norm:
+        return article_url, domain_of(article_url), "high"
+
+    # Filter out mirror posts AND junk URLs from candidates.
     outbound_links = [
         link for link in outbound_links
-        if not _is_mirror(domain_of(link), cues.mirror_hosts)
+        if link
+        and not _is_junk_link(link)
+        and not _is_mirror(domain_of(link), cues.mirror_hosts)
     ]
 
-    # Tier 1 — press-release host.
+    # Tier 1 — press-release host in outbound links.
     for link in outbound_links:
         d = domain_of(link)
         if _normalise_domain(d) == article_domain:

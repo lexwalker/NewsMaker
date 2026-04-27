@@ -1113,6 +1113,7 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             outbound_links=article.outbound_links,
             brands=BRANDS,
             cues=PRIMARY_CUES,
+            whitelist_domains=WHITELIST,
         )
         row.primary_url = p_url
         row.primary_domain = p_dom
