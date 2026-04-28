@@ -763,27 +763,25 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
     section_names = {s.name for s in sections}
 
     for i, r in enumerate(candidates, start=1):
-        # 1. Cheap relevance check for 'possible' rows
-        if r.verdict == "Возможно новость":
-            try:
-                rel, u = client.is_automotive(r.title, r.body_excerpt or r.title)
-                budget.record(u)
-                r.llm_relevance = "Да" if rel.is_automotive_or_economy else "Нет"
-                r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
-            except Exception as e:  # noqa: BLE001
-                r.llm_note = f"relevance error: {e!s:100}"
-                continue
-            if not rel.is_automotive_or_economy:
-                # drop — not auto/economy; no classify/translate needed
-                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + "LLM: не авто/эконом"
-                # OVERWRITE verdict so the editor sees the LLM decision —
-                # "Возможно новость" → "Отклонено LLM"
-                r.verdict = "Отклонено LLM"
-                print(f"  [{i}/{len(candidates)}] {r.title[:60]!r} → relevance=Нет (отсечено)")
-                continue
-        else:
-            # certain — implicitly relevant
-            r.llm_relevance = "Да"
+        # 1. LLM relevance check — runs for BOTH 'certain' and 'possible'
+        # rows now. The heuristic is good but produces ~10-15% of false
+        # positives (Samsung TVs, government news mentioning transport,
+        # corporate ESG statements) that LLM catches reliably. The cost
+        # is ~$0.001 per article, ~$0.05 per run — worth the precision.
+        try:
+            rel, u = client.is_automotive(r.title, r.body_excerpt or r.title)
+            budget.record(u)
+            r.llm_relevance = "Да" if rel.is_automotive_or_economy else "Нет"
+            r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+        except Exception as e:  # noqa: BLE001
+            r.llm_note = f"relevance error: {e!s:100}"
+            continue
+        if not rel.is_automotive_or_economy:
+            # LLM rejected — even if heuristic was certain, trust LLM.
+            r.llm_note = (r.llm_note + " | " if r.llm_note else "") + "LLM: не авто/эконом"
+            r.verdict = "Отклонено LLM"
+            print(f"  [{i}/{len(candidates)}] {r.title[:60]!r} → relevance=Нет (отсечено)")
+            continue
 
         # 2. Classify section
         try:

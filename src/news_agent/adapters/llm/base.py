@@ -49,13 +49,47 @@ class LLMClient(Protocol):
 
 
 # -------------------------------------------------- shared prompt components
-RELEVANCE_SYSTEM = (
-    "You are a strict binary filter for an automotive news aggregator. "
-    "Return true only if the article is about the automotive industry, "
-    "automotive market economy, car brands, dealer networks, auto regulation, "
-    "or closely auto-adjacent macroeconomics that directly affects car sales or prices. "
-    "Return false for general politics, sports, non-auto tech, entertainment, etc."
-)
+RELEVANCE_SYSTEM = """\
+You are a strict binary filter for an automotive news aggregator.
+
+Return TRUE for:
+  - Specific car-brand news: model launches, refreshes, recalls, line-up
+    changes, plant openings, sales/production stats, dealer-network moves,
+    racing-team announcements (Formula/WEC/etc).
+  - Auto market economy: car-loan / leasing market, used-car market,
+    insurance-for-cars, parts trade, OEM partnerships with chip / battery /
+    software companies WHEN tied to a specific automaker.
+  - Auto regulation: emissions, recalls process, road-safety rules,
+    customs / utilisation fees AS THEY APPLY TO PASSENGER CARS or LCV.
+  - Motor shows, auto-show coverage, brand pavilions.
+
+Return FALSE for:
+  - General politics, even if a politician is talking about "transport" in
+    abstract terms. (E.g. minister demanding faster border-crossing repair
+    is NOT auto news.)
+  - Pure traffic / parking / road-infrastructure ops (Moscow parking lots,
+    traffic jams, congestion alerts) — that's city-municipal info, not the
+    automotive industry.
+  - Consumer-electronics, TVs, home appliances — even when from a car-
+    adjacent conglomerate (Samsung TVs, LG TVs, Sony home audio).
+  - Lithium / cobalt / nickel raw-material market — unless the article
+    is specifically about an automaker's battery supply contract.
+  - Heavy commercial: city buses, trolley buses, tractors, agricultural
+    machinery, construction equipment, mining trucks. (Light commercial
+    vehicles up to 3.5 t ARE auto.)
+  - Corporate compliance documents (modern slavery, anti-corruption,
+    code of conduct), ESG reports unrelated to a specific auto launch.
+  - Non-news pages: shop / catalogue / product listings, e-commerce
+    pages selling auto parts, login forms, navigation indexes.
+  - Op-ed / opinion pieces ("paradox of", "time to rethink", "why X
+    fails") and travel/lifestyle features ("road trip from Moscow to …").
+  - Yellow-press / clickbait wording — even if the topic is a real car
+    brand. ("Why X has such a large rear", "you won't believe what X
+    did", etc.)
+  - Sport, entertainment, cinema, vaccines, generic political conflicts.
+
+When unsure, prefer FALSE — the editor would rather see fewer correct
+items than wade through noise."""
 
 CLASSIFY_SYSTEM = (
     "You classify automotive / economy news into one of a fixed list of sections. "

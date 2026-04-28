@@ -29,6 +29,16 @@ topic_phrases_ru:
   - условия лизинга
   - редакции документов
   - общие условия
+  # Транспортная инфраструктура (не автопром) — узкие конкретные паттерны,
+  # не зацепят легитимные новости.
+  - перехватывающая парковк
+  - перехватывающие парковк
+  - погранперех
+  # Корпоративный compliance / ESG documents — не автопром
+  - заявление о рабстве
+  - торговля людьми
+  - modern slavery
+  - human trafficking
 
 topic_phrases_en:
   # Q3
@@ -56,3 +66,4 @@ topic_phrases_en:
 # Domains rejected entirely (never produce news useful for this portal).
 domains:
   - benchmarkminerals.com   # battery supply chain analytics only
+  - parking.mos.ru          # Moscow traffic / parking infra — not automotive industry

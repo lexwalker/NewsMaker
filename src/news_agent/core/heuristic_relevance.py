@@ -49,6 +49,19 @@ _NON_ARTICLE_URL_HINTS = (
     "?camefrom=",             # referral lander (benchmarkminerals from rhomotion)
     "/safety-ratings",        # ancap ratings catalog
     "/eSearch",               # euipo search
+    # E-commerce / product catalogue — not editorial content
+    "/shop/",                 # парт-каталоги «лада-полки» и т.п.
+    "/catalog/",
+    "/store/",
+    "/order/",
+    "/buy-",
+    # Corporate compliance / ESG documents — not auto news
+    "/slavery-statement",
+    "/modern-slavery",
+    "/anti-slavery",
+    "/code-of-conduct",
+    "/compliance-",
+    "/esg-statement",
     # Op-ed / feature / analytics-lifestyle — editor confirmed not to include
     "/infocenter/autoarticles/",        # motorpage long-form opinion
     "/infographics/puteshestvuem-",     # napinfo auto-lifestyle travel posts
@@ -506,6 +519,23 @@ _AUTO_STRONG_MARKERS = (
 )
 
 
+# Phrases that ALWAYS reject the article — even if the title also names
+# a car brand or an auto-marker. Used for clickbait / yellow-press wording
+# that we never want regardless of the subject.
+_FORCE_REJECT_PHRASES = (
+    # Most-obvious clickbait — extremely unlikely to appear in a real
+    # auto-industry headline. Conservative list to avoid wiping
+    # legitimate news that happens to contain a similar word in its body.
+    "«попа»",
+    " попа ",  # bracketed by spaces to avoid e.g. "попадание"
+    "вы не поверите",
+    "you won't believe",
+    "you wont believe",
+    "шок-видео",
+    "shocking video",
+)
+
+
 def blacklist_hit(
     raw: RawArticle,
     bl: Blacklist,
@@ -515,12 +545,14 @@ def blacklist_hit(
 
     Rules:
       • Whole-domain blocks (e.g. benchmarkminerals.com) — always reject.
-      • Phrases — matched in the TITLE only (case-insensitive).
-      • BUT: if a blacklist phrase is found AND the title also contains
-        a car brand name (from ``brands``) OR a strong auto-signal marker,
-        we do NOT reject — the article is presumed to be about the car
-        market as a whole, with buses / tractors / battery minerals
-        mentioned incidentally. Let the LLM decide.
+      • Force-reject phrases (clickbait / yellow press) — always reject,
+        no brand override. Editor explicitly doesn't want such headlines
+        even when they're about a real car brand.
+      • Topic phrases — matched in the TITLE only (case-insensitive).
+      • For topic phrases: if the title also contains a car brand or an
+        auto-marker, we do NOT reject — the article is presumed to be
+        about the car market with the blacklisted topic mentioned
+        incidentally. Let the LLM decide.
     """
     if not bl:
         return BlacklistVerdict(False)
@@ -530,10 +562,14 @@ def blacklist_hit(
             return BlacklistVerdict(True, f"blacklisted domain: {blocked}")
 
     title = (raw.title or "").lower()
+    # Tier 1 — clickbait phrases that ALWAYS reject.
+    for phrase in _FORCE_REJECT_PHRASES:
+        if phrase in title:
+            return BlacklistVerdict(True, f"clickbait/yellow-press: {phrase!r}")
+    # Tier 2 — topic phrases that allow brand override.
     for phrase in bl.all_phrases():
         if not phrase or phrase not in title:
             continue
-        # Blacklist phrase is present — check for override signals.
         if _title_has_auto_signal(title, brands):
             continue
         return BlacklistVerdict(True, f"blacklisted title phrase: {phrase!r}")
