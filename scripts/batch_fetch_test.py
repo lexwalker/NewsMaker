@@ -16,6 +16,7 @@ Run:  python scripts/batch_fetch_test.py
 
 from __future__ import annotations
 
+import argparse
 import io
 import os
 import sys
@@ -68,7 +69,8 @@ from news_agent.core.config_loader import (  # noqa: E402
     load_primary_source_cues,
     load_whitelist_domains,
 )
-from news_agent.core.freshness import is_fresh  # noqa: E402
+from news_agent.core.freshness import is_fresh, is_in_window  # noqa: E402
+from news_agent.core.run_state import RunState, RunWindow  # noqa: E402
 from news_agent.core.primary_source import (  # noqa: E402
     CorpusEntry,
     detect_earliest_in_corpus,
@@ -101,8 +103,16 @@ HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # DISABLED on timeouts, so this just widens the window once.
 ENABLE_LLM = True         # flip to False to run pure heuristics again
 LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
-FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # drop articles older than this
+FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # legacy fallback (ad-hoc runs)
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
+STATE_PATH = Path(os.environ.get("RUN_STATE_PATH", "./data/state.json"))
+RUNS_LOG_PATH = Path(os.environ.get("RUNS_LOG_PATH", "./data/runs.log"))
+
+# Active fetch window for this run. Populated in main() from RunState +
+# CLI flags, then read by _score_article when filtering articles by date.
+# Set to None when the run is in legacy mode (--no-window) and falls back
+# to FRESHNESS_HOURS for backwards-compat with manual one-off runs.
+RUN_WINDOW: RunWindow | None = None
 
 # Real Telegram channels that the editor uses (from 'Новости опубликованные').
 # We prepend them to the source list so the test run actually exercises the
@@ -975,15 +985,21 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     row.source_language = (article.source_language or "").lower()[:2]
 
     # --- Freshness gate ------------------------------------------------------
-    # If the article has a known publication timestamp and it's older than
-    # FRESHNESS_HOURS, short-circuit: no heuristic score, no LLM call.
-    # Articles without any timestamp pass through (many t.me posts do expose
-    # one; HTML fetchers usually find og:article:published_time).
-    if article.published_at is not None and not is_fresh(
-        article.published_at, hours=FRESHNESS_HOURS
-    ):
-        # Skip entirely — do not write to Sheets, don't run LLM.
-        return False
+    # When RUN_WINDOW is populated (scheduled-run mode), accept only articles
+    # whose published_at falls inside [since, now]. Else fall back to a fixed
+    # FRESHNESS_HOURS lookback (manual / ad-hoc runs).
+    # Articles without any timestamp pass through in either mode (many t.me
+    # posts do expose one; HTML fetchers usually find og:article:published_time).
+    if article.published_at is not None:
+        if RUN_WINDOW is not None:
+            if not is_in_window(
+                article.published_at,
+                since=RUN_WINDOW.since,
+                now=RUN_WINDOW.now,
+            ):
+                return False
+        elif not is_fresh(article.published_at, hours=FRESHNESS_HOURS):
+            return False
 
     # --- Blacklist gate ------------------------------------------------------
     # Hard-reject topics the editorial team explicitly opted out of
@@ -1141,10 +1157,105 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
     return out
 
 
+# ------------------------------------------------------------- CLI
+def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI args. All have sensible defaults so the scheduled
+    invocation can be just ``python scripts/batch_fetch_test.py``.
+    """
+    p = argparse.ArgumentParser(
+        description="NewsMaker batch fetch — scheduled / ad-hoc news ingest",
+    )
+    p.add_argument(
+        "--since-overlap-minutes", type=int, default=20,
+        help="How far before last_run_at to start the fetch window (default 20). "
+             "Catches publications that crossed the previous run's boundary.",
+    )
+    p.add_argument(
+        "--max-lookback-hours", type=int, default=24,
+        help="Ceiling on the fetch window. First run / stale state clamps to this. "
+             "Default 24h — matches FRESHNESS_HOURS.",
+    )
+    p.add_argument(
+        "--no-window", action="store_true",
+        help="Disable scheduled-run mode and use legacy FRESHNESS_HOURS instead. "
+             "Useful for ad-hoc backfill runs that should NOT touch state.json.",
+    )
+    p.add_argument(
+        "--state-path", type=Path, default=STATE_PATH,
+        help=f"Path to the JSON state file (default {STATE_PATH}).",
+    )
+    p.add_argument(
+        "--runs-log", type=Path, default=RUNS_LOG_PATH,
+        help=f"Path to the per-run summary log (default {RUNS_LOG_PATH}).",
+    )
+    return p.parse_args(argv)
+
+
+def _append_run_log(
+    path: Path,
+    *,
+    run_at: datetime,
+    window: RunWindow | None,
+    rows_total: int,
+    rows_new: int,
+    cost_usd: float,
+    elapsed_s: float,
+    status: str,
+) -> None:
+    """One JSON-line per run. Easy to tail / grep / aggregate later."""
+    import json as _json
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "run_at": run_at.isoformat(timespec="seconds"),
+        "status": status,
+        "window_since": window.since.isoformat(timespec="seconds") if window else None,
+        "window_now": window.now.isoformat(timespec="seconds") if window else None,
+        "window_fallback": window.using_fallback if window else None,
+        "previous_run_at": (
+            window.previous_run_at.isoformat(timespec="seconds")
+            if window and window.previous_run_at else None
+        ),
+        "rows_total": rows_total,
+        "rows_new": rows_new,
+        "cost_usd": round(cost_usd, 4),
+        "elapsed_s": round(elapsed_s, 1),
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(_json.dumps(record, ensure_ascii=False) + "\n")
+
+
 # ------------------------------------------------------------- main
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
     global PRIMARY_CUES, PW_FETCHER, PW_ALLOWLIST, IMP_FETCHER, IMP_ALLOWLIST
+    global RUN_WINDOW
+    args = _parse_cli(argv)
+    state = RunState(args.state_path)
+    if args.no_window:
+        RUN_WINDOW = None
+        print(
+            f"Window mode: OFF (--no-window) — using legacy FRESHNESS_HOURS={FRESHNESS_HOURS}h. "
+            f"State file will NOT be updated."
+        )
+    else:
+        RUN_WINDOW = state.compute_window(
+            overlap_minutes=args.since_overlap_minutes,
+            max_lookback_hours=args.max_lookback_hours,
+        )
+        prev = (
+            RUN_WINDOW.previous_run_at.isoformat(timespec="seconds")
+            if RUN_WINDOW.previous_run_at else "none"
+        )
+        mode = "fallback (max_lookback)" if RUN_WINDOW.using_fallback else "incremental"
+        print(
+            f"Window mode: {mode}\n"
+            f"  previous_run_at: {prev}\n"
+            f"  since:           {RUN_WINDOW.since.isoformat(timespec='seconds')}\n"
+            f"  now:             {RUN_WINDOW.now.isoformat(timespec='seconds')}\n"
+            f"  overlap:         {args.since_overlap_minutes} min\n"
+            f"  max_lookback:    {args.max_lookback_hours} h"
+        )
+
     WHITELIST = load_whitelist_domains()
     BLACKLIST = load_blacklist()
     BRANDS = load_brand_domains()
@@ -1341,6 +1452,54 @@ def main() -> int:
         print(f"Conditional formatting applied to {articles_tab!r}")
     except Exception as e:  # noqa: BLE001
         print(f"(formatting step skipped: {e})", file=sys.stderr)
+
+    # ---------------- Persist run state + per-run summary log ---------------
+    # We only update state.json in scheduled-run mode (RUN_WINDOW set).
+    # Ad-hoc / backfill runs (--no-window) leave the timestamp untouched
+    # so they don't pollute the schedule.
+    total_cost = sum(
+        float(r.llm_cost_usd) for r in article_rows
+        if isinstance(r.llm_cost_usd, (int, float))
+    )
+    rows_new = sum(1 for r in article_rows if not r.from_cache)
+    elapsed_total_s = (time.monotonic() - total_t0)
+    run_at_dt = datetime.fromisoformat(run_ts.replace("Z", "+00:00"))
+    if RUN_WINDOW is not None:
+        try:
+            state.update_success(
+                run_at=run_at_dt,
+                window_start=RUN_WINDOW.since,
+                articles=len(article_rows),
+                cost_usd=total_cost,
+            )
+            print(
+                f"State saved: last_run_at={run_at_dt.isoformat(timespec='seconds')}, "
+                f"articles={len(article_rows)}, cost=${total_cost:.4f}"
+            )
+        except Exception as e:  # noqa: BLE001
+            # Don't fail the whole run if state write fails — the next run
+            # will fall back to max_lookback, no news lost.
+            print(
+                f"WARNING: failed to write state file {args.state_path}: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+
+    try:
+        _append_run_log(
+            args.runs_log,
+            run_at=run_at_dt,
+            window=RUN_WINDOW,
+            rows_total=len(article_rows),
+            rows_new=rows_new,
+            cost_usd=total_cost,
+            elapsed_s=elapsed_total_s,
+            status="ok",
+        )
+        print(f"Run log appended: {args.runs_log}")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: failed to append run log: {e}", file=sys.stderr)
+
     return 0
 
 
