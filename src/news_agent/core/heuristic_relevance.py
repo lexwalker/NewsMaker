@@ -21,6 +21,8 @@ _NON_ARTICLE_URL_HINTS = (
     "/search",
     "/tag/",
     "/tags/",
+    "/topic/",                # press-room topic aggregators
+    "/article/topic/",        # BMW PressClub style: /article/topic/4098/...
     "/category/",
     "/categories/",
     "/archive",
@@ -150,6 +152,15 @@ def looks_like_article(
     reasons: list[str] = []
     score = 0.0
     html = raw.html or ""
+
+    # --- hard-reject on missing / placeholder titles ---
+    # Aggregator topic pages (press-room "/topic/...") tend to give
+    # trafilatura no title at all, and the LLM then produces "<UNKNOWN>".
+    # Reject them up front so they never reach the LLM pipeline.
+    title_norm = (raw.title or "").strip().lower()
+    if not title_norm or title_norm in {"<unknown>", "unknown", "untitled", "no title"}:
+        reasons.append("missing-or-placeholder-title")
+        return ArticleVerdict(is_article=False, score=0.0, reasons=reasons)
 
     # --- positive structural signals ---
     if '"@type":"NewsArticle"' in html.replace(" ", "") or '"@type": "NewsArticle"' in html:
