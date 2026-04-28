@@ -83,7 +83,7 @@ def main() -> int:
         member_urls = _get(r, COL_MEMBER_URLS)
         all_urls = [url] + [u.strip() for u in member_urls.splitlines() if u.strip()]
 
-        # 1) Domain blacklist
+        # 1) Domain blacklist (whole-domain blocks)
         for u in all_urls:
             d = domain_of(u)
             for blocked in bl.domains:
@@ -94,17 +94,25 @@ def main() -> int:
                 continue
             break
         else:
-            # 2) Non-article URL hints
-            for u in all_urls:
+            # 2) Non-article URL hints — but ONLY check member URLs (col M),
+            # NOT the primary URL. Primary URL might have been mis-picked
+            # (e.g. /contact.html on a brand site) while the actual article
+            # in members is legitimate. Better to fix primary via
+            # backfill_primary_source.py than nuke the row.
+            article_urls = [u.strip() for u in member_urls.splitlines() if u.strip()]
+            url_hit = False
+            for u in article_urls:
                 low = u.lower()
                 if any(h in low for h in _NON_ARTICLE_URL_HINTS):
                     matched = next(h for h in _NON_ARTICLE_URL_HINTS if h in low)
                     rows_to_delete.append((i, f"non-article URL: {matched}", title[:80]))
+                    url_hit = True
                     break
                 if any(low.endswith(ext) for ext in _NON_ARTICLE_EXTENSIONS):
                     rows_to_delete.append((i, "binary doc URL", title[:80]))
+                    url_hit = True
                     break
-            else:
+            if not url_hit:
                 # 3a) Force-reject (clickbait / yellow press, no override)
                 title_lower = _title_only(title)
                 hit = False

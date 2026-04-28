@@ -57,6 +57,9 @@ _JUNK_URL_FRAGMENTS = (
     # Login / auth pages
     "/login", "/signin", "/sign-in", "/auth/", "/oauth",
     "/register", "/signup", "/sign-up",
+    # Contact / about pages
+    "/contact", "/contacts", "/contact-us", "/contact.html",
+    "/feedback", "/support",
     # Tracking redirectors
     "doubleclick.net", "googleadservices", "google.com/url?",
     "googletagmanager.com", "ga4-",
