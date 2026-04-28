@@ -30,8 +30,10 @@ load_dotenv(ROOT / ".env", override=True)
 from news_agent.core.config_loader import load_blacklist, load_brand_domains  # noqa: E402
 from news_agent.core.heuristic_relevance import (  # noqa: E402
     _FORCE_REJECT_PHRASES,
+    _LIFESTYLE_TITLE_PHRASES,
     _NON_ARTICLE_URL_HINTS,
     _NON_ARTICLE_EXTENSIONS,
+    _OP_ED_TITLE_PHRASES,
     _title_has_auto_signal,
 )
 from news_agent.core.urls import domain_of  # noqa: E402
@@ -63,6 +65,26 @@ def _title_only(combined: str) -> str:
     return s.replace("\n", " ")
 
 
+_PLACEHOLDER_TITLES = {"<unknown>", "unknown", "untitled", "no title", "n/a", "—", "-"}
+
+
+def _is_placeholder_title(combined: str) -> bool:
+    """True if EN portion or full title is empty / UNKNOWN-style placeholder."""
+    if not combined:
+        return True
+    # Sheet titles look like:  "EN: <english>\nRU: <russian>"
+    en_part = ""
+    for line in combined.splitlines():
+        ll = line.strip()
+        if ll.lower().startswith("en:"):
+            en_part = ll[3:].strip()
+            break
+    candidate = (en_part or combined.strip()).lower().strip("«»\"' ")
+    if not candidate:
+        return True
+    return candidate in _PLACEHOLDER_TITLES
+
+
 def main() -> int:
     bl = load_blacklist()
     brands = load_brand_domains()
@@ -79,6 +101,12 @@ def main() -> int:
         title = _get(r, COL_TITLE)
         if not title or "EN:" not in title:
             continue
+
+        # 0) Empty / UNKNOWN placeholder titles — heuristic now hard-rejects these
+        if _is_placeholder_title(title):
+            rows_to_delete.append((i, "placeholder/UNKNOWN title", title[:80] or "<empty>"))
+            continue
+
         url = _get(r, COL_URL)
         member_urls = _get(r, COL_MEMBER_URLS)
         all_urls = [url] + [u.strip() for u in member_urls.splitlines() if u.strip()]
@@ -124,13 +152,31 @@ def main() -> int:
                 if hit:
                     continue
                 # 3b) Topic blacklist phrase (with brand-override)
+                phrase_hit = False
                 for phrase in bl.all_phrases():
                     if not phrase or phrase not in title_lower:
                         continue
                     if _title_has_auto_signal(title_lower, brands):
                         continue
                     rows_to_delete.append((i, f"blacklist phrase: {phrase!r}", title[:80]))
+                    phrase_hit = True
                     break
+                if phrase_hit:
+                    continue
+                # 3c) Op-ed / long-form opinion (editor category 6)
+                op_ed_hit = False
+                for phrase in _OP_ED_TITLE_PHRASES:
+                    if phrase in title_lower:
+                        rows_to_delete.append((i, f"op-ed title: {phrase!r}", title[:80]))
+                        op_ed_hit = True
+                        break
+                if op_ed_hit:
+                    continue
+                # 3d) Lifestyle / tourism (editor category 9)
+                for phrase in _LIFESTYLE_TITLE_PHRASES:
+                    if phrase in title_lower:
+                        rows_to_delete.append((i, f"lifestyle title: {phrase!r}", title[:80]))
+                        break
 
     print(f"\nRows to delete: {len(rows_to_delete)}")
     for sheet_row, reason, preview in rows_to_delete[:30]:
