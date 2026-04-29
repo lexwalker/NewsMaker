@@ -157,9 +157,16 @@ def looks_like_article(
     # Aggregator topic pages (press-room "/topic/...") tend to give
     # trafilatura no title at all, and the LLM then produces "<UNKNOWN>".
     # Reject them up front so they never reach the LLM pipeline.
-    title_norm = (raw.title or "").strip().lower()
+    title_raw = (raw.title or "").strip()
+    title_norm = title_raw.lower()
     if not title_norm or title_norm in {"<unknown>", "unknown", "untitled", "no title"}:
         reasons.append("missing-or-placeholder-title")
+        return ArticleVerdict(is_article=False, score=0.0, reasons=reasons)
+    # v22 leakage: extractor returned only the brand / company name as the
+    # title (e.g. "Sollers", "СОЛЛЕРС", "UAZ"). A real news headline is a
+    # sentence — single short tokens are placeholders.
+    if " " not in title_raw and len(title_raw) < 15:
+        reasons.append("single-word-placeholder-title")
         return ArticleVerdict(is_article=False, score=0.0, reasons=reasons)
 
     # --- positive structural signals ---
@@ -680,6 +687,27 @@ _FORCE_REJECT_PHRASES = (
     " unique lot ",
     "unique lot put up",
     "уникальный лот",
+
+    # ---------- Carsharing / ride-sharing (editor: «не наша тема») ----------
+    " carsharing",
+    "car-sharing",
+    "ride-sharing",
+    "ridesharing",
+    "ride sharing",
+    "каршеринг",
+    "райдшеринг",
+
+    # ---------- Clickbait second-pass (v22 leakage) ----------
+    "but there's a catch",
+    "but there is a catch",
+    "but here's the catch",
+    "but here's a catch",
+    "one factor quietly",
+    "one weird trick",
+    "what they don't want",
+    "what banks don't tell",
+    "secret of",
+    "the truth about",
 )
 
 
@@ -864,9 +892,12 @@ def _domain_matches(domain: str, suffixes: tuple[str, ...]) -> bool:
 
 # Russian auto-market portals — when the article is hosted here AND the
 # subject is automotive, the editor consistently routes to "Local" rather
-# than "Economics" or "Other news". Domain list is conservative — it must
-# be an editorial property whose ENTIRE focus is the RU auto market.
+# than "Economics" or "Other news". List grew during apr-2026 review:
+# editor flagged ROAD convention coverage, motorpage feature articles,
+# and major newswires (TASS, RIA, Kommersant) as Local-by-default
+# whenever the subject is the RU auto market.
 _RU_AUTO_PORTALS = (
+    # editorial RU auto portals (≥80% RU-market focus)
     "autostat.ru",
     "autonews.ru",
     "abreview.ru",
@@ -881,26 +912,92 @@ _RU_AUTO_PORTALS = (
     "wroom.ru",
     "rusautonews.com",
     "carcityrussia.ru",
+    "motorpage.ru",
+    # RU auto-industry organisations (always RU-context when on these sites)
+    "asroad.org",         # ROAD — Russian Automobile Dealers Association
+    "napinfo.ru",         # Russian Auto Manufacturers Association
+    # Russian newswires — RU focus when topic is auto
+    "tass.ru",
+    "ria.ru",
+    "kommersant.ru",
+    "rg.ru",
+    "iz.ru",
+    "lenta.ru",
+    "rbc.ru",
+    "vedomosti.ru",
+    "gazeta.ru",
+)
+
+
+# Russian regions / cities — appearance in title means the article is about
+# RU auto market. Used to upgrade ambiguous global-brand stories that have
+# a Russian-region angle (e.g. "Сборку Exeed перенесут на завод АГР в
+# Шушарах" — China brand, but the RU plant move is the news).
+_RU_GEO_MARKERS = (
+    "московск", "подмоско", "москв",
+    "петербург", "санкт-петер",
+    "ленинградск",
+    "татарстан", "башкорт",
+    "калининград", "уральск",
+    "сибирь", "сибирск",
+    "крым",
+    "новосибирск", "екатеринбург", "челябинск", "казан", "уфа", "красноярск",
+    "тольятти",  # AvtoVAZ
+    "ульяновск",  # UAZ
+    "набережн",   # KamAZ
+    "нижний новгор", "нижегородск",
+    "шушары", "шушарах",  # AGR plant
+    "автомобильный завод",
+)
+
+
+# Russian auto-industry actors — companies, alliances, regulators. When
+# any of these are named in a title, the story is almost always RU-context.
+_RU_AUTO_ACTORS = (
+    # OEMs
+    "автоваз", "ладa", " лада", "лады ", "лады.",
+    "уаз ", "уаз,", "уаз.", "уаз-",
+    "соллерс", "sollers",
+    "москвич", "moskvich",
+    "автотор", "avtotor",
+    "тенет ", "tenet",
+    " атом ",  # the 'Атом' EV
+    "камаз", "kamaz", "газ ", " gaz ",
+    "агр ",  # AGR plant
+    # Trade bodies / regulators
+    "автостат",
+    "роад", "asroad",
+    "napinfo", "оар ", " оар.",
+    "минпромторг", "минфин",
+    "национальной ассоциа",
 )
 
 
 def _is_ru_auto_subject(text: str) -> bool:
     """True if the title talks about the Russian auto market specifically.
 
-    Used in combination with `_RU_AUTO_PORTALS` to upgrade ambiguous Local
-    classifications. Looks for explicit RU-market markers — generic global
-    news on the same domain (e.g. iz.ru reposting Mercedes Cabrio) won't
-    trigger.
+    Three families of signals:
+      1. Generic Russia markers ("в России", "in Russia", "россий")
+      2. Russian region / city names (Подмосковье, Тольятти, Шушары)
+      3. Russian auto-industry actors (АвтоВАЗ, УАЗ, Автотор, Автостат, РОАД)
+
+    Any one of the three is sufficient. Used in combination with
+    `_RU_AUTO_PORTALS` to upgrade Local classifications.
     """
     t = (text or "").lower()
-    ru_markers = (
-        "в россии", "в рф", " россии ", "россий", " рф ", " рф,", " рф.",
+    generic_ru = (
+        "в россии", "в рф", " россии ", "россий",
+        " рф ", " рф,", " рф.", " рф:", "(рф)",
         "russia", "russian market", "in russia",
-        "автоваз", "автостат", "роад", "ладa", " лада",
-        "тенет ", "москвич", "уаз ", "соллерс", "хавал",
-        "geely россии", "chery россии",
+        "russian auto", "ru market",
     )
-    return any(m in t for m in ru_markers)
+    if any(m in t for m in generic_ru):
+        return True
+    if any(m in t for m in _RU_GEO_MARKERS):
+        return True
+    if any(m in t for m in _RU_AUTO_ACTORS):
+        return True
+    return False
 
 
 # Section labels — must match config/sections.yaml exactly. Hard-coded

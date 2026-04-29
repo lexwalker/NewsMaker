@@ -133,8 +133,20 @@ These rules override generic intuition. Apply them in this exact order:
     "opens showroom in [non-RU city]", "partners with",
     "strategic cooperation", "signed agreement with".
 
-(5) New dealer center opened in Russia → "Dealer news / Promo".
-    Foreign dealer-center openings → "Other news" (NOT Dealer).
+(5) "Dealer news / Promo" is RESERVED for ONE thing only:
+    a NEW physical dealership / showroom OPENING in Russia.
+    Triggers: "открыли ДЦ", "новый дилерский центр", "опен дилер",
+    "открытие дилерского центра", "official dealer launch in Russia".
+
+    Anything else dealer-adjacent goes to OTHER NEWS, not Dealer:
+       • Awards (DSI, "best dealer", "лучший дилер года") → Other news
+       • Trade-association partnerships, conventions, forums → Other news
+       • Foreign dealer / showroom openings → Other news
+       • Dealer association comments, statements → Other news
+       • ROAD / Автостат / RAD reports & analytics → Local specifics
+         (RU subject) or Other news (global subject)
+    Editor: «В дилерах ТОЛЬКО открытие ДЦ в РФ. Премии, форумы,
+    конференции, партнёрства, награждения — это Другие.»
 
 (6) Commercial vehicles by body type → "LCV news":
     pickup, van, truck, bus, panel van, minivan, lorry, microbus,

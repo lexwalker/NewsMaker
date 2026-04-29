@@ -216,3 +216,69 @@ def test_NOT_multi_news_single_clause_no_semicolon() -> None:
 def test_NOT_multi_news_empty() -> None:
     assert not is_multi_news_title("")
     assert not is_multi_news_title(None)  # type: ignore[arg-type]
+
+
+# ----------------------------------------- v22 fixes: extended RU subject
+
+def test_avtotor_in_title_routes_to_local_on_ru_portal() -> None:
+    h = heuristic_section(
+        title="Avtotor started preparing production of Jetour T1/T2",
+        domain="auto.mail.ru",
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_podmoskovye_marker_routes_to_local() -> None:
+    h = heuristic_section(
+        title="Сборку Exeed из Подмосковья перенесут на завод в Шушарах",
+        domain="auto.mail.ru",
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_asroad_org_ru_subject_routes_to_local() -> None:
+    h = heuristic_section(
+        title="АвтоВАЗ стал партнёром Кавказского форума",
+        domain="asroad.org",
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_carsharing_force_rejected() -> None:
+    """v22 leak: 'Hello carsharing added Audi TT to fleet in Belarus'"""
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Hello carsharing added Audi TT Cabrio to its fleet in Belarus",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert blacklist_hit(raw, Blacklist()).hit
+
+
+def test_buts_a_catch_force_rejected() -> None:
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="BMW M3 Lime Rock sells cheap — but there's a catch",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert blacklist_hit(raw, Blacklist()).hit
+
+
+def test_single_word_title_rejected_as_placeholder() -> None:
+    from news_agent.core.heuristic_relevance import looks_like_article
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Sollers",  # single-word brand placeholder from extractor
+        body="some body text " * 100,
+        source_name="s", source_url="https://example.com/",
+        html="<html>...</html>",
+    )
+    v = looks_like_article(raw)
+    assert not v.is_article
+    assert "single-word-placeholder-title" in v.reasons

@@ -67,8 +67,19 @@ COL_NOTE = 12
 COL_CONFIDENCE = 13
 COL_VERDICT = 14
 
-SIMILARITY_THRESHOLD = 72  # rapidfuzz token_set_ratio scale 0-100
+SIMILARITY_THRESHOLD = 65  # rapidfuzz token_set_ratio (0-100). Lowered
+                            # from 72 after v22: Avtotor JETOUR triple
+                            # ("started preparing"/"began preparations"/
+                            # "started preparation") had token_set_ratio
+                            # in the 67-71 range. Translit-folded titles
+                            # carry less filler so a slightly lower bar
+                            # stays safe when the brand-overlap guard is
+                            # also enforced.
 TIME_WINDOW = timedelta(hours=36)
+PROPER_NOUN_OVERLAP_MIN = 2   # require ≥2 shared proper-noun-like tokens
+                              # before clustering (model code, brand,
+                              # location, etc.) — prevents same-brand
+                              # general stories from collapsing.
 
 
 def _svc():
@@ -102,6 +113,65 @@ def _brand_overlap(a: str, b: str) -> bool:
         return False
     b_brands = {br for br in _BRANDS_LOWER if br in b}
     return bool(a_brands & b_brands)
+
+
+# Stop-words to ignore when extracting "proper noun" overlap (which is
+# more about specific entities than common verbs/articles).
+_STOPWORDS = frozenset({
+    # english
+    "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to",
+    "for", "with", "from", "by", "as", "is", "are", "was", "were", "be",
+    "been", "being", "has", "have", "had", "do", "does", "did", "will",
+    "would", "could", "should", "may", "might", "can", "shall",
+    "new", "first", "second", "next", "all", "more", "most", "than",
+    "this", "that", "these", "those", "its", "their", "his", "her",
+    "started", "began", "starts", "begins",
+    "preparation", "preparations", "preparing", "produce", "production",
+    "launch", "launches", "launched", "launching",
+    "announce", "announces", "announced", "announcement",
+    "introduce", "introduces", "introduced",
+    "make", "makes", "made", "making",
+    # russian
+    "и", "в", "на", "с", "по", "к", "у", "о", "об", "за", "из", "до",
+    "от", "не", "под", "над", "при", "без", "для", "про", "через",
+    "это", "этот", "эта", "эти", "тот", "та", "те", "его", "её", "их",
+    "новый", "новая", "новое", "новые",
+    "запуск", "запустит", "запустила", "запустили",
+    "анонсировал", "анонсировала", "представил", "представила", "представили",
+    "объявил", "объявила", "объявили",
+    "приступил", "приступила", "приступили",
+    "начал", "начала", "начали",
+    "подготовка", "подготовку", "подготовке", "подготовил", "подготовила",
+    "производство", "производства", "производству", "производстве",
+    "production", "produce", "produced",
+})
+
+
+def _proper_noun_tokens(t: str) -> set[str]:
+    """Extract candidate proper-noun tokens — alphanumeric, len ≥ 2,
+    not a stopword. Includes alphanumeric model codes (T1, X3, GV90).
+    """
+    if not t:
+        return set()
+    out: set[str] = set()
+    for tok in re.split(r"[\s\-_/]+", t.lower()):
+        # Strip surrounding punctuation
+        tok = re.sub(r"^\W+|\W+$", "", tok)
+        if not tok or len(tok) < 2:
+            continue
+        if tok in _STOPWORDS:
+            continue
+        # Pure number (year, count) — skip (year matched on both sides
+        # would too easily collapse different stories of the same year)
+        if tok.isdigit() and len(tok) == 4:
+            continue
+        out.add(tok)
+    return out
+
+
+def _proper_noun_overlap(a: str, b: str) -> int:
+    """Count of shared proper-noun-like tokens between two normalised titles."""
+    return len(_proper_noun_tokens(a) & _proper_noun_tokens(b))
 
 
 def _parse_dt(s: str) -> datetime | None:
@@ -194,6 +264,15 @@ def cluster_articles(
                 continue
             # Brand guard — skip when primary_match already proved equality
             if not primary_match and not _brand_overlap(ti, tj):
+                continue
+            # Proper-noun overlap guard — at least 2 shared specific tokens
+            # (brand + model OR brand + location, etc). Without this, we
+            # collapse "Toyota launched X" + "Toyota launched Y" because
+            # they share fuzz score but differ in model.
+            if (
+                not primary_match
+                and _proper_noun_overlap(ti, tj) < PROPER_NOUN_OVERLAP_MIN
+            ):
                 continue
             # Time window guard (only if both have timestamps)
             aj_pub = articles[j]["pub_dt"]
