@@ -5,7 +5,12 @@ the persistent 'Новости' sheet. When a test fails, that's a regression
 of an editor-flagged routing.
 """
 
-from news_agent.core.heuristic_relevance import heuristic_section
+from news_agent.core.heuristic_relevance import (
+    has_brand_voice,
+    has_rumor_signal,
+    heuristic_section,
+    is_multi_news_title,
+)
 
 
 # -------------------------------------------------------- LCV body-type
@@ -120,3 +125,94 @@ def test_partnership_defers_to_llm() -> None:
 def test_empty_title_returns_none() -> None:
     assert heuristic_section(title="") is None
     assert heuristic_section(title="   ") is None
+
+
+# ---------------------------------------------------- Rumors detection
+
+def test_rumor_signal_in_title() -> None:
+    assert has_rumor_signal("Hongqi hybrid SUV may arrive in Russia")
+    assert has_rumor_signal("Tesla Roadster reportedly retains manual controls")
+    assert has_rumor_signal("Hyundai Creta замечен в новой версии")
+    assert has_rumor_signal("Toyota по слухам запустит новый кроссовер")
+
+
+def test_no_rumor_signal_in_factual_title() -> None:
+    assert not has_rumor_signal("Hyundai unveiled the new Tucson")
+    assert not has_rumor_signal("BYD reported Q1 sales")
+
+
+def test_brand_voice_detection() -> None:
+    body = "В пресс-службе Toyota сообщили о планах запуска новой модели..."
+    assert has_brand_voice(body)
+
+    body2 = "The company announced today that the new model will launch..."
+    assert has_brand_voice(body2)
+
+
+def test_no_brand_voice_in_speculation() -> None:
+    body = "По данным неназванных источников, Toyota может представить новую модель..."
+    assert not has_brand_voice(body)
+
+
+def test_rumor_section_when_speculation_no_brand() -> None:
+    # Editor case: spotted in colors, no brand voice → Rumor
+    h = heuristic_section(
+        title="Tesla Cybertruck spotted in new factory paint",
+        body_excerpt="The truck was photographed by a passerby near the Gigafactory.",
+    )
+    assert h is not None and h.section == "Rumors"
+
+
+def test_NOT_rumor_when_brand_voice_present() -> None:
+    # Editor row 43: «Если ссылка на компанию, то это всегда Факты».
+    h = heuristic_section(
+        title="Hongqi hybrid SUV may arrive in Russia",
+        body_excerpt=(
+            "Об этом рассказали представители компании Hongqi в "
+            "пресс-релизе, опубликованном на официальном сайте."
+        ),
+    )
+    # Brand voice present → defer to LLM (don't force Rumors).
+    # heuristic_section returns None — LLM classifies as Confirmed.
+    assert h is None
+
+
+def test_tesla_roadster_per_musk_NOT_rumor_when_body_quotes_him() -> None:
+    # Editor row 89: «По словам главы компании Илона Маска - это не слухи»
+    h = heuristic_section(
+        title="Tesla will keep manual controls only for the Roadster",
+        body_excerpt=(
+            "По словам главы компании Илона Маска, такая система останется "
+            "только в Roadster. Об этом он заявил на квартальном звонке."
+        ),
+    )
+    assert h is None  # brand voice → LLM decides (likely Other news)
+
+
+# ---------------------------------------------------- Multi-news detector
+
+def test_multi_news_semicolon_split() -> None:
+    # Editor row 34: «опять несколько разных новостей по одной ссылке»
+    assert is_multi_news_title(
+        "Changan integrates DEEPAL and AVATR brands; CATL hosts Super Tech Day"
+    )
+
+
+def test_multi_news_two_substantial_clauses() -> None:
+    assert is_multi_news_title(
+        "BMW launches new X3 in Europe; Mercedes opens Hamburg plant in 2026"
+    )
+
+
+def test_NOT_multi_news_short_tail_after_semicolon() -> None:
+    # "Title; KOR" — short tail after semicolon, just a stripped tag
+    assert not is_multi_news_title("Hyundai unveiled the new Tucson; KOR")
+
+
+def test_NOT_multi_news_single_clause_no_semicolon() -> None:
+    assert not is_multi_news_title("Hyundai unveiled the new Tucson")
+
+
+def test_NOT_multi_news_empty() -> None:
+    assert not is_multi_news_title("")
+    assert not is_multi_news_title(None)  # type: ignore[arg-type]

@@ -84,6 +84,7 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     grade_article,
     heuristic_section,
     is_auto_or_economy,
+    is_multi_news_title,
     looks_like_article,
 )
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
@@ -1074,6 +1075,15 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             row.verdict = "Точно не новость (чёрный список)"
             row.article_reasons = bl.reason
             return True
+
+    # --- Multi-news gate -----------------------------------------------------
+    # Editor: «несколько разных новостей по одной ссылке — нельзя ставить».
+    # A title with a semicolon and substantial content on both sides is
+    # almost always a digest / aggregator post.
+    if is_multi_news_title(article.title):
+        row.verdict = "Точно не новость (мульти-новость)"
+        row.article_reasons = "multi-news-title (semicolon split)"
+        return True
 
     # Final-URL deduplication. Using canonicalised URL handles trailing slashes,
     # UTM params and similar differences that hide the same page behind many

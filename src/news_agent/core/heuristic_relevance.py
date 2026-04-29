@@ -908,6 +908,103 @@ def _is_ru_auto_subject(text: str) -> bool:
 SECTION_LCV = "LCV news"
 SECTION_OTHER = "Other news"
 SECTION_LOCAL = "Local specifics"
+SECTION_RUMORS = "Rumors"
+SECTION_CONFIRMED = "Confirmed"
+
+
+# ---------- Rumor signals (title) ----------
+# Editor: «Если ссылка на компанию, то это всегда Факты». A title
+# containing one of these phrases AND a body that does NOT cite the
+# brand directly is a Rumor — not Facts.
+_RUMOR_TITLE_HINTS = (
+    # english
+    "may launch", "may arrive", "may appear", "may return",
+    "expected to arrive", "expected to launch",
+    "reportedly", "allegedly", "rumored",
+    "spotted ", "leaked",
+    "could come to", "could arrive",
+    "hints at", "teased",
+    # russian
+    "может появиться", "может выйти", "может прийти",
+    "может вернуться", "ожидается появление",
+    "по слухам", "сообщают источники", "по неподтверждённым",
+    "по непроверенной информации",
+    "замечен", "замечена", "замечено",  # caught testing
+    "слухи", "слух о",
+    "поговаривают",
+)
+
+# ---------- Brand voice (body) — when present, it's NOT a rumor ----------
+# Strong signals that the brand is the source. We only check the FIRST
+# 1500 chars of body — leads usually attribute up front.
+_BRAND_VOICE_HINTS = (
+    # english
+    "press release", "official statement", "in a statement",
+    "the company announced", "the company said",
+    "the company unveiled", "the company published",
+    "ceo said", "ceo announced", " spokesperson said",
+    "official press", "in an official",
+    "as the company",
+    # russian
+    "пресс-релиз", "пресс-службе", "пресс-служб",
+    "сообщили в компании", "сообщили в", "сообщили представители",
+    "заявил глава", "заявили в компании", "официально объявили",
+    "представители компании", "представители бренда",
+    "официальное заявление", "раскрыли в компании",
+    "по информации компании", "в самой компании",
+)
+
+
+def has_rumor_signal(title: str) -> bool:
+    """True if the TITLE looks like speculation, not a press release."""
+    if not title:
+        return False
+    t = title.lower()
+    return any(kw in t for kw in _RUMOR_TITLE_HINTS)
+
+
+def has_brand_voice(body: str) -> bool:
+    """True if the article cites the brand directly (press release, CEO, etc).
+
+    Limits the scan to the first 1500 chars — leads usually attribute
+    upfront, and longer bodies often quote third parties later.
+    """
+    if not body:
+        return False
+    snippet = body[:1500].lower()
+    return any(kw in snippet for kw in _BRAND_VOICE_HINTS)
+
+
+# ---------- Multi-news detection ----------
+# Editor: «опять несколько разных новостей по одной ссылке, такое нельзя
+# ставить» (rows 32, 34). The cleanest signal is a title with two
+# substantial clauses separated by a semicolon — that is almost always
+# a digest / aggregator entry, not a single story.
+_DIGEST_PATTERNS = (
+    # patterns we confirmed in editor's data
+    r";\s+",                         # "Changan integrates X; CATL hosts Y"
+    r"\s+&\s+.+\s+&\s+",             # "X & Y & Z" triple-and
+)
+_DIGEST_RE = re.compile("|".join(_DIGEST_PATTERNS))
+
+
+def is_multi_news_title(title: str) -> bool:
+    """True if the title looks like it covers multiple unrelated stories.
+
+    Heuristic: title contains a semicolon AND has substantial content on
+    both sides (>= 25 chars each). Single-brand updates (no semicolon)
+    pass through.
+    """
+    if not title:
+        return False
+    t = title.strip()
+    if ";" in t:
+        parts = [p.strip() for p in t.split(";", 1)]
+        if len(parts) == 2 and all(len(p) >= 25 for p in parts):
+            # Both halves are substantial — this is a digest entry.
+            # Single trailing tail like "; KOR" wouldn't pass this gate.
+            return True
+    return False
 
 
 @dataclass
@@ -987,6 +1084,24 @@ def heuristic_section(
             region="Local",
             confidence=0.85,
             reason=f"ru-portal:{domain}",
+        )
+
+    # ----- Tier 5: Rumors detection (title speculation + no brand voice) ----
+    # Editor row 43: «Если ссылка на компанию, то это всегда Факты».
+    # A title with rumor markers ("may launch", "spotted", "по слухам") AND
+    # a body that does NOT cite the brand directly = Rumors. If the body
+    # has explicit brand-voice ("the company announced", "пресс-релиз") we
+    # defer to LLM, because the brand citation overrides the title hedging.
+    if has_rumor_signal(t) and not has_brand_voice(body_excerpt):
+        # Strong cue but not deterministic — keep confidence moderate so the
+        # editor still scrutinizes, and let the LLM section call refine if
+        # available. We short-circuit only when the rumor signal is clear
+        # (matches at least one strong RU pattern OR multiple EN ones).
+        return HeuristicSection(
+            section=SECTION_RUMORS,
+            region="Global",  # region refined by LLM if needed
+            confidence=0.75,
+            reason="rumor-signal-no-brand-voice",
         )
 
     return None

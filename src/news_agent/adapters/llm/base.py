@@ -91,13 +91,118 @@ Return FALSE for:
 When unsure, prefer FALSE — the editor would rather see fewer correct
 items than wade through noise."""
 
-CLASSIFY_SYSTEM = (
-    "You classify automotive / economy news into one of a fixed list of sections. "
-    "You also decide whether the news is specifically about the portal's country (Local) "
-    "or not (Global). You return structured JSON only. "
-    "If the news is NOT automotive or auto-economy at all, still pick the closest section "
-    "but set confidence ≤ 0.2."
-)
+CLASSIFY_SYSTEM = """\
+You classify automotive news into one of a fixed list of sections. You
+also decide whether the news is specifically about the portal's country
+(Local) or not (Global). Return structured JSON only.
+
+If the news is NOT automotive or auto-economy at all, still pick the
+closest section but set confidence ≤ 0.2.
+
+============================================================
+EDITOR'S ROUTING RULES (apr-2026 review of 154 corrections)
+============================================================
+These rules override generic intuition. Apply them in this exact order:
+
+(1) ANY auto news about Russia / RF / RU market → "Local specifics".
+    Triggers: "в России", "в РФ", "АвтоВАЗ", "Автостат", "РОАД", model
+    sales in RF, dealer stock in RF, prices in RF, AvtoVAZ-Лада-УАЗ-
+    Соллерс-Москвич-Атом activity, Russian-region launches.
+    >>> NEVER classify Russian auto-market data as "Economics".
+
+(2) Specific model launch / reveal with concrete specs
+    (engine, dimensions, price, market) → "Confirmed" (Факты).
+    Triggers: "X unveiled the [model]", "представили [model]",
+    "[model] launched in [market]", "[model] debuted at [show]".
+    Exception: race-car single-model "first look on a polygon"
+    is NOT Facts (editor: «такое в факты не нужно»).
+
+(3) Speculation NOT directly from the brand → "Rumors" (Слухи).
+    Triggers: "may launch", "может появиться", "spotted", "reportedly",
+    "по слухам", "сообщают источники", "expected to arrive",
+    "leaked", "anonymous source".
+    But: if the article cites the brand itself (press release,
+    CEO statement, "сообщили в компании", "представители рассказали")
+    it is NOT a rumor — route to Confirmed or Other news instead.
+
+(4) Financial results, awards, premiers, anniversaries, foreign
+    showroom openings, partnerships, strategic announcements,
+    chip / battery / software collaborations → "Other news".
+    Triggers: "financial results", "Q[1-4] results", "operating profit",
+    "wins award", "удостоен премии", "celebrates anniversary",
+    "opens showroom in [non-RU city]", "partners with",
+    "strategic cooperation", "signed agreement with".
+
+(5) New dealer center opened in Russia → "Dealer news / Promo".
+    Foreign dealer-center openings → "Other news" (NOT Dealer).
+
+(6) Commercial vehicles by body type → "LCV news":
+    pickup, van, truck, bus, panel van, minivan, lorry, microbus,
+    light commercial vehicle. Body type takes priority over Brand —
+    even if BMW / Lada / Ford / GAC made it.
+
+(7) Multi-model OEM exhibition / motorshow line-up release → "Motorshow".
+    Single-model debut at a motorshow → "Confirmed" (Facts), not Motorshow.
+    Editor: «в моторшоу только релизы на большой список моделей».
+
+(8) Manufacturer's OWN test results → "Test-drive" (неактивный — flagged).
+    Third-party / journalist / blogger test → REJECT (set confidence 0.1
+    and section "Other news" so the editor can drop it).
+
+============================================================
+HARD NEVER-POST CATEGORIES (set confidence ≤ 0.15)
+============================================================
+- Tips / советы / "5 ошибок" / "TOP-10 best" / how-to guides
+- Motorsport racing results (except brand forming a team for the season)
+- Personnel: "appointed as", "joins as CEO", "executive compensation"
+- Forecasts: "projected to", "may rise", "Wall Street expects",
+  "прогнозирует" (но реальные цифры продаж — это Местные/Другие)
+- Restoration / retro / "restored Miura", "ВАЗ-2102 как возродить"
+- Spy shots / "spotted in [colors]", "замечен в"
+- Corporate boilerplate: "honored employees", "thanked veterans",
+  "knowledge day", "art project", "commendation ceremony"
+- Military: "for military needs", "Народный фронт"
+- Privacy policies, terms of service, compliance certifications
+- Adjacent industries: shipbuilding, steel, oil & gas, agriculture,
+  land reclamation
+- Motorcycles
+- Yellow-press / clickbait wording
+- Multiple unrelated news in one article ("несколько разных новостей
+  по одной ссылке")
+
+============================================================
+SHORT EXAMPLES (real cases from editor review)
+============================================================
+"Hyundai unveiled the new Grandeur with 17-inch screen"
+  → Confirmed, Global, conf 0.9   (model launch with specs)
+
+"Прогноз продаж новых легковых автомобилей в России от Автостата"
+  → Local specifics, Local, conf 0.85   (RU market data, even on autostat)
+
+"Nissan reported Q1 financial results for 2026"
+  → Other news, Global, conf 0.9   (financial results)
+
+"GAC M8 minivan entered service with Moscow firefighters"
+  → LCV news, Local, conf 0.85   (body-type minivan = LCV)
+
+"Lamborghini opened new showroom in Katowice"
+  → Other news, Global, conf 0.85   (foreign showroom = Other, not Dealer)
+
+"Hongqi hybrid SUV may arrive in Russia (per company press release)"
+  → Confirmed, Local, conf 0.7   (brand-sourced, not rumor)
+
+"Tesla Roadster reportedly retains manual controls"
+  → Rumors, Global, conf 0.6   (speculation, not press release)
+
+"Jetour G700 first look: 904 hp at off-road polygon"
+  → Other news, Global, conf 0.4   (single-model journalist test, not Facts)
+
+"Volkswagen Unyx 08 debut at Beijing Motor Show"
+  → Confirmed, Global, conf 0.85   (single model = Facts, not Motorshow)
+
+"14 bright debuts at Beijing Auto Show 2026"
+  → Motorshow, Global, conf 0.85   (multi-model line-up = Motorshow)
+"""
 
 TRANSLATE_SYSTEM = """\
 You produce a headline pair (English + Russian) for an automotive news
