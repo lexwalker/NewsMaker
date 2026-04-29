@@ -108,3 +108,107 @@ def test_short_brand_alias_does_not_cause_false_override() -> None:
     # Тут blacklist-слово «экскаватор» есть, бренда нет — отклоняем.
     BL_EX = Blacklist(topic_phrases_ru=["экскаватор"])
     assert blacklist_hit(raw, BL_EX, brands=BRANDS).hit
+
+
+# -------------------------------------------------------------------------
+# Editor-feedback force-reject categories. These phrases ALWAYS reject,
+# even when the title also names a car brand or an auto-marker — because
+# the editor explicitly said "не постим" to all of these patterns.
+# -------------------------------------------------------------------------
+
+EMPTY_BL = Blacklist(topic_phrases_ru=[], topic_phrases_en=[], domains=[])
+
+
+def _force_rejects(title: str) -> bool:
+    """True iff the empty-blacklist still rejects on title alone (force-reject)."""
+    return blacklist_hit(_art(title=title), EMPTY_BL, brands=BRANDS).hit
+
+
+def test_force_reject_motorsport() -> None:
+    assert _force_rejects("Nissan Formula E Team tackles Berlin double-header")
+    assert _force_rejects("Mercedes-AMG wins Pro class at GT World Challenge")
+    assert _force_rejects("RDS GP returns international status")
+
+
+def test_force_reject_personnel() -> None:
+    assert _force_rejects("Dr. Peter Holdmann appointed as ZF CTO")
+    assert _force_rejects("Rivian awards CEO RJ Scaringe $402 million in performance-based compensation")
+    assert _force_rejects("В Sollers назначен на пост директора новый менеджер")
+
+
+def test_force_reject_forecasts() -> None:
+    assert _force_rejects("China's April retail sales projected to reach 1.42 million units")
+    assert _force_rejects("Wall Street expects solid Q1 results for GM")
+    assert _force_rejects("«Автостат» прогнозирует рост продаж")
+
+
+def test_force_reject_tips_howto() -> None:
+    assert _force_rejects("5 самых частых ошибок владельцев электромобилей")
+    assert _force_rejects("Как выбрать средство для чистки салона: 8 советов")
+    assert _force_rejects("Как подготовить авто к продаже без ущерба для кошелька")
+    assert _force_rejects("Top-10 best car interior dry cleaning products in 2026")
+    assert _force_rejects("Five most common mistakes made by EV owners")
+
+
+def test_force_reject_restoration() -> None:
+    assert _force_rejects("Lamborghini Polo Storico unveiled restored Miura SV")
+    assert _force_rejects("ВАЗ-2102: как возродить старенький советский автомобиль")
+
+
+def test_force_reject_spy_shots() -> None:
+    assert _force_rejects("Genesis GV90 SUV spotted in four new colors")
+    assert _force_rejects("Toyota Corolla замечен в новой версии")
+
+
+def test_force_reject_corporate_ceremonies() -> None:
+    assert _force_rejects("UAZ honored employees ahead of Mechanical Engineering Day")
+    assert _force_rejects("Suzuki held FY2025 commendation ceremony")
+    assert _force_rejects("УАЗ поздравил первоклассников с Днем знаний")
+    assert _force_rejects("UAZ: юбилей в формате art project")
+
+
+def test_force_reject_military() -> None:
+    assert _force_rejects("УАЗ и Народный фронт модернизировали УАЗ Хантер для военных нужд")
+    assert _force_rejects("Sollers vehicle modified for military service")
+
+
+def test_force_reject_legal_documents() -> None:
+    assert _force_rejects("HAVAL в России — политика обработки персональных данных")
+    assert _force_rejects("Suzuki Privacy Policy update")
+
+
+def test_force_reject_third_party_test() -> None:
+    assert _force_rejects("BMW M2 CS set MotorTrend record")
+    assert _force_rejects("Hyundai Tucson named Auto Bild Magazine winner")
+
+
+def test_force_reject_adjacent_industries() -> None:
+    assert _force_rejects("Korean shipbuilders target AI power shortages")
+    assert _force_rejects("POSCO and HD Hyundai expand investment in steel industry")
+    assert _force_rejects("Government allocated 32 billion rubles to support land reclamation")
+
+
+def test_force_reject_motorcycles() -> None:
+    assert _force_rejects("Suzuki to display second collaboration motorcycle with Street Fighter 6")
+    assert _force_rejects("В BMW Motorrad показали новый мотоцикл")
+
+
+# ---- regressions: legitimate auto news must still pass -----------------
+
+def test_legit_news_not_rejected() -> None:
+    # Real model launches / market data — must NOT trigger force-reject
+    legit = [
+        "Hyundai unveiled the new Grandeur with premium finish",
+        "AvtoVAZ improves Lada quality",
+        "Refreshed Haval H9 launched in China",
+        "BMW представила обновленный X3",
+        "Toyota plant in Indonesia hits 1 million production milestone",
+        "China's Q1 EV sales grew 18%",
+        "Volkswagen Unyx 08 debut at Beijing Motor Show",
+        "JLR registered Jaguar trademark in Russia",
+        "Atom forms service network in Russia",
+        "EXEED showed EXLANTIX ES GT wagon in Beijing",
+        "NIO presented three brands at Auto China 2026",
+    ]
+    for t in legit:
+        assert not _force_rejects(t), f"False-rejected legit headline: {t!r}"

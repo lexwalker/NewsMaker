@@ -532,18 +532,154 @@ _AUTO_STRONG_MARKERS = (
 
 # Phrases that ALWAYS reject the article — even if the title also names
 # a car brand or an auto-marker. Used for clickbait / yellow-press wording
-# that we never want regardless of the subject.
+# AND content categories the editor explicitly opted out of, where even a
+# brand mention does not save the piece.
+#
+# Categories below come from the 154-row review of the persistent
+# 'Новости' sheet (apr-2026): editor flagged 58 rows as "не постим".
+# Each phrase here was vetted against legitimate auto headlines to ensure
+# it doesn't accidentally wipe real news.
+#
+# Substring match on lower-cased title. Multi-word phrases preferred over
+# bare words to keep precision high.
 _FORCE_REJECT_PHRASES = (
-    # Most-obvious clickbait — extremely unlikely to appear in a real
-    # auto-industry headline. Conservative list to avoid wiping
-    # legitimate news that happens to contain a similar word in its body.
+    # ---------- Most-obvious clickbait (legacy) ----------
     "«попа»",
-    " попа ",  # bracketed by spaces to avoid e.g. "попадание"
+    " попа ",  # bracketed to avoid "попадание", "попасть"
     "вы не поверите",
     "you won't believe",
     "you wont believe",
     "шок-видео",
     "shocking video",
+
+    # ---------- Tips / how-to / советы (editor: «не постим») ----------
+    "5 советов", "8 советов", "10 советов", "7 советов",
+    "5 ошибок", "8 ошибок", "10 ошибок", "7 ошибок",
+    "частых ошибок",
+    "common mistakes", "most common mistakes",
+    "как выбрать ",
+    "как подготовить ",
+    "как чистить",
+    "как возродить",
+    "как промывать",
+    "how to choose", "how to prepare", "how to clean",
+    "how to revive", "how to determine fault",
+    "почему эксперты рекомендуют",
+    "expert tips",
+    " 5 tips", " 8 tips", " 10 tips", " 7 tips",
+    "топ-10 ", "топ 10 ", "топ-5 ", "топ 5 ",
+    "top-10 best", "top 10 best", "top-5 best",
+    "top 10 cleaning", "top-10 cleaning",
+
+    # ---------- Motorsport / racing (editor: «гонки не затрагиваем») ----------
+    "formula e", "formula 1", "формула 1", "формула е",
+    "grand prix", "гран при",
+    "gt world challenge", "world challenge america",
+    "rds gp", "drift series",
+    "racing team",
+    "track day", "trackday",
+    "double-header",
+    "championship round", "wins pro class",
+    "wins championship",
+
+    # ---------- Personnel: appointments / compensation (editor: «никаких назначений») ----------
+    "appointed as", "appoints ",
+    " joins as ceo", " joins as cfo", " joins as cto",
+    "promoted to ceo", "promoted to cfo", "promoted to cto",
+    "назначен на",  # "назначен главой/директором..."
+    "назначение нового",
+    "новый ceo", "новый cto", "новый cfo",
+    "performance-based compensation",
+    "executive compensation",
+    "ceo compensation",
+    "compensation package",
+
+    # ---------- Forecasts / прогнозы (editor: «прогнозы не постим») ----------
+    "projected to reach",
+    "expected to reach",
+    "expected to grow",
+    "expected to rise",
+    "may rise", "may reach", "may exceed",
+    "forecast for ",
+    "прогнозирует ",
+    "может вырасти", "может подорожать",
+    "ожидается рост",
+    "wall street expects",
+    "analysts expect", "analysts predict",
+    "аналитики ожидают", "аналитики прогнозируют",
+
+    # ---------- Restoration / retro (editor: «реставрация не интересует») ----------
+    "restored ",
+    "restoration of",
+    "возрождён", "возрождает",
+    "восстановленный",
+    "реставрац",
+    "uncovered after years",
+
+    # ---------- Spy shots / замечен ----------
+    "spotted in ",
+    "замечен в ",
+    "caught testing",
+    "spy shots", "spy photos",
+    "шпионские снимк", "шпионские фото",
+
+    # ---------- Corporate boilerplate / ceremonies ----------
+    "honored employees", "honored workers",
+    "thanked veterans", "thanked employees",
+    "congratulated ",
+    "поздравил ",
+    "отметил лучших сотрудников",
+    "commendation ceremony",
+    "art project",
+    "knowledge day", "день знаний",
+    "mechanical engineering day", "день машиностроител",
+    "день металлург",
+
+    # ---------- Military (editor: «военное мы не постим») ----------
+    "military needs",
+    "for the military",
+    "popular front", "народный фронт",
+    " armed forces ",
+    "военных нужд", "для армии",
+    "modified for military",
+
+    # ---------- Privacy / legal / compliance documents ----------
+    "privacy policy",
+    "политика обработки персональных",
+    "terms of service",
+    "compliance with national standards",
+    "система менеджмента качеств",
+
+    # ---------- Single-portal third-party tests ----------
+    "motortrend record",
+    "tested by motortrend",
+    "auto bild named", "auto bild magazine",
+    "j.d. power study",
+
+    # ---------- Adjacent industries (steel, ships, oil, agro) ----------
+    "shipbuilder", "shipbuilding",
+    "судостроител",
+    "steel industry", "сталелитейн", "сталеплавильн",
+    "ship operators",
+    "land reclamation",
+    "мелиорац",
+    "ai power shortage",
+    "агропром",
+    "сельское хозяйство",
+
+    # ---------- Motorcycles (editor: «мотоциклы не наша тема») ----------
+    " motorcycle ",
+    "мотоцикл",
+    "fighting game tournament",
+    "capcom cup",
+    "street fighter ",
+
+    # ---------- Misc rejects from editor review ----------
+    "boycott",
+    "бойкот",
+    " unique lot ",
+    "unique lot put up",
+    "уникальный лот",
 )
 
 
@@ -632,3 +768,225 @@ def grade_article(article: ArticleVerdict, topic: TopicVerdict) -> Grade:
     ):
         return "certain_news"
     return "possible_news"
+
+
+# ============================================================================
+# Hard pre-classifiers — heuristic section assignment for unambiguous cases.
+#
+# Each helper returns either a (section, region, reason) tuple OR None to
+# defer to the LLM. Only triggers on patterns the editor consistently
+# routed the same way in their 154-row review of the persistent sheet.
+#
+# When a pre-classifier fires, the LLM `classify_section` call is SKIPPED
+# (saves ~$0.005/row). LLM `translate_title` and `is_automotive` still run.
+# ============================================================================
+
+# Body-type words that always mean "commercial vehicle" — editor routes
+# anything matching these to the LCV section regardless of brand.
+_LCV_BODY_TYPES_EN = (
+    " pickup", " pick-up", " pick up",
+    " van ", " van,", " van.", " van:",
+    " minivan", " mini-van", " mini van",
+    " truck ", " truck,", " truck.", " truck:", " trucks ",
+    " lorry", " lorries",
+    " bus ", " buses ", " minibus",
+    " microbus", " microvan",
+    " lcv ", " lcv,",
+    "light commercial vehicle",
+    "commercial vehicle",
+    "panel van",
+    "cargo van",
+    "delivery van",
+    "double-decker bus",
+    "double decker bus",
+)
+_LCV_BODY_TYPES_RU = (
+    "пикап", "фургон", "грузовик",
+    "автобус", "минивэн", "микроавтобус",
+    "коммерчес транспорт",  # «коммерческий транспорт»
+    "коммерческого транспорт",
+    "лёгкий коммерчес",
+    "легкий коммерчес",
+    "лцв",
+)
+
+# Phrases that always mean "financial result" — editor: always Other news.
+_FINANCIAL_RESULT_HINTS = (
+    "financial results", "earnings results", "earnings report",
+    "operating profit", "operating loss", "operating income",
+    "net income", "net profit", "net loss",
+    "fiscal year results", "fy2025", "fy 2025", "fy2024", "fy 2024",
+    "q1 results", "q2 results", "q3 results", "q4 results",
+    "first quarter results", "third quarter results",
+    "full year results", "annual results",
+    "revenue dropped", "revenue fell", "revenue grew",
+    "profit fell", "profit dropped", "profit grew",
+    "финрезультат", "финансовые результат",
+    "операционная прибыль", "операционный убыток",
+    "чистая прибыль", "чистый убыток",
+    "выручка упала", "выручка выросла", "выручка снизилась",
+    "квартальные результат",
+    "годовые финансовые",
+)
+
+# Phrases that always mean "award/recognition" — editor: always Other news.
+_AWARD_HINTS_EN = (
+    " wins award", " wins the award",
+    "awarded the prize", "earned the prize",
+    "named winner of",
+    "win award at", "won award at",
+    "claimed top spot in",
+    "topped j.d. power",  # JD Power award (editor row 159 said yes if from JDP)
+    "named best in class",
+    "top award at",
+    "won the fuorisalone",  # Editor row 75: «премии идут в Другие»
+    "fuorisalone award",
+)
+_AWARD_HINTS_RU = (
+    "удостоен ", "удостоена ",
+    "получил премию", "получила премию",
+    "выиграл премию", "выиграла премию",
+    "стал лауреатом", "стала лауреатом",
+    "победил в номинации",
+    "звание «", "звание лауреата",
+    " награжд",  # награждён, награждена
+)
+
+
+def _domain_matches(domain: str, suffixes: tuple[str, ...]) -> bool:
+    d = (domain or "").lower().lstrip(".")
+    for s in suffixes:
+        sn = s.lower().lstrip(".")
+        if d == sn or d.endswith("." + sn):
+            return True
+    return False
+
+
+# Russian auto-market portals — when the article is hosted here AND the
+# subject is automotive, the editor consistently routes to "Local" rather
+# than "Economics" or "Other news". Domain list is conservative — it must
+# be an editorial property whose ENTIRE focus is the RU auto market.
+_RU_AUTO_PORTALS = (
+    "autostat.ru",
+    "autonews.ru",
+    "abreview.ru",
+    "kolesa.ru",
+    "drom.ru",
+    "auto.mail.ru",
+    "5koleso.ru",
+    "zr.ru",
+    "motor.ru",
+    "autoreview.ru",
+    "quto.ru",
+    "wroom.ru",
+    "rusautonews.com",
+    "carcityrussia.ru",
+)
+
+
+def _is_ru_auto_subject(text: str) -> bool:
+    """True if the title talks about the Russian auto market specifically.
+
+    Used in combination with `_RU_AUTO_PORTALS` to upgrade ambiguous Local
+    classifications. Looks for explicit RU-market markers — generic global
+    news on the same domain (e.g. iz.ru reposting Mercedes Cabrio) won't
+    trigger.
+    """
+    t = (text or "").lower()
+    ru_markers = (
+        "в россии", "в рф", " россии ", "россий", " рф ", " рф,", " рф.",
+        "russia", "russian market", "in russia",
+        "автоваз", "автостат", "роад", "ладa", " лада",
+        "тенет ", "москвич", "уаз ", "соллерс", "хавал",
+        "geely россии", "chery россии",
+    )
+    return any(m in t for m in ru_markers)
+
+
+# Section labels — must match config/sections.yaml exactly. Hard-coded
+# here as the canonical names so the pre-classifier is deterministic.
+SECTION_LCV = "LCV news"
+SECTION_OTHER = "Other news"
+SECTION_LOCAL = "Local specifics"
+
+
+@dataclass
+class HeuristicSection:
+    section: str          # one of the canonical section names
+    region: str           # "Local" | "Global"
+    confidence: float     # 0.0..1.0 — heuristic confidence
+    reason: str           # short tag for debug ("body-type:pickup" etc.)
+
+
+def heuristic_section(
+    *,
+    title: str,
+    body_excerpt: str = "",
+    domain: str = "",
+) -> HeuristicSection | None:
+    """Hard pre-classify a row before the LLM section call.
+
+    Returns None to defer to LLM. Returns a HeuristicSection when the
+    rules are confident enough that no LLM call is needed.
+
+    Priority order matters — LCV first (body-type override), then
+    financial / awards (clear keyword signals), then RU-portal Local
+    upgrade.
+    """
+    t = (title or "").lower()
+    if not t:
+        return None
+
+    # ----- Tier 1: LCV body-type override (highest priority) ----------------
+    # Matches in the TITLE — body-type words like "pickup" / "минивэн"
+    # are unambiguous when they appear in the headline.
+    for kw in _LCV_BODY_TYPES_EN:
+        if kw in " " + t + " ":
+            return HeuristicSection(
+                section=SECTION_LCV,
+                region="Global",  # LCV has no Local/Global distinction in editor practice
+                confidence=0.95,
+                reason=f"body-type:{kw.strip()}",
+            )
+    for kw in _LCV_BODY_TYPES_RU:
+        if kw in t:
+            return HeuristicSection(
+                section=SECTION_LCV,
+                region="Global",
+                confidence=0.95,
+                reason=f"body-type:{kw}",
+            )
+
+    # ----- Tier 2: Financial-results — always Other news --------------------
+    for kw in _FINANCIAL_RESULT_HINTS:
+        if kw in t:
+            return HeuristicSection(
+                section=SECTION_OTHER,
+                region="Global",
+                confidence=0.92,
+                reason=f"financial:{kw}",
+            )
+
+    # ----- Tier 3: Awards / премии — always Other news ----------------------
+    for kw in _AWARD_HINTS_EN + _AWARD_HINTS_RU:
+        if kw in t:
+            return HeuristicSection(
+                section=SECTION_OTHER,
+                region="Global",
+                confidence=0.90,
+                reason=f"award:{kw.strip()}",
+            )
+
+    # ----- Tier 4: RU-portal + RU-market subject = Local --------------------
+    # Domain-based upgrade. Without explicit RU-market markers in the title
+    # we don't trigger — generic global news on iz.ru (e.g. Mercedes Cabrio)
+    # should still be Global.
+    if domain and _domain_matches(domain, _RU_AUTO_PORTALS) and _is_ru_auto_subject(t):
+        return HeuristicSection(
+            section=SECTION_LOCAL,
+            region="Local",
+            confidence=0.85,
+            reason=f"ru-portal:{domain}",
+        )
+
+    return None

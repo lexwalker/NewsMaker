@@ -44,6 +44,7 @@ from news_agent.core.config_loader import (  # noqa: E402
     load_primary_source_cues,
     load_whitelist_domains,
 )
+from news_agent.core.fuzzy_match import normalise_for_match  # noqa: E402
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
@@ -80,20 +81,14 @@ def _get(row: list[str], i: int) -> str:
 
 
 def _normalise(t: str) -> str:
-    """Strip language tags / source suffixes / EN/RU prefixes."""
-    if not t:
-        return ""
-    t = t.lower()
-    # Drop language tags
-    t = re.sub(r"\([a-zа-я]{2,4}\)\s*$", "", t)
-    # Drop "EN: ... \n RU: ..." prefixes
-    t = re.sub(r"^en:\s*", "", t)
-    t = re.sub(r"\n\s*ru:\s*", " | ", t)
-    # Drop trailing source-name (— CarBuzz, | MotorTrend, …)
-    t = re.sub(r"\s*[—\-|]\s*[a-zа-я0-9 \.&]+$", "", t)
-    # Collapse whitespace
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
+    """Aggressive normaliser for fuzzy-match (translit + diacritics + numbers).
+
+    Delegates to :func:`news_agent.core.fuzzy_match.normalise_for_match`
+    so the same logic is reused across cluster builder and primary-source
+    detection — both need the AvtoVAZ ↔ AvtoVAZ / Промтех ↔ Promtekh
+    folding for cross-spelling dedup.
+    """
+    return normalise_for_match(t)
 
 
 # Brands list — used for the "share a brand" cluster guard.
@@ -175,25 +170,42 @@ def cluster_articles(
             parent[rj] = ri
 
     norms = [a["normalised"] for a in articles]
+    primary_urls = [a.get("primary_url", "") for a in articles]
     for i in range(n):
         ti = norms[i]
-        if not ti:
-            continue
         ai_pub = articles[i]["pub_dt"]
+        pi = primary_urls[i].strip().lower() if primary_urls[i] else ""
         for j in range(i + 1, n):
             tj = norms[j]
-            if not tj:
+            pj = primary_urls[j].strip().lower() if primary_urls[j] else ""
+
+            # Cross-language safety net: same primary URL = same story.
+            # Catches cases where RU and EN headlines have <5 token overlap
+            # (different verbs/nouns) but cite the same press release.
+            primary_match = bool(pi and pj and pi == pj)
+
+            if not ti or not tj:
+                if primary_match:
+                    union(i, j)
                 continue
+
             sim = fuzz.token_set_ratio(ti, tj)
-            if sim < threshold:
+            if sim < threshold and not primary_match:
                 continue
-            # Brand guard
-            if not _brand_overlap(ti, tj):
+            # Brand guard — skip when primary_match already proved equality
+            if not primary_match and not _brand_overlap(ti, tj):
                 continue
             # Time window guard (only if both have timestamps)
             aj_pub = articles[j]["pub_dt"]
-            if ai_pub and aj_pub and abs((ai_pub - aj_pub).total_seconds()) > TIME_WINDOW.total_seconds():
-                continue
+            if (
+                ai_pub
+                and aj_pub
+                and abs((ai_pub - aj_pub).total_seconds()) > TIME_WINDOW.total_seconds()
+            ):
+                # Primary-match overrides time window — same press release
+                # often gets re-posted days later by aggregators.
+                if not primary_match:
+                    continue
             union(i, j)
 
     groups: dict[int, list[dict]] = {}

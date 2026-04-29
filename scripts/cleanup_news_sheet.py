@@ -141,12 +141,14 @@ def main() -> int:
                     url_hit = True
                     break
             if not url_hit:
-                # 3a) Force-reject (clickbait / yellow press, no override)
+                # 3a) Force-reject (editor opted-out categories — no brand override)
                 title_lower = _title_only(title)
                 hit = False
                 for phrase in _FORCE_REJECT_PHRASES:
                     if phrase in title_lower:
-                        rows_to_delete.append((i, f"clickbait: {phrase!r}", title[:80]))
+                        rows_to_delete.append(
+                            (i, f"force-reject: {phrase!r}", title[:80])
+                        )
                         hit = True
                         break
                 if hit:

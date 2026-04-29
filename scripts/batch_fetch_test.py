@@ -63,10 +63,12 @@ from news_agent.adapters.fetchers.playwright_fetcher import (  # noqa: E402
     PlaywrightFetcher,
 )
 from news_agent.core.config_loader import (  # noqa: E402
+    SourceQuality,
     load_blacklist,
     load_brand_domains,
     load_http_quirks,
     load_primary_source_cues,
+    load_source_quality,
     load_whitelist_domains,
 )
 from news_agent.core.freshness import is_fresh, is_in_window  # noqa: E402
@@ -76,10 +78,11 @@ from news_agent.core.primary_source import (  # noqa: E402
     detect_earliest_in_corpus,
     detect_primary_source,
 )
-from news_agent.core.urls import url_hash  # noqa: E402
+from news_agent.core.urls import url_hash, year_in_url_path  # noqa: E402
 from news_agent.core.heuristic_relevance import (  # noqa: E402
     blacklist_hit,
     grade_article,
+    heuristic_section,
     is_auto_or_economy,
     looks_like_article,
 )
@@ -139,6 +142,7 @@ DEDUP_STORE = None  # type: ignore[assignment]  # DedupStore instance in main()
 PREVIOUSLY_SEEN: dict[str, dict] = {}
 DEDUP_PORTAL = "RU"  # current batch treats every source as RU portal
 PRIMARY_CUES = None  # type: ignore[assignment]  # PrimarySourceCues from config
+SOURCE_QUALITY: SourceQuality | None = None  # set in main()
 # Playwright fallback — only used when a URL matches PW_ALLOWLIST.
 PW_FETCHER: PlaywrightFetcher | None = None
 PW_ALLOWLIST: PlaywrightAllowlist | None = None
@@ -793,27 +797,51 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
             print(f"  [{i}/{len(candidates)}] {r.title[:60]!r} → relevance=Нет (отсечено)")
             continue
 
-        # 2. Classify section
-        try:
-            cls, u = client.classify_section(
-                title=r.title,
-                body=r.body_excerpt or r.title,
-                sections=sections,
-                few_shots=[],
-                portal_country=country,
+        # 2. Classify section — but first try the hard heuristic pre-classifier.
+        # If a high-confidence rule fires (e.g. body-type word "pickup" in the
+        # title → LCV news), skip the LLM section call entirely. Saves
+        # ~$0.005/row and is much more consistent than the LLM, which tends
+        # to forget the editor's specific routing rules across runs.
+        pre = heuristic_section(
+            title=r.title,
+            body_excerpt=r.body_excerpt,
+            domain=domain_of(r.article_url),
+        )
+        if pre is not None:
+            r.llm_section = pre.section if pre.section in section_names else "Other news"
+            r.llm_region = pre.region
+            r.llm_confidence = round(pre.confidence, 2)
+            r.llm_note = (
+                (r.llm_note + " | " if r.llm_note else "")
+                + f"эвристика: {pre.reason}"
             )
-            budget.record(u)
-            r.llm_section = cls.section if cls.section in section_names else "Other news"
-            r.llm_region = cls.region
-            r.llm_confidence = round(cls.confidence, 2)
-            r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
             if r.llm_section == "Test-drive":
+                r.llm_note += " | требует ручной проверки — Test-drive"
+            print(
+                f"  [{i}/{len(candidates)}]  HEUR  {r.llm_section:22}  "
+                f"{r.llm_region:6}  conf={r.llm_confidence}  ({pre.reason})"
+            )
+        else:
+            try:
+                cls, u = client.classify_section(
+                    title=r.title,
+                    body=r.body_excerpt or r.title,
+                    sections=sections,
+                    few_shots=[],
+                    portal_country=country,
+                )
+                budget.record(u)
+                r.llm_section = cls.section if cls.section in section_names else "Other news"
+                r.llm_region = cls.region
+                r.llm_confidence = round(cls.confidence, 2)
+                r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+                if r.llm_section == "Test-drive":
+                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                        "требует ручной проверки — Test-drive"
+            except Exception as e:  # noqa: BLE001
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                    "требует ручной проверки — Test-drive"
-        except Exception as e:  # noqa: BLE001
-            r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                f"classify error: {e!s:100}"
-            continue
+                    f"classify error: {e!s:100}"
+                continue
 
         # 3. Translate title
         try:
@@ -988,8 +1016,6 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     # When RUN_WINDOW is populated (scheduled-run mode), accept only articles
     # whose published_at falls inside [since, now]. Else fall back to a fixed
     # FRESHNESS_HOURS lookback (manual / ad-hoc runs).
-    # Articles without any timestamp pass through in either mode (many t.me
-    # posts do expose one; HTML fetchers usually find og:article:published_time).
     if article.published_at is not None:
         if RUN_WINDOW is not None:
             if not is_in_window(
@@ -999,6 +1025,43 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             ):
                 return False
         elif not is_fresh(article.published_at, hours=FRESHNESS_HOURS):
+            return False
+    else:
+        # Undated article — was previously waved through ("dedup will catch
+        # reruns"). Editor review showed this lets in archive pages from
+        # 2022/2023/2024 (Hyundai newsroom, BYD press) that have no
+        # published_at in HTML. Now: only allow undated articles from
+        # whitelist (editor-trusted) domains. Everything else gets dropped.
+        host = domain_of(article.url)
+        if host not in WHITELIST:
+            return False
+
+    # --- URL year sanity check -----------------------------------------------
+    # Some sites embed publication year in the URL path. If the URL says
+    # /2022/ or /2023/ and the run window is "now", drop the article — it's
+    # an archive page that escaped the published_at gate (or its date got
+    # mis-extracted). Tolerance: prev/current year always allowed.
+    url_year = year_in_url_path(article.url)
+    if url_year is not None:
+        ref_now = RUN_WINDOW.now if RUN_WINDOW is not None else datetime.now(timezone.utc)
+        max_age_years = max(1, (FRESHNESS_HOURS // 24 // 365) + 1)
+        if url_year < ref_now.year - max_age_years:
+            return False
+
+    # --- Per-source quality gate ---------------------------------------------
+    # Editor flagged some Telegram channels and aggregators as «1-2 строки,
+    # без цифр». These still get fetched (we want to see them in the report),
+    # but face stricter filters: longer body, mandatory date, no auto-grade
+    # to "certain_news" (always require LLM relevance). See
+    # config/source_quality.yaml.
+    is_low_quality_source = (
+        SOURCE_QUALITY is not None
+        and SOURCE_QUALITY.is_low_quality(r.url)
+    )
+    if is_low_quality_source:
+        if len(article.body.strip()) < 500:
+            return False
+        if article.published_at is None:
             return False
 
     # --- Blacklist gate ------------------------------------------------------
@@ -1109,6 +1172,18 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
                 r.sample_passed.append(article.title)
 
     grade = grade_article(verdict, topic)
+
+    # Low-quality sources: even strong heuristic signals don't get a free
+    # pass. Force the row through LLM relevance check by demoting
+    # certain_news → possible_news. We also need at least 2 auto_hits AND
+    # auto-topic to keep — drop the row otherwise (heuristic precision is
+    # unreliable on these sources).
+    if is_low_quality_source:
+        if grade == "certain_news":
+            grade = "possible_news"
+        if topic.auto_hits < 2:
+            grade = "off_topic"
+
     row.verdict = {
         "certain_news": "Точно новость",
         "possible_news": "Возможно новость",
@@ -1260,6 +1335,12 @@ def main(argv: list[str] | None = None) -> int:
     BLACKLIST = load_blacklist()
     BRANDS = load_brand_domains()
     PRIMARY_CUES = load_primary_source_cues()
+    global SOURCE_QUALITY
+    SOURCE_QUALITY = load_source_quality()
+    print(
+        f"Source quality: {len(SOURCE_QUALITY.low_quality)} low-quality entries "
+        f"(stricter heuristic thresholds will apply)"
+    )
     SEEN_FINAL_URLS = set()
     print(f"Whitelist domains loaded: {len(WHITELIST)}")
     print(f"Brand list loaded: {len(BRANDS)} brands (used to whitelist blacklist hits)")

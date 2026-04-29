@@ -131,18 +131,60 @@ def load_blacklist() -> Blacklist:
     )
 
 
+class SourceQuality(BaseModel):
+    """Per-source editorial quality flags (see config/source_quality.yaml)."""
+
+    low_quality: set[str] = Field(default_factory=set)
+    high_quality: set[str] = Field(default_factory=set)
+
+    def is_low_quality(self, url: str | None) -> bool:
+        """True if ``url`` matches a low-quality entry by exact URL or domain.
+
+        Telegram channel URLs are matched as full ``t.me/<channel>``
+        strings; everything else falls back to a domain comparison.
+        """
+        if not url:
+            return False
+        u = url.strip().lower().rstrip("/")
+        # Exact URL match (t.me channels)
+        for entry in self.low_quality:
+            e = entry.strip().lower().rstrip("/")
+            if u == e or u.startswith(e + "/"):
+                return True
+        # Domain match
+        from news_agent.core.urls import domain_of  # avoid circular import
+        host = domain_of(url)
+        for entry in self.low_quality:
+            e = entry.strip().lower().rstrip("/")
+            if "/" in e:
+                continue  # URL-only entry, already checked above
+            if host == e or host.endswith("." + e):
+                return True
+        return False
+
+
+def load_source_quality() -> SourceQuality:
+    data = _read_yaml(CONFIG_DIR / "source_quality.yaml") or {}
+    return SourceQuality(
+        low_quality={s.strip() for s in data.get("low_quality", []) if s},
+        high_quality={s.strip() for s in data.get("high_quality", []) if s},
+    )
+
+
 __all__ = [
     "Blacklist",
     "BrandDomainEntry",
     "HttpQuirks",
     "PrimarySourceCues",
     "SourceOverride",
+    "SourceQuality",
     "SourcesSchema",
     "load_blacklist",
     "load_brand_domains",
     "load_http_quirks",
     "load_primary_source_cues",
     "load_sections",
+    "load_source_quality",
     "load_sources_overrides",
     "load_sources_schema",
     "load_whitelist_domains",

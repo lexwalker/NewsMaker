@@ -230,15 +230,14 @@ class CorpusEntry:
 
 
 def normalise_title(title: str) -> str:
-    """Strip common site-name suffixes and normalise for fuzzy match."""
-    t = (title or "").strip()
-    # Drop up to 2 trailing "site name" segments ("— SMMT - UK").
-    for _ in range(2):
-        nt = _TITLE_SUFFIX_RE.sub("", t).strip()
-        if nt == t or len(nt) < 20:
-            break
-        t = nt
-    return t.lower()
+    """Strip site-name suffixes + transliterate for fuzzy match.
+
+    Delegates to :func:`news_agent.core.fuzzy_match.normalise_for_match`
+    which handles language tags, diacritics, Cyrillic→Latin transliteration,
+    number-words and punctuation.
+    """
+    from news_agent.core.fuzzy_match import normalise_for_match
+    return normalise_for_match(title)
 
 
 def detect_earliest_in_corpus(

@@ -1,0 +1,27 @@
+# Per-source editorial quality. Low-quality sources still get fetched, but
+# face stricter thresholds before reaching the editor's queue:
+#   - body must be ≥ 500 chars (default: 200)
+#   - heuristic auto_hits must be ≥ 2 (default: 1)
+#   - published_at is mandatory (default: optional)
+#   - articles never get the "certain_news" verdict — they always go
+#     through the cheap LLM relevance check first
+#
+# Match by URL prefix or domain. Telegram channels are matched as full
+# t.me/<channel> URLs.
+#
+# Editor feedback (apr-2026): «очень много новостей от бизнескореи и
+# автопотока из тг, они там очень редко бывают нормальными.
+# либо без цифр, либо 1-2 строки. такие себе источники»
+
+low_quality:
+  # Telegram channels with short / undersourced posts
+  - https://t.me/sergtselikov
+  - https://t.me/autopotoknews
+  # Korean business aggregator — often reposts without context
+  - bizneskorea.ru
+  - bizneskorea.com
+
+# Sources we fully trust (no extra checks). For symmetry only — the actual
+# whitelist used by the heuristic lives in whitelist_domains.yaml. This
+# section is informational here.
+high_quality: []
