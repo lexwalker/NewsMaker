@@ -161,6 +161,30 @@ These rules override generic intuition. Apply them in this exact order:
     Third-party / journalist / blogger test → REJECT (set confidence 0.1
     and section "Other news" so the editor can drop it).
 
+(9) Promotional offers / акции (seasonal service, owner discount,
+    cashback campaigns, brand owner-loyalty programs) →
+    "Dealer news / Promo" (the section name includes "Promo").
+    Editor row 188: «такое постим в Акциях (релизах)».
+
+(10) Brand showcasing TECHNOLOGY PLATFORM at motorshow (NOT a specific
+     model) → "Other news", NOT Confirmed/Motorshow.
+     Examples: "Geely off-road platform", "GWM presented powertrain",
+     "Bosch presents three technologies". Motorshow section is for
+     multi-MODEL releases only.
+
+(11) Carsharing / каршеринг fleet expansion in RF, new carsharing model
+     in RF → "Local specifics".
+     Editor row 258: «Yandex Drive carsharing in Moscow → Это Местные».
+     Generic carsharing pricing / general analysis → "Other news"
+     with confidence ≤ 0.4 (often editorial decline).
+
+(12) Component supplier showcasing abstract tech (Bosch / MINIEYE /
+     Eastman / Hangsheng / AUMOVIO / ElringKlinger) at motorshow with
+     no specific consumer product → "Other news" with confidence ≤ 0.3.
+     Editor: «новость обо всем и ни о чем, важен масштаб». Note: the
+     heuristic rejects most of these before LLM, but borderline cases
+     reach you — be conservative.
+
 ============================================================
 HARD NEVER-POST CATEGORIES (set confidence ≤ 0.15)
 ============================================================
@@ -176,11 +200,20 @@ HARD NEVER-POST CATEGORIES (set confidence ≤ 0.15)
 - Military: "for military needs", "Народный фронт"
 - Privacy policies, terms of service, compliance certifications
 - Adjacent industries: shipbuilding, steel, oil & gas, agriculture,
-  land reclamation
-- Motorcycles
+  land reclamation, semiconductors-for-smartphones, taxi fares,
+  monastery news, rocket engines, exchange bond emissions, credit
+  ratings of non-auto entities
+- Motorcycles (except auto-brand collaborations with motorcycle event)
+- Custom builds, DIY one-person projects, tuning, retro restorations
+- Recommendations / советы / guidelines / safety standards advisories
+  ("эксперты назвали", "experts recommend"). Only ACTUAL regulatory
+  decisions go to "Other news".
 - Yellow-press / clickbait wording
 - Multiple unrelated news in one article ("несколько разных новостей
   по одной ссылке")
+- Supplier showcases of abstract technology platforms / matrices /
+  solutions at motorshows without a specific consumer product (Bosch,
+  MINIEYE, Eastman, Hangsheng, AUMOVIO, ElringKlinger…)
 
 ============================================================
 SHORT EXAMPLES (real cases from editor review)

@@ -244,19 +244,6 @@ def test_asroad_org_ru_subject_routes_to_local() -> None:
     assert h is not None and h.section == "Local specifics"
 
 
-def test_carsharing_force_rejected() -> None:
-    """v22 leak: 'Hello carsharing added Audi TT to fleet in Belarus'"""
-    from news_agent.core.config_loader import Blacklist
-    from news_agent.core.heuristic_relevance import blacklist_hit
-    from news_agent.core.models import RawArticle
-    raw = RawArticle(
-        url="https://example.com/news",
-        title="Hello carsharing added Audi TT Cabrio to its fleet in Belarus",
-        body="...", source_name="s", source_url="https://example.com/",
-    )
-    assert blacklist_hit(raw, Blacklist()).hit
-
-
 def test_buts_a_catch_force_rejected() -> None:
     from news_agent.core.config_loader import Blacklist
     from news_agent.core.heuristic_relevance import blacklist_hit

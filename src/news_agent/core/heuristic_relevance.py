@@ -588,6 +588,17 @@ _FORCE_REJECT_PHRASES = (
     "double-header",
     "championship round", "wins pro class",
     "wins championship",
+    # round 2 (Лист7 rows 192, 235): NASCAR / DTM / Rally
+    "nascar ", "nascar-",
+    "dtm season", "dtm spielberg", "dtm round",
+    "indy 500", "indycar",
+    "le mans",
+    "wrc round", "wrc season",
+    "rally championship", "rally raid",
+    "ралли-рейд", "ралли чемпионат",
+    "season opener", "season finale",
+    "qualifying round",
+    "motorsport victory", "dtm victory",
 
     # ---------- Personnel: appointments / compensation (editor: «никаких назначений») ----------
     "appointed as", "appoints ",
@@ -688,14 +699,11 @@ _FORCE_REJECT_PHRASES = (
     "unique lot put up",
     "уникальный лот",
 
-    # ---------- Carsharing / ride-sharing (editor: «не наша тема») ----------
-    " carsharing",
-    "car-sharing",
-    "ride-sharing",
-    "ridesharing",
-    "ride sharing",
-    "каршеринг",
-    "райдшеринг",
+    # NOTE: carsharing previously force-rejected here, but the round-2
+    # editor review (Лист7 row 258) showed «Yandex Drive carsharing
+    # expanded fleet in Moscow» SHOULD be posted as Local specifics.
+    # Reverted — let the LLM decide. The CLASSIFY_SYSTEM prompt now
+    # includes an explicit carsharing routing rule.
 
     # ---------- Clickbait second-pass (v22 leakage) ----------
     "but there's a catch",
@@ -708,6 +716,71 @@ _FORCE_REJECT_PHRASES = (
     "what banks don't tell",
     "secret of",
     "the truth about",
+
+    # ============================================================
+    # ROUND 2 — patterns from Лист7 rows 168+ (apr-2026 second review)
+    # ============================================================
+
+    # ---------- Recommendations / advice / guidelines (editor row 269/270) ----------
+    # «Рекомендации не постим. Только реальные решения по факту.»
+    "guidelines for", "guidelines on",
+    "safety guidelines",
+    "safety standards for",
+    "experts recommend",
+    "experts advise",
+    "recommend drivers", "recommends drivers",
+    "recommend owners", "recommends owners",
+    "recommend motorists",
+    "expert names", "expert named",
+    "эксперт назвал", "эксперт назвала",
+    "эксперты назвали", "эксперты называют",
+    "эксперты советуют", "эксперт советует",
+    "эксперт рассказал", "эксперты рассказали",
+    "специалист назвал", "специалист рассказал",
+    "named common mistakes", "named common errors",
+    "named common ",   # broader: "named common braking mistakes" etc.
+    "called common braking",
+    "mistakes made by drivers", "ошибки водителей",
+    "told date to change",   # editor row "Muscovites told date to change winter tires"
+
+    # ---------- Adjacent gov/economy (round 2 leakage) ----------
+    "staff shortage", "дефицит кадров",
+    "silver trading", "торги серебром",
+    "gas prices in europe", "цены на газ в европе",
+    "semiconductor strike",
+    "rotavirus", "ротавирус",
+    "food poisoning", "пищевое отравление",
+    " monastery", "монастыр",
+    " rocket engine", "ракетный двигатель",
+    "detonation engine",
+    "credit rating", "кредитный рейтинг",
+    "expected credit ratings",
+    "exchange bond",
+    "облигац",  # bond emissions
+    "bond issues",
+    "taxi fares", "тарифы такси", "тариф такси",
+    "tax incentive phase", "налоговый стимул",  # editor row 239: only actual decisions
+
+    # ---------- Custom builds / tuning / DIY ----------
+    " custom build", "custom styling", "custom-built",
+    "тюнинг", "кастом-",
+    "on gold wheels", "on hre wheels", "on forged wheels",
+    "steam-powered", "паропривод",
+    "homemade",
+    "одним человеком построил",
+    "built from scratch",
+    "garage-built",
+
+    # ---------- Smartphone / consumer chip non-auto ----------
+    " for smartphones", " for foldable",
+    " для смартфонов", "для складных смартфон",
+    "smartphone processor", "smartphone chip",
+    "процессор для смартфон",
+    "gaming smartphone", "складной смартфон",
+    "foldable smartphone",
+
+    # ---------- Mortgage / loans / generic financial (not auto loans) ----------
+    "mortgage rate", "ипотечная ставка",  # not auto-loan
 )
 
 
@@ -1102,6 +1175,104 @@ def is_multi_news_title(title: str) -> bool:
             # Single trailing tail like "; KOR" wouldn't pass this gate.
             return True
     return False
+
+
+# ---------- Supplier abstract showcase at motorshow ----------
+# Editor flagged 7 such rows in round 2 (Bosch, MINIEYE, Eastman, Hangsheng,
+# AUMOVIO, ElringKlinger, Hongqi sub-brand matrix). Pattern: parts vendor
+# unveils generic "technologies / portfolio / matrix / foundations / suite"
+# at a motorshow — no specific consumer product. Editor: «обо всем и ни о
+# чем, важен масштаб». Rejected unless title also names a passenger-car brand.
+_SUPPLIER_VERBS = (
+    "showcased", "showcases ",
+    "unveiled", "unveils ",
+    "debuted", "debuts ",
+    "presented", "presents ",
+    "revealed", "reveals ",
+    "introduced", "introduces ",
+    " representation",
+    "представил",  # ru
+)
+_SUPPLIER_ABSTRACT_OBJECTS = (
+    " technologies",
+    " solutions",
+    " foundations",
+    " matrix",
+    " portfolio",
+    " evolution",
+    " platform showcase",
+    " innovations",
+    " technology suite",
+    " core technology",
+    "sub-brand matrix",
+    "three key technologies",
+    "three core technology",
+    "three technology",
+    "full-range evolution",
+    "full range evolution",
+    # russian
+    " технологий",
+    " решений",
+    " инноваций",
+)
+_MOTORSHOW_LOCATIONS = (
+    "auto china", "beijing auto show", "beijing motor show",
+    "shanghai auto show", "shanghai motor show",
+    "iaa transportation", "iaa mobility",
+    "geneva motor show",
+    "ces 20", "consumer electronics show",
+    "паркинг авто", "moscow off-road show",
+    "токио мотор шоу", "tokyo motor show",
+    "munich motor show",
+    "пекинский автосалон", "пекинском автосалон", "пекинской выставке",
+    "шанхайск", "шанхайской выставке",
+)
+
+# Passenger-car brands that override — these are NEWS even when generic.
+# We use a small set; the full brand list lives in config/brand_domains.yaml
+# but we don't want to load YAML inside this module.
+_PASSENGER_BRANDS_OVERRIDE = (
+    "toyota", "lexus", "nissan", "honda", "mazda", "subaru", "suzuki",
+    "mitsubishi", "hyundai", "kia", "genesis", "volkswagen", "vw ",
+    "audi", "porsche", "skoda", "bmw", "mercedes", "ford", "chevrolet",
+    "cadillac", "tesla", "rivian", "volvo", "jaguar", "land rover",
+    "renault", "peugeot", "citroen", "fiat", "alfa romeo", "stellantis",
+    "lada", "лада", "автоваз", "uaz", "уаз", "moskvich", "москвич",
+    "chery", "haval", "geely", "exeed", "omoda", "jaecoo", "byd",
+    "xpeng", "nio", "li auto", "great wall", "gwm", "changan",
+    "dongfeng", "tank", "leapmotor", "lynk", "voyah", "jetour",
+    "tenet", "тенет", "atom", "атом", "rox",
+)
+
+
+def is_supplier_abstract_showcase(title: str, body: str = "") -> bool:
+    """Editor's «обо всем и ни о чем» pattern.
+
+    A parts vendor (Bosch, MINIEYE, Hangsheng, AUMOVIO, …) showcasing
+    abstract "technologies / solutions / matrix / portfolio" at a
+    motorshow, with no passenger-brand model named. Always reject —
+    editor: «про каждую компанию не напишешь, важен масштаб».
+
+    Override: if the title also names a passenger-car brand (BMW
+    showcases tech at Beijing Show), let it through — the brand
+    coverage IS news.
+    """
+    if not title:
+        return False
+    t = title.lower()
+    has_verb = any(v in t for v in _SUPPLIER_VERBS)
+    has_abstract = any(o in t for o in _SUPPLIER_ABSTRACT_OBJECTS)
+    if not (has_verb and has_abstract):
+        return False
+    # Motorshow context — title or first 1000 chars of body
+    in_title = any(m in t for m in _MOTORSHOW_LOCATIONS)
+    in_body = body and any(m in body[:1000].lower() for m in _MOTORSHOW_LOCATIONS)
+    if not (in_title or in_body):
+        return False
+    # Brand override
+    if any(b in t for b in _PASSENGER_BRANDS_OVERRIDE):
+        return False
+    return True
 
 
 @dataclass

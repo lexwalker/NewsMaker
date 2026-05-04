@@ -85,6 +85,7 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     heuristic_section,
     is_auto_or_economy,
     is_multi_news_title,
+    is_supplier_abstract_showcase,
     looks_like_article,
 )
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
@@ -1083,6 +1084,15 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     if is_multi_news_title(article.title):
         row.verdict = "Точно не новость (мульти-новость)"
         row.article_reasons = "multi-news-title (semicolon split)"
+        return True
+
+    # --- Supplier-abstract-showcase gate -------------------------------------
+    # Editor's round-2 «обо всем и ни о чем» pattern: a parts vendor
+    # showcases abstract "technologies / solutions / matrix" at a motorshow.
+    # Reject unless a passenger-brand is also named (then it's coverage).
+    if is_supplier_abstract_showcase(article.title, article.body):
+        row.verdict = "Точно не новость (поставщик-абстракция)"
+        row.article_reasons = "supplier-abstract-showcase (vendor + abstract noun + motorshow)"
         return True
 
     # Final-URL deduplication. Using canonicalised URL handles trailing slashes,
