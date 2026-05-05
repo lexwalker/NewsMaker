@@ -571,6 +571,8 @@ _FORCE_REJECT_PHRASES = (
     "как промывать",
     "how to choose", "how to prepare", "how to clean",
     "how to revive", "how to determine fault",
+    "how to locate", "where to find ",
+    "what it means and how", "what does it mean and",
     "почему эксперты рекомендуют",
     "expert tips",
     " 5 tips", " 8 tips", " 10 tips", " 7 tips",
@@ -633,6 +635,8 @@ _FORCE_REJECT_PHRASES = (
     "восстановленный",
     "реставрац",
     "uncovered after years",
+    "weekend classic", "weekend trip classic",
+    "vintage classic",
 
     # ---------- Spy shots / замечен ----------
     "spotted in ",
