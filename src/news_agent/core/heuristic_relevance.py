@@ -601,6 +601,17 @@ _FORCE_REJECT_PHRASES = (
     "season opener", "season finale",
     "qualifying round",
     "motorsport victory", "dtm victory",
+    # round 3 (v25 leakage rows 20, 46, 76)
+    "24h nürburgring", "24 hours nurburgring",
+    "24-hour nurburgring", "24-hour nürburgring",
+    "tcr world tour",
+    "weathertech raceway", "laguna seca",
+    "podium finish",
+    "finishes fourth at", "finishes fifth at",
+    "finishes sixth at", "goes fourth at", "goes fifth at",
+    "to enter 24h",
+    "tier driver line", "driver line-up for",
+    "wards 10 best",  # journalist-list awards (Лист7 row 47)
 
     # ---------- Personnel: appointments / compensation (editor: «никаких назначений») ----------
     "appointed as", "appoints ",
@@ -638,10 +649,16 @@ _FORCE_REJECT_PHRASES = (
     "weekend classic", "weekend trip classic",
     "vintage classic",
 
-    # ---------- Spy shots / замечен ----------
-    "spotted in ",
-    "замечен в ",
-    "caught testing",
+    # ---------- Spy shots / замечен — only the COLOR-spotting variant ----------
+    # Editor distinguishes: "spotted in [colors]" = reject (paint variant
+    # is not news); "spotted/spied [in country/during tests]" = Rumors,
+    # which we WANT (rows 206, 237, 241 of Лист7 → «постим»).
+    "spotted in new color",
+    "spotted in four new color",
+    "spotted in three new color",
+    "spotted in five new color",
+    "замечен в новых цвет",
+    "замечен в новой расцветк",
     "spy shots", "spy photos",
     "шпионские снимк", "шпионские фото",
 
@@ -672,11 +689,23 @@ _FORCE_REJECT_PHRASES = (
     "compliance with national standards",
     "система менеджмента качеств",
 
-    # ---------- Single-portal third-party tests ----------
+    # ---------- Single-portal third-party tests / YouTube blogger reviews ----------
     "motortrend record",
     "tested by motortrend",
     "auto bild named", "auto bild magazine",
     "j.d. power study",
+    # round 3 (v25 leakage rows 39, 71, 86)
+    "carwow drag race",
+    "in carwow ", " carwow drag",
+    "drag race results",
+    "first drive impressions", "satisfying first drive",
+    "we achieved",  # journalist test: "BMW claimed X, we achieved Y"
+    "we got more", "we got less",  # similar journalist comparison
+    "delivers satisfying",
+    # explainer / "how it works" — Лист7 row 86 ("How Great Wall... works")
+    "how it works",
+    "how does it work",
+    "system works (",  # "How X system works (RU)"
 
     # ---------- Adjacent industries (steel, ships, oil, agro) ----------
     "shipbuilder", "shipbuilding",
@@ -1247,6 +1276,35 @@ _PASSENGER_BRANDS_OVERRIDE = (
     "dongfeng", "tank", "leapmotor", "lynk", "voyah", "jetour",
     "tenet", "тенет", "atom", "атом", "rox",
 )
+
+
+# ---------- Dzen-style listicles ----------
+# "Parasitism, gigantism and three more obvious trends in Chinese automakers"
+# "5 most reliable used SUVs"
+# Pattern: "X, Y and N more <noun>" — characteristic dzen-channel listicle.
+_DZEN_LISTICLE_PATTERNS = (
+    re.compile(r"\b\w+, \w+ and \w+ more\b", re.IGNORECASE),
+    # "5 reasons why...", "5 things you...", "10 most reliable...",
+    # "5 best/worst/top...", "5 ways to..."
+    re.compile(
+        r"^\s*\d+\s+(most|best|worst|top|reasons|things|ways|signs|"
+        r"features|tricks|secrets|mistakes)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*\d+\s+(самых|лучших|худших|причин|способов|вариантов|признаков)\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def is_dzen_listicle(title: str) -> bool:
+    """Detect dzen-channel listicles. These are off-topic regardless of
+    auto subject — editor consistently rejected this format.
+    """
+    if not title:
+        return False
+    return any(pat.search(title) for pat in _DZEN_LISTICLE_PATTERNS)
 
 
 def is_supplier_abstract_showcase(title: str, body: str = "") -> bool:

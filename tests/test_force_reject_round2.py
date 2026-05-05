@@ -237,6 +237,112 @@ def test_ride_sharing_NOT_force_rejected() -> None:
 
 # -------------------------------------------------- regression: legit news
 
+# =========================================================================
+# Round 3 — patterns from v25 push to Новости (apr-2026 third pass)
+# =========================================================================
+
+def test_24h_nurburgring_rejected() -> None:
+    """v25 row 20: 'Volkswagen R to enter 24h Nürburgring in 2027'."""
+    assert _force_rejects("Volkswagen R to enter 24h Nürburgring in 2027")
+
+
+def test_tcr_world_tour_rejected() -> None:
+    """v25 row 46: 'Cyan Racing confirmed driver line-up for TCR World Tour 2026'."""
+    assert _force_rejects("Cyan Racing confirmed driver line-up for TCR World Tour 2026")
+
+
+def test_weathertech_raceway_rejected() -> None:
+    """v25 row 76: 'Acura finishes fourth and fifth at WeatherTech Raceway Laguna Seca'."""
+    assert _force_rejects(
+        "Acura finishes fourth and fifth at WeatherTech Raceway Laguna Seca"
+    )
+
+
+def test_carwow_drag_race_rejected() -> None:
+    """v25 row 71: blogger drag-race videos."""
+    assert _force_rejects(
+        "Zeekr 8X Yaoning beat Ferrari, BMW X5M and Land Rover in CarWow drag race"
+    )
+
+
+def test_first_drive_impressions_rejected() -> None:
+    """v25 row 39: 'VinFast VF6 delivers satisfying first drive impressions'."""
+    assert _force_rejects("VinFast VF6 delivers satisfying first drive impressions")
+
+
+def test_we_achieved_journalist_test_rejected() -> None:
+    """v25 row 83: 'BMW claimed 38 miles of EV range, we achieved 45'."""
+    assert _force_rejects("BMW claimed 38 miles of EV range, we achieved 45")
+
+
+def test_how_x_works_rejected() -> None:
+    """v25 row 86: 'How Great Wall autonomous driving system works'."""
+    assert _force_rejects("How Great Wall autonomous driving system works (RU)")
+
+
+def test_dzen_listicle_obvious_trends_rejected() -> None:
+    """v25 row 38: 'Parasitism, gigantism and three more obvious trends in Chinese...'."""
+    from news_agent.core.heuristic_relevance import is_dzen_listicle
+    assert is_dzen_listicle(
+        "Parasitism, gigantism and three more obvious trends in Chinese automakers"
+    )
+
+
+def test_dzen_listicle_n_things_rejected() -> None:
+    from news_agent.core.heuristic_relevance import is_dzen_listicle
+    assert is_dzen_listicle("5 most reliable used SUVs of 2026")
+    assert is_dzen_listicle("5 ways to save on car insurance")
+    assert is_dzen_listicle("10 самых лучших седанов")
+
+
+def test_dzen_listicle_ok_for_normal_news() -> None:
+    """Real news must NOT trigger listicle detector."""
+    from news_agent.core.heuristic_relevance import is_dzen_listicle
+    assert not is_dzen_listicle("Hyundai unveiled the new Tucson")
+    assert not is_dzen_listicle("BYD reported Q1 sales of 1,42 million")
+    assert not is_dzen_listicle("Russia's car market grew 10% in April")
+
+
+# Crucial: dzen-style "reliable engine" / "more affordable" must NOT
+# be force-rejected here — translate is supposed to clean these up.
+# These tests ensure we don't accidentally re-add them to blacklist.
+
+def test_reliable_engine_NOT_force_rejected() -> None:
+    """Editor wants such news kept; translate fixes the framing."""
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Russian market gets new reliable sedan with durable engine from 1,5 mln RUB",
+        body="...",
+        source_name="s",
+        source_url="https://example.com/",
+    )
+    assert not blacklist_hit(raw, EMPTY_BL, brands=BRANDS).hit
+
+
+def test_russians_found_way_NOT_force_rejected() -> None:
+    """Editor wants the underlying news kept; translate strips framing."""
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Russians found way to save up to 40% on car purchase",
+        body="...",
+        source_name="s",
+        source_url="https://example.com/",
+    )
+    assert not blacklist_hit(raw, EMPTY_BL, brands=BRANDS).hit
+
+
+def test_more_affordable_NOT_force_rejected() -> None:
+    """Real news about price drops must not be rejected."""
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Cheapest Moskovich SUV became more affordable",
+        body="...",
+        source_name="s",
+        source_url="https://example.com/",
+    )
+    assert not blacklist_hit(raw, EMPTY_BL, brands=BRANDS).hit
+
+
 def test_legit_news_round2_not_rejected() -> None:
     """v22 baseline cases must still pass after round-2 changes."""
     legit = [

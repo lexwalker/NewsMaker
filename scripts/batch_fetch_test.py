@@ -84,6 +84,7 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     grade_article,
     heuristic_section,
     is_auto_or_economy,
+    is_dzen_listicle,
     is_multi_news_title,
     is_supplier_abstract_showcase,
     looks_like_article,
@@ -1084,6 +1085,14 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     if is_multi_news_title(article.title):
         row.verdict = "Точно не новость (мульти-новость)"
         row.article_reasons = "multi-news-title (semicolon split)"
+        return True
+
+    # --- Dzen listicle gate --------------------------------------------------
+    # "Parasitism, gigantism and three more obvious trends..." — these are
+    # editorial Дзен-канал listicles, off-topic regardless of subject.
+    if is_dzen_listicle(article.title):
+        row.verdict = "Точно не новость (дзен-листикл)"
+        row.article_reasons = "dzen-style listicle pattern"
         return True
 
     # --- Supplier-abstract-showcase gate -------------------------------------

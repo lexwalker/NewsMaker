@@ -156,8 +156,22 @@ def test_force_reject_restoration() -> None:
 
 
 def test_force_reject_spy_shots() -> None:
+    """Only colour-spotting is rejected. Genuine spied prototypes go to Rumors."""
     assert _force_rejects("Genesis GV90 SUV spotted in four new colors")
-    assert _force_rejects("Toyota Corolla замечен в новой версии")
+    assert _force_rejects("Toyota Corolla замечен в новой расцветке")
+    # NOT rejected (legitimate Rumors per editor rows 206, 237, 241):
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Genesis G90 facelift prototype spied in Korea",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert not blacklist_hit(raw, EMPTY_BL, brands=BRANDS).hit
+    raw2 = RawArticle(
+        url="https://example.com/news",
+        title="New Tank 800 SUV spied in China",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert not blacklist_hit(raw2, EMPTY_BL, brands=BRANDS).hit
 
 
 def test_force_reject_corporate_ceremonies() -> None:

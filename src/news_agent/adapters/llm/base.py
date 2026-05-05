@@ -275,12 +275,87 @@ language tag — the system appends "(EN)" / "(АНГЛ)" / "(НЕМ)" / "(ИТ�
    the verb is "will", that is a contradiction — drop the year or fix
    the tense.
 
-4) **Translate, don't editorialise.** No clickbait, no opinions, no
-   adjectives that aren't in the source ("groundbreaking", "stunning",
-   "amazing").
+4) **Strip evaluative adjectives EVEN IF they're in the source.** The
+   source headline is a SIGNAL that something happened, NOT a template
+   to copy. If the source uses Дзен-style adjectives like "надёжный
+   мотор", "доступный седан", "лучший в классе", "впечатляющий запас
+   хода", you must look at the BODY for the underlying facts (price,
+   horsepower, warranty, market share) and write a NEUTRAL news-wire
+   form using those facts.
+
+   Specifically REMOVE these (English / Russian) — even when present
+   in the source:
+     reliable / durable / longevity / robust  →  надёжный / долговечный /
+     неубиваемый / выносливый / крепкий
+     best / top / champion / leader  →  лучший / самый / номер один
+     affordable / cheap / bargain / great deal  →  доступный / выгодный /
+     бюджетный / привлекательный
+     premium / luxurious / impressive / striking / amazing / stunning /
+     groundbreaking / revolutionary / mind-blowing
+       →  премиальный / роскошный / впечатляющий / поразительный /
+          революционный / прорывной
+     unique / unmatched / unprecedented
+       →  уникальный / непревзойдённый / беспрецедентный
+
+   PHRASE REWRITES:
+     "got more affordable / стал доступнее"
+       → cite the price drop in numbers ("price dropped by N%")
+         or drop the comparison entirely if no numbers in body
+     "Russians found way to / россияне нашли способ"
+       → use the actual subject ("auto-loan rate dropped to N%")
+         or REJECT translation by returning empty title — body lacks
+         a real news beat
+     "with reliable engine / с надёжным мотором"
+       → cite warranty / spec ("with 200,000 km warranty") or drop
+     "best in class / лучший в классе"
+       → drop unless body has concrete benchmark numbers
+     "experts assess / эксперты оценили"
+       → cite the specific organisation/person OR drop
+
+   EXAMPLES (source → bad → good):
+
+   src: "Российский рынок получил новый надёжный седан с долговечным
+        двигателем за 1,5 млн руб"
+   body: "АвтоВАЗ начал продажи Lada Iskra от 1,5 млн руб. Гарантия — 5
+         лет или 150 000 км пробега."
+   bad:  "Russian market gets new reliable sedan with durable engine
+         from 1,5 mln RUB"
+   ok:   EN: "AvtoVAZ launched Lada Iskra in Russia from 1,5 mln RUB"
+         RU: "АвтоВАЗ начал продажи Lada Iskra в РФ от 1,5 млн руб."
+
+   src: "Появился новый седан, дешевле своих аналогов"
+   body: "Skoda Octavia вышла в РФ от 1,9 млн руб., что на 12% меньше
+          Toyota Camry в той же комплектации."
+   bad:  "New cheaper sedan appears for Russian buyers"
+   ok:   EN: "Skoda Octavia launched in Russia from 1,9 mln RUB,
+              undercutting Toyota Camry by ~12%"
+         RU: "Skoda Octavia вышла в РФ от 1,9 млн руб. — на 12%
+              дешевле Toyota Camry"
+
+   src: "Россияне нашли способ сэкономить до 40% на покупке авто"
+   body: "По данным «Автостата», цены на б/у автомобили упали на 40% за
+          12 лет относительно новых."
+   bad:  "Russians found way to save up to 40% on car purchase"
+   ok:   EN: "Used-car prices in Russia 40% below new for the same
+              models — Avtostat"
+         RU: "Цены на б/у автомобили в РФ на 40% ниже новых —
+              «Автостат»"
+
+   src: "Эксперты оценили перспективы китайских авто в РФ"
+   body: "Аналитик Иван Петров (АНКАВТО) считает, что доля китайских
+          марок в РФ к концу 2026 г. достигнет 70%."
+   bad:  "Experts assess prospects of Chinese cars in Russia"
+   ok:   EN: "Chinese brands' share in Russia to reach 70% by end-2026 —
+              АНКАВТО analyst"
+         RU: "Доля китайских марок в РФ достигнет 70% к концу 2026 г. —
+              аналитик АНКАВТО"
 
 5) **No invented brands or models.** If the body doesn't name a model,
    don't invent one. Use the brand alone.
+
+6) **The source headline framing is a SIGNAL, not a TEMPLATE.** Always
+   look at the body to find the factual core. If the body's facts and
+   the headline's framing disagree, trust the body.
 
 ============== STYLE GUIDE ==============
 
