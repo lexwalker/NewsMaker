@@ -1288,11 +1288,13 @@ _DZEN_LISTICLE_PATTERNS = (
     # "5 best/worst/top...", "5 ways to..."
     re.compile(
         r"^\s*\d+\s+(most|best|worst|top|reasons|things|ways|signs|"
-        r"features|tricks|secrets|mistakes)\b",
+        r"features|tricks|secrets|mistakes|bright|featured|standout|"
+        r"new\s+\w+\s+at|notable)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"^\s*\d+\s+(самых|лучших|худших|причин|способов|вариантов|признаков)\b",
+        r"^\s*\d+\s+(самых|лучших|худших|причин|способов|вариантов|"
+        r"признаков|ярких|заметных|новых)\b",
         re.IGNORECASE,
     ),
 )

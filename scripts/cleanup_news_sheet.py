@@ -35,6 +35,8 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     _NON_ARTICLE_EXTENSIONS,
     _OP_ED_TITLE_PHRASES,
     _title_has_auto_signal,
+    is_dzen_listicle,
+    is_supplier_abstract_showcase,
 )
 from news_agent.core.urls import domain_of  # noqa: E402
 
@@ -66,6 +68,45 @@ def _title_only(combined: str) -> str:
 
 
 _PLACEHOLDER_TITLES = {"<unknown>", "unknown", "untitled", "no title", "n/a", "—", "-"}
+
+# Old TRANSLATE_SYSTEM (pre-round-3) preserved Дзен-style adjectives in EN
+# translations. The new prompt strips them, but already-translated rows
+# stay bad. Delete them retroactively — re-translation is too expensive.
+# Each phrase here is something the editor flagged as yellow-press AND
+# the new prompt would never produce.
+_LEGACY_YELLOW_PRESS_PHRASES = (
+    # English (post-translation)
+    "with reliable engine",
+    "with durable engine",
+    "with reliable",
+    "more affordable",
+    "became more affordable",
+    "russians found way",
+    "experts assess",
+    "experts compared",
+    "experts forecast",
+    "how dealerships profit",
+    "how car dealerships profit",
+    "best-selling used car",
+    "with best acoustics",
+    "best acoustics: rating",
+    "cheaper than haval",
+    "cheaper than kgm",
+    "cheaper than rivals",
+    # Russian (post-translation)
+    "с надёжным двигателем",
+    "с долговечным двигателем",
+    "с надёжным мотором",
+    "стал доступнее",
+    "стала доступнее",
+    "россияне нашли способ",
+    "россиян предупредили",
+    "эксперты оценили",
+    "эксперты сравнили",
+    "эксперты спрогнозировали",
+    "как автосалоны наживаются",
+    "лучший по акустике",
+)
 
 
 def _is_placeholder_title(combined: str) -> bool:
@@ -175,10 +216,60 @@ def main() -> int:
                 if op_ed_hit:
                     continue
                 # 3d) Lifestyle / tourism (editor category 9)
+                lifestyle_hit = False
                 for phrase in _LIFESTYLE_TITLE_PHRASES:
                     if phrase in title_lower:
                         rows_to_delete.append((i, f"lifestyle title: {phrase!r}", title[:80]))
+                        lifestyle_hit = True
                         break
+                if lifestyle_hit:
+                    continue
+                # 3e) Legacy yellow-press translations (pre-round-3 era)
+                yp_hit = False
+                for phrase in _LEGACY_YELLOW_PRESS_PHRASES:
+                    if phrase in title_lower:
+                        rows_to_delete.append(
+                            (i, f"legacy yellow-press: {phrase!r}", title[:80])
+                        )
+                        yp_hit = True
+                        break
+                if yp_hit:
+                    continue
+                # 3f) Dzen-listicle: "X, Y and N more...", "5 best/worst..."
+                # Use the same regex detector as the runtime pipeline.
+                # Check both EN and RU lines individually.
+                listicle_hit = False
+                for line in title.splitlines():
+                    ll = line.strip()
+                    if ll.lower().startswith("en:"):
+                        ll = ll[3:].strip()
+                    elif ll.lower().startswith("ru:"):
+                        ll = ll[3:].strip()
+                    if is_dzen_listicle(ll):
+                        rows_to_delete.append(
+                            (i, "dzen-listicle pattern", title[:80])
+                        )
+                        listicle_hit = True
+                        break
+                if listicle_hit:
+                    continue
+                # 3g) Supplier-abstract showcase at motorshow
+                # (component vendor + abstract noun + motorshow → reject)
+                supplier_hit = False
+                for line in title.splitlines():
+                    ll = line.strip()
+                    if ll.lower().startswith("en:"):
+                        ll = ll[3:].strip()
+                    elif ll.lower().startswith("ru:"):
+                        ll = ll[3:].strip()
+                    if is_supplier_abstract_showcase(ll):
+                        rows_to_delete.append(
+                            (i, "supplier-abstract showcase", title[:80])
+                        )
+                        supplier_hit = True
+                        break
+                if supplier_hit:
+                    continue
 
     print(f"\nRows to delete: {len(rows_to_delete)}")
     for sheet_row, reason, preview in rows_to_delete[:30]:
