@@ -57,10 +57,21 @@ _STAGE_PHRASES: list[tuple[LaunchStage, list[str]]] = [
         "стартовала продаж", "стартовал продаж",
         "продажи стартовали", "продажи начались",
         "начали продавать", "начал продавать", "начала продавать",
+        "стал доступен", "стала доступна", "стало доступно",
+        "доступен в россии", "доступна в россии",
+        "доступен в рф", "доступна в рф",
+        "вышел на рынок", "вышла на рынок", "вышли на рынок",
+        "вывели на рынок", "вывел на рынок",
+        "появился в продаже", "появилась в продаже",
         # english
         "sales started", "went on sale", "now on sale",
         "sales launched", "sales begin", "sales kicked off",
         "officially on sale",
+        "now available", "available in russia", "available in china",
+        "available in europe", "available in the u.s.",
+        "available in india", "available in uae",
+        "market entry",
+        "available for sale",
     ]),
     ("sales_announced", [
         "анонсировали старт продаж", "анонсировал начало продаж",
@@ -163,6 +174,7 @@ _MODEL_NOISE_TOKENS: frozenset[str] = frozenset({
     "Germany", "France", "Italy", "Spain", "Mexico", "Brazil",
     "Indonesia", "Thailand", "Vietnam", "Beijing", "Shanghai",
     "Tokyo", "Seoul", "Moscow", "Munich", "Berlin",
+    "Canada", "Australia", "Norway", "Sweden", "Belgium",
     # role / corporate / tech acronyms
     "CEO", "CFO", "CTO", "COO", "CMO", "CIO", "VP", "AI",
     "IT", "OTA", "USB", "API", "OEM",
@@ -170,6 +182,26 @@ _MODEL_NOISE_TOKENS: frozenset[str] = frozenset({
     "Q1", "Q2", "Q3", "Q4",
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    # common English words that appear capitalized in title-case
+    # (English headlines capitalize most words → title-case noise)
+    "Would", "Like", "Word", "Yet", "Will", "Should", "Could",
+    "Most", "Best", "Worst", "Top", "Cheapest", "Largest", "Biggest",
+    "Smaller", "Bigger", "Better", "Worse", "First", "Last", "Next",
+    "New", "Old", "Recent", "Latest", "Upcoming",
+    "Year", "Years", "Month", "Months", "Week", "Weeks", "Day", "Days",
+    "Tested", "Available", "Coming", "Going", "Looks",
+    "Sale", "Sales", "Price", "Cost",
+    "Delays", "Delay", "Cancels", "Reveals", "Plans", "Plan",
+    "Quietly", "Officially",
+    "On", "At", "By", "Of", "To", "For", "In", "From", "With",
+    "And", "Or", "But", "Now", "Then", "When", "Where", "Why",
+    "Why", "How", "What", "Who",
+    "Marginally", "Improved",
+    # automotive industry generic words
+    "Lineup", "Engine", "Engines", "Motor", "Motors", "Drive",
+    "Edition", "Special", "Limited",
+    "Concept", "Prototype",
+    "Yearly",
 })
 
 
