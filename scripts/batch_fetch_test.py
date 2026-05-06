@@ -89,6 +89,10 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     is_supplier_abstract_showcase,
     looks_like_article,
 )
+from news_agent.core.launch_stages import (  # noqa: E402
+    detect_launch_stages,
+    extract_brand_model,
+)
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
 from news_agent.adapters.llm.base import LLMClient  # noqa: E402
 from news_agent.adapters.storage import DedupStore  # noqa: E402
@@ -197,6 +201,9 @@ class ArticleRow:
     primary_method: str = ""      # "body-link" / "corpus-earlier" / "self"
     # Reconstructed from SQLite cache on a repeat run — skip the LLM pass.
     from_cache: bool = False
+    # Phase-1 model-launch lifecycle tracking (heuristic, no LLM)
+    launch_stages: list[str] = field(default_factory=list)
+    launch_brand_model: str = ""
 
 
 @dataclass
@@ -350,6 +357,9 @@ ARTICLES_HEADER = [
     "LLM relevance",                   # Z
     "Стоимость LLM, $",                # AA
     "Способ поиска источника",         # AB
+    # --- Phase-1 launch lifecycle (visible after Block 4) ---------------
+    "Стадия запуска",                  # AC
+    "Бренд + модель",                  # AD
 ]
 
 # Portal → country label (visible in the sheet) + numeric code (kept for
@@ -469,6 +479,9 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
                 r.llm_relevance,
                 r.llm_cost_usd,
                 r.primary_method,
+                # Phase-1 lifecycle metadata
+                ", ".join(r.launch_stages),
+                r.launch_brand_model,
             ]
         )
     svc.spreadsheets().values().update(
@@ -1237,6 +1250,26 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         row.primary_domain = p_dom
         row.primary_confidence = p_conf
         row.primary_method = "body-link" if p_conf != "low" else "self"
+
+    # ---- Phase-1 launch-lifecycle tagging (heuristic, no LLM) -------------
+    # Populates row.launch_stages and row.launch_brand_model when both a
+    # stage trigger phrase AND a (brand, model) pair are detected. We only
+    # do this for certain/possible news — rejects don't need stage tags.
+    # Wrapped in try/except: detection failure must NOT break the row
+    # writing — empty stage columns are fine.
+    if grade in ("certain_news", "possible_news"):
+        try:
+            stages = detect_launch_stages(article.title, article.body)
+            bm = extract_brand_model(article.title, BRANDS)
+            if stages and bm:
+                row.launch_stages = list(stages)
+                row.launch_brand_model = f"{bm[0]} {bm[1]}"
+        except Exception as e:  # noqa: BLE001
+            # Pure heuristic — should never raise. Log and continue.
+            print(
+                f"   ! launch-stage detection failed for {article.url}: "
+                f"{type(e).__name__}: {str(e)[:80]}"
+            )
     return True
 
 
