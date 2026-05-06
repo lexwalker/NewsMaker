@@ -1117,6 +1117,22 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         row.article_reasons = "supplier-abstract-showcase (vendor + abstract noun + motorshow)"
         return True
 
+    # ---- Phase-1 launch-lifecycle tagging (heuristic, no LLM) -------------
+    # MUST run before the cache short-circuit below — cached rows still get
+    # populated stage columns (heuristic is free and deterministic). Wrapped
+    # in try/except: detection failure must NOT break row writing.
+    try:
+        _stages = detect_launch_stages(article.title, article.body)
+        _bm = extract_brand_model(article.title, BRANDS)
+        if _stages and _bm:
+            row.launch_stages = list(_stages)
+            row.launch_brand_model = f"{_bm[0]} {_bm[1]}"
+    except Exception as _e:  # noqa: BLE001
+        print(
+            f"   ! launch-stage detection failed for {article.url}: "
+            f"{type(_e).__name__}: {str(_e)[:80]}"
+        )
+
     # Final-URL deduplication. Using canonicalised URL handles trailing slashes,
     # UTM params and similar differences that hide the same page behind many
     # referring links (see the benchmarkminerals.com × 5 case from v1).
@@ -1251,25 +1267,6 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         row.primary_confidence = p_conf
         row.primary_method = "body-link" if p_conf != "low" else "self"
 
-    # ---- Phase-1 launch-lifecycle tagging (heuristic, no LLM) -------------
-    # Populates row.launch_stages and row.launch_brand_model when both a
-    # stage trigger phrase AND a (brand, model) pair are detected. We only
-    # do this for certain/possible news — rejects don't need stage tags.
-    # Wrapped in try/except: detection failure must NOT break the row
-    # writing — empty stage columns are fine.
-    if grade in ("certain_news", "possible_news"):
-        try:
-            stages = detect_launch_stages(article.title, article.body)
-            bm = extract_brand_model(article.title, BRANDS)
-            if stages and bm:
-                row.launch_stages = list(stages)
-                row.launch_brand_model = f"{bm[0]} {bm[1]}"
-        except Exception as e:  # noqa: BLE001
-            # Pure heuristic — should never raise. Log and continue.
-            print(
-                f"   ! launch-stage detection failed for {article.url}: "
-                f"{type(e).__name__}: {str(e)[:80]}"
-            )
     return True
 
 
