@@ -1322,6 +1322,14 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         "--runs-log", type=Path, default=RUNS_LOG_PATH,
         help=f"Path to the per-run summary log (default {RUNS_LOG_PATH}).",
     )
+    p.add_argument(
+        "--no-llm", action="store_true",
+        help="Skip the LLM pass entirely — heuristic-only prog. Used when "
+             "the API balance is exhausted or for offline QA. Articles still "
+             "get the verdict 'Точно новость / Возможно новость' from "
+             "heuristic, but classify/translate are skipped. After API is "
+             "restored, run retry_failed_llm.py on the resulting tab.",
+    )
     return p.parse_args(argv)
 
 
@@ -1515,11 +1523,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"News-like articles across all sources: {news_total}")
 
     # ------------------------------------------ LLM pass (certain + possible)
-    if ENABLE_LLM:
+    if ENABLE_LLM and not args.no_llm:
         try:
             _run_llm_pass(article_rows)
         except BudgetExceeded as e:
             print(f"\n!!! Бюджет LLM превышен: {e}", file=sys.stderr)
+    elif args.no_llm:
+        print(
+            "\nLLM pass SKIPPED (--no-llm). 'Точно новость' / 'Возможно "
+            "новость' rows will appear in the sheet WITHOUT EN/RU "
+            "translation and section assignment. Use retry_failed_llm.py "
+            "after API is restored to fill these in."
+        )
 
     # ------------------------------------ Primary-source level 2 (corpus-based)
     _run_corpus_primary_source_pass(article_rows)
