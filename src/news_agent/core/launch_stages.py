@@ -279,8 +279,26 @@ def extract_brand_model(
     after = title[found_pos + found_match_len:][:80]
     candidates = _MODEL_TOKEN_RE.findall(after)
 
+    # Brand-self-match guard: don't accept the brand name itself as a model
+    # token. Common case: "Lexus unveiled TZ" — short model "TZ" rejected by
+    # _is_valid_model_token, scan continues into the RU line where "Lexus"
+    # appears again, would extract ("Lexus", "Lexus"). Build a set of forms
+    # to compare against.
+    brand_forms_lower: set[str] = set()
+    for b in brands:
+        if b.brand == found_brand_canonical:
+            brand_forms_lower.add(b.brand.lower())
+            for a in (getattr(b, "aliases", []) or []):
+                brand_forms_lower.add(a.lower())
+            break
+
     model_tokens: list[str] = []
     for tok in candidates[:5]:
+        if tok.lower() in brand_forms_lower:
+            # Repeated brand mention (RU/EN multi-line title) — skip.
+            if model_tokens:
+                break
+            continue
         if _is_valid_model_token(tok):
             model_tokens.append(tok)
             if len(model_tokens) >= 3:

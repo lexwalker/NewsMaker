@@ -63,6 +63,10 @@ HEADER = [
     "Флаг проверки",         # N — orange when filled
     "Ручная проверка",       # O — editor input, never overwritten
     "Комментарий",           # P — editor input, never overwritten
+    # Phase-1 launch lifecycle (apr-2026): empty for legacy rows, populated
+    # going forward when batch_fetch_test detects a model-launch stage.
+    "Стадия запуска",        # Q
+    "Бренд + модель",        # R
 ]
 
 
@@ -342,6 +346,15 @@ def _clean_image_url(url: str) -> str:
     return url
 
 
+def _col_letter(n: int) -> str:
+    """1-based column index → A1-style letter (1→A, 17→Q, 27→AA)."""
+    out = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        out = chr(65 + r) + out
+    return out
+
+
 def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
     members_urls = "\n".join(m["url"] for m in c["members"])
     flag = _flag_review(c["canonical_title"])
@@ -362,6 +375,9 @@ def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
         flag,
         "",
         "",
+        # Phase-1 launch lifecycle (Q, R)
+        c.get("launch_stage", "") or "",
+        c.get("launch_brand_model", "") or "",
     ]
 
 
@@ -777,11 +793,15 @@ def main() -> int:
         _apply_full_formatting(svc, sheet_id)
         print(f"Created '{NEWS_TAB}' tab with header + formatting.")
     else:
-        # Make sure header row is present even if user accidentally cleared it
+        # Make sure header row is present even if user accidentally cleared it,
+        # AND that any newly-added trailing columns (e.g. Phase-1 stage cols
+        # added in apr-2026) are also in the header.
         cur = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range=f"'{NEWS_TAB}'!A1:P1"
+            spreadsheetId=SHEET_ID,
+            range=f"'{NEWS_TAB}'!A1:{_col_letter(len(HEADER))}1",
         ).execute().get("values", [[]])
-        if not cur or not cur[0]:
+        cur_row = cur[0] if cur else []
+        if not cur_row:
             svc.spreadsheets().values().update(
                 spreadsheetId=SHEET_ID, range=f"'{NEWS_TAB}'!A1",
                 valueInputOption="USER_ENTERED",
@@ -789,6 +809,20 @@ def main() -> int:
             ).execute()
             _apply_full_formatting(svc, sheet_id)
             print(f"Re-applied formatting to existing '{NEWS_TAB}' tab.")
+        elif len(cur_row) < len(HEADER):
+            # Fill in trailing header cells (e.g. Q + R added recently)
+            missing_start_col = len(cur_row) + 1
+            missing_headers = HEADER[len(cur_row):]
+            svc.spreadsheets().values().update(
+                spreadsheetId=SHEET_ID,
+                range=f"'{NEWS_TAB}'!{_col_letter(missing_start_col)}1",
+                valueInputOption="USER_ENTERED",
+                body={"values": [missing_headers]},
+            ).execute()
+            print(
+                f"Extended '{NEWS_TAB}' header with {len(missing_headers)} new "
+                f"column(s): {missing_headers}"
+            )
 
     # Pull existing state — URLs already in the sheet and per-row meta
     # for fuzzy anti-dup matching.

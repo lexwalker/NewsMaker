@@ -66,6 +66,9 @@ COL_PRIMARY_CONF = 11
 COL_NOTE = 12
 COL_CONFIDENCE = 13
 COL_VERDICT = 14
+# Phase-1 launch lifecycle (added in apr-2026)
+COL_LAUNCH_STAGE = 28  # AC
+COL_LAUNCH_BRAND_MODEL = 29  # AD
 
 SIMILARITY_THRESHOLD = 65  # rapidfuzz token_set_ratio (0-100). Lowered
                             # from 72 after v22: Avtotor JETOUR triple
@@ -312,8 +315,10 @@ def main() -> int:
     press_release_hosts = {h.lower() for h in cues.press_release_hosts}
 
     svc = _svc()
+    # Extended to AD to read launch stage (AC) + brand+model (AD) added
+    # in Phase 1 launch-lifecycle tracking.
     resp = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:Q"
+        spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:AD"
     ).execute()
     rows = resp.get("values", []) or []
     print(f"Loaded {len(rows)} rows from '{tab}'.")
@@ -334,6 +339,8 @@ def main() -> int:
         primary_dom = _get(r, COL_PRIMARY_DOM)
         primary_url = _get(r, COL_PRIMARY_URL)
         primary_conf = _get(r, COL_PRIMARY_CONF)
+        launch_stage = _get(r, COL_LAUNCH_STAGE)
+        launch_brand_model = _get(r, COL_LAUNCH_BRAND_MODEL)
         articles.append({
             "sheet_row": sheet_idx,
             "url": url,
@@ -347,6 +354,8 @@ def main() -> int:
             "published": published,
             "pub_dt": _parse_dt(published),
             "image_url": image_url,
+            "launch_stage": launch_stage,
+            "launch_brand_model": launch_brand_model,
             "primary_dom": primary_dom,
             "primary_url": primary_url,
             "primary_conf": primary_conf,
@@ -372,6 +381,20 @@ def main() -> int:
         canonical = grp_sorted[0]
         if len(grp) == 1:
             singletons += 1
+        # Phase-1 launch stage carry-through: pick the first non-empty
+        # stage / brand+model from any cluster member (canonical first,
+        # then the rest). Some sources extract stage/model better than
+        # others; one populated value across the cluster wins.
+        launch_stage = ""
+        launch_brand_model = ""
+        for a in grp_sorted:
+            if not launch_stage and a.get("launch_stage"):
+                launch_stage = a["launch_stage"]
+            if not launch_brand_model and a.get("launch_brand_model"):
+                launch_brand_model = a["launch_brand_model"]
+            if launch_stage and launch_brand_model:
+                break
+
         cluster = {
             "size": len(grp),
             "canonical_title": canonical["title"],
@@ -386,6 +409,8 @@ def main() -> int:
             "primary_domain": canonical["primary_dom"],
             "primary_url": canonical["primary_url"],
             "primary_conf": canonical["primary_conf"],
+            "launch_stage": launch_stage,
+            "launch_brand_model": launch_brand_model,
             "members": [
                 {
                     "url": a["url"],
