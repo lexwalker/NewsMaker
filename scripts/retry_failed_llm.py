@@ -79,14 +79,19 @@ def main() -> int:
         section = _get(r, COL_SECTION)
         title = _get(r, COL_TITLE)
         body = _get(r, COL_LEDE)
-        if verdict != "Точно новость":
+        # Three retry-eligible cases:
+        #  • verdict == "Точно новость" but classify/translate failed
+        #    (looks_failed below) — the v18-era hard-cap-mid-run scenario
+        #  • verdict == "Возможно новость" — heuristic-only graded, never
+        #    saw LLM relevance check (e.g. --no-llm prog)
+        #  • verdict == "Точно новость" without EN: prefix — same offline
+        #    case for higher-confidence rows
+        if verdict not in ("Точно новость", "Возможно новость"):
             continue
-        # Two failure modes: explicit "classify error" in note, OR no LLM
-        # translation (no "EN:" prefix in title) which implies translate
-        # didn't run either.
         looks_failed = (
             "classify error" in note
             or "translate error" in note
+            or "relevance error" in note
             or (not section)
             or ("EN:" not in title)
         )
@@ -98,24 +103,46 @@ def main() -> int:
 
     updates: list[dict] = []
     portal_country = "Russia"  # RU portal hard-coded for now
+    rejected_count = 0
     for idx, (sheet_row, r) in enumerate(targets, start=1):
         url = _get(r, COL_URL)
         title = _get(r, COL_TITLE)
+        verdict = _get(r, COL_VERDICT)
         # If the title was the original scraped string (no EN: prefix),
         # use it as the source headline. Otherwise drop the prefix
         # because LLM should translate from the original.
         clean_title = title
         if "EN:" in title:
-            # Keep the EN line as the source title
             for line in title.splitlines():
                 if line.strip().startswith("EN:"):
                     clean_title = line.split(":", 1)[1].strip()
                     break
         body = _get(r, COL_LEDE)
-        raw = RawArticle(
-            url=url, title=clean_title, body=body, html="",
-            source_name="", source_url="",
-        )
+
+        # Step 0 (only for 'Возможно новость' or 'relevance error'): run
+        # the LLM relevance gate first. If it rejects, mark the row as
+        # 'Отклонено LLM' and skip translate.
+        note = _get(r, COL_NOTE)
+        needs_relevance = verdict == "Возможно новость" or "relevance error" in note
+        if needs_relevance:
+            try:
+                rel, u0 = client.is_automotive(clean_title, body)
+                budget.record(u0)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [{idx}/{len(targets)}] RELEVANCE FAILED row {sheet_row}: {e!s:80}")
+                continue
+            if not rel.is_automotive_or_economy:
+                # Reject the row — don't translate / classify
+                updates.append({"range": f"'{tab}'!O{sheet_row}",
+                                "values": [["Отклонено LLM"]]})
+                updates.append({"range": f"'{tab}'!M{sheet_row}",
+                                "values": [["LLM: не авто/эконом (retry)"]]})
+                rejected_count += 1
+                print(f"  [{idx}/{len(targets)}] REJECTED row {sheet_row}: {clean_title[:60]!r}")
+                continue
+            # Otherwise: passed relevance, fall through to classify+translate.
+            # Promote 'Возможно новость' → 'Точно новость' below.
+
         try:
             cls, u1 = client.classify_section(
                 title=clean_title, body=body,
@@ -152,12 +179,17 @@ def main() -> int:
             f"section={cls.section} region={cls.region} cost=${cost} (run total ${spent:.4f})"
         )
         # Schedule cell updates: B (title), E (section), F (region),
-        # M (note — clear), Y (relevance — keep "Да" since classify ran)
+        # M (note — clear), O (verdict — promote 'Возможно' → 'Точно'),
+        # Z (relevance), AA (cost)
         updates.append({"range": f"'{tab}'!B{sheet_row}", "values": [[new_title]]})
         updates.append({"range": f"'{tab}'!E{sheet_row}", "values": [[cls.section]]})
         updates.append({"range": f"'{tab}'!F{sheet_row}", "values": [[cls.region]]})
-        updates.append({"range": f"'{tab}'!M{sheet_row}", "values": [[""]]})  # clear error
-        updates.append({"range": f"'{tab}'!Z{sheet_row}", "values": [[cost]]})
+        updates.append({"range": f"'{tab}'!M{sheet_row}", "values": [[""]]})
+        # Promote 'Возможно новость' → 'Точно новость' since LLM accepted
+        if verdict == "Возможно новость":
+            updates.append({"range": f"'{tab}'!O{sheet_row}",
+                            "values": [["Точно новость"]]})
+        updates.append({"range": f"'{tab}'!AA{sheet_row}", "values": [[cost]]})
 
     if updates:
         # Apply in chunks
@@ -167,7 +199,11 @@ def main() -> int:
                 spreadsheetId=SHEET_ID,
                 body={"valueInputOption": "USER_ENTERED", "data": updates[i:i + CHUNK]},
             ).execute()
-        print(f"\nApplied {len(updates) // 5} row updates.  Total run cost: ${budget.spent_usd:.4f}")
+        n_translated = len(targets) - rejected_count
+        print(
+            f"\nDone. {n_translated} translated, {rejected_count} rejected by LLM. "
+            f"Total cost: ${budget.spent_usd:.4f}"
+        )
     return 0
 
 
