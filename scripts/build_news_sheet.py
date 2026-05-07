@@ -455,6 +455,8 @@ def _apply_full_formatting(svc, sheet_id: int) -> None:
         13: 200,  # Флаг проверки
         14: 180,  # Ручная проверка
         15: 200,  # Комментарий
+        16: 160,  # Стадия запуска (Phase 1)
+        17: 180,  # Бренд + модель (Phase 1)
     }
     for col, px in widths.items():
         requests.append({
