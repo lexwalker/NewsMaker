@@ -343,6 +343,121 @@ def test_more_affordable_NOT_force_rejected() -> None:
     assert not blacklist_hit(raw, EMPTY_BL, brands=BRANDS).hit
 
 
+# =========================================================================
+# Round 4 — patterns from Лист «Новости (новые)» editor review (may-2026)
+# =========================================================================
+
+def test_corporate_vacation_rejected() -> None:
+    """Editor: «корпоративные отпуски не постим, только простои»."""
+    assert _force_rejects("AvtoVAZ enters scheduled corporate vacation")
+    assert _force_rejects("АвтоВАЗ ушёл в плановый отпуск")
+
+
+def test_per_model_price_drops_rejected() -> None:
+    """Editor row 129: «снижение цен помодельное не постим»."""
+    assert _force_rejects(
+        "Prices for two family SUVs from Belarus assembly dropped in Russia"
+    )
+    assert _force_rejects("Снизили цены на Haval F7 и Haval H6")
+
+
+def test_parallel_imports_collective_rejected() -> None:
+    """Editor row 21: «сборные статьи о parallel imports — нет»."""
+    assert _force_rejects("Parallel imports: new car models arrive in Russia")
+
+
+def test_main_rivals_named_rejected() -> None:
+    """Editor row 51: «Volga to compete: main rivals for new Russian cars named»."""
+    assert _force_rejects(
+        "Volga to compete with Camry and Monjaro: main rivals for new Russian cars named"
+    )
+
+
+def test_single_country_norway_rejected() -> None:
+    """Editor row 98: «Tesla Model Y tops EV sales in Norway 98%» — Норвегия."""
+    assert _force_rejects(
+        "Tesla Model Y tops EV sales in Norway as electric vehicles reach 98,6% market share"
+    )
+
+
+def test_korea_only_market_rejected() -> None:
+    """Editor row 85: «Kia overtook Hyundai as Korea's leading automaker»."""
+    assert _force_rejects("Kia overtook Hyundai as Korea's leading automaker")
+
+
+def test_uk_april_registration_rejected() -> None:
+    """Editor row 75: «OMODA & JAECOO registered 7,152 cars in the U.K. in April 2026»."""
+    assert _force_rejects(
+        "OMODA & JAECOO registered 7,152 cars in the U.K. in April 2026"
+    )
+
+
+def test_vintage_retrospective_rejected() -> None:
+    """Editor row 187: «Holden Commodore SSV: V-8 sport sedan Americans never got»."""
+    assert _force_rejects(
+        "Holden Commodore SSV: the V-8 sport sedan Americans never got"
+    )
+
+
+def test_automotive_history_rejected() -> None:
+    """Editor row 108: «Automotive history: luxury car segment»."""
+    assert _force_rejects("Automotive history: luxury car segment")
+
+
+def test_university_partnership_rejected() -> None:
+    """Editor row 76: «Toyota University of Michigan research partnership» — не нужно."""
+    assert _force_rejects(
+        "Toyota continues research partnership with University of Michigan"
+    )
+
+
+def test_battery_swaps_milestone_rejected() -> None:
+    """Editor row 254: «100 million battery swaps» — старый юбилей."""
+    assert _force_rejects("NIO achieved 100 million battery swaps")
+
+
+def test_tselikov_aggregator_sales_rejected() -> None:
+    """Editor: «русские источники для глобальных продаж — НЕТ, нужен оф»."""
+    assert _force_rejects("Tselikov: automakers' pricing policy in chaos")
+
+
+def test_carsharing_mass_sale_rejected() -> None:
+    """Editor row 96: Green Crab carsharing mass sale — это объявления, не наш формат."""
+    assert _force_rejects(
+        "Green Crab carsharing explains mass vehicle sale in Vladivostok"
+    )
+
+
+def test_tesla_employee_show_rejected() -> None:
+    """Editor row 91: «Tesla employee shows final Model X»."""
+    assert _force_rejects("Tesla employee shows final Model X produced as factory converts")
+
+
+def test_russian_cuban_project_rejected() -> None:
+    """Off-topic political: «Construction of joint Russian-Cuban project»."""
+    assert _force_rejects("Construction of joint Russian-Cuban project started in Havana")
+
+
+# Regression: legitimate news must still pass
+
+def test_round4_legit_news_not_rejected() -> None:
+    legit = [
+        # Patents on models — should pass to LLM (will route to Confirmed)
+        "AvtoVAZ patented new LADA model parts",
+        "FAW headquarters filed application to register Joyee brand rights in Russia",
+        # Engine tech — should pass to LLM (will route to Other)
+        "BMW M upgraded inline-six engine with pre-chamber ignition process",
+        # Russian regulation — should pass (Local)
+        "Russia approved new exam rules for driving license tests",
+        # Carsharing fleet expansion — should pass (Local)
+        "Yandex Drive expanded carsharing fleet in Moscow",
+        # Specific model launch — should pass
+        "GAC S9 SUV sales start in Russia in June 2026",
+    ]
+    for t in legit:
+        assert not _force_rejects(t), f"False-rejected legit headline: {t!r}"
+
+
 def test_legit_news_round2_not_rejected() -> None:
     """v22 baseline cases must still pass after round-2 changes."""
     legit = [

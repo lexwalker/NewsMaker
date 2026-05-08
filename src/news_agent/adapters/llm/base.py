@@ -186,6 +186,65 @@ These rules override generic intuition. Apply them in this exact order:
      reach you — be conservative.
 
 ============================================================
+ROUND 4 ADDITIONS (may-2026 review of Лист «Новости (новые)»)
+============================================================
+
+(13) Patents and trademark filings for car models / brands → "Confirmed".
+     Editor row 40 «АвтоВАЗ patented Niva» / row 102 «FAW filed Joyee
+     trademark in Russia» / row 55 «AvtoVAZ patented LADA model parts»:
+     these are formal registrations of upcoming products, treat as Facts.
+     EXCEPT: patents on platforms / generic technologies not tied to a
+     specific consumer model → "Other news" (e.g. row 32 «Hyundai
+     patented integrated battery platform»).
+
+(14) Engine technology updates without a new model → "Other news",
+     NOT Confirmed/Facts.
+     Editor row 6: «BMW M upgraded inline-six with pre-chamber ignition»
+     → должно быть Other, не Confirmed. The model line itself isn't new.
+
+(15) Russian traffic / exam / regulation news → "Local specifics".
+     Editor row 104: «Russia approved new exam rules for driving license»
+     → Local (RU regulation). General Russian regulatory decisions
+     affecting drivers belong here, NOT Other.
+
+(16) Single-foreign-country market reports → "Other news" with
+     confidence ≤ 0.3.
+     Examples editor rejected: row 75 «OMODA in U.K. April», row 85
+     «Kia overtook Hyundai in Korea», row 98 «Tesla Model Y tops EV
+     sales in Norway 98.6%». These cover a market we don't focus on.
+     Russia / China / global aggregates remain higher confidence.
+
+(17) Carsharing nuances:
+     • Fleet expansion in RF (Yandex Drive added X cars) → Local
+     • Bulk sale / dispute / cars going to private resale → reject
+       (row 96 Green Crab — это объявления, не наш формат)
+     • Foreign carsharing market data → Other low-conf
+
+(18) Russian source for global brand sales without official press:
+     If the article cites Russian aggregator (Avtostat, Tselikov, ППК)
+     for a GLOBAL brand's monthly sales (Great Wall, BYD, Haval) →
+     mark with note "нужен оф первоисточник от бренда" and keep
+     confidence ≤ 0.4. Editor row 70: «для продаж этой компании
+     никогда русские источники не ставили».
+
+(19) Per-model price drops → reject (set conf ≤ 0.15).
+     Editor row 129/133: «снижение цен помодельное не постим». Only
+     average prices across periods (month, quarter) for new TC or
+     by segment (SUV) are publishable.
+
+(20) Patents on platforms / generic technology (not specific model)
+     → "Other news", not Confirmed.
+     Editor row 32 «Hyundai patented integrated battery platform» —
+     это не запуск модели, это лицензия/патент.
+
+(21) Asroad.org (РОАД) primary source warning:
+     Editor: «С новостями с asroad.org нужно осторожно, в 99% это
+     перепост». If primary URL hosts on asroad.org, prefer alternative
+     primary source (abreview.ru, autonews.ru, autostat.ru, or the
+     brand's official site). Set primary_confidence to "low" if no
+     alternative is available.
+
+============================================================
 HARD NEVER-POST CATEGORIES (set confidence ≤ 0.15)
 ============================================================
 - Tips / советы / "5 ошибок" / "TOP-10 best" / how-to guides

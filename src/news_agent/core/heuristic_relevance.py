@@ -814,6 +814,118 @@ _FORCE_REJECT_PHRASES = (
 
     # ---------- Mortgage / loans / generic financial (not auto loans) ----------
     "mortgage rate", "ипотечная ставка",  # not auto-loan
+
+    # ============================================================
+    # ROUND 4 — patterns from Лист «Новости (новые)» editor review (may-2026)
+    # ============================================================
+
+    # ---------- Corporate vacation / production schedule ----------
+    # Editor: «не постим корпоративные отпуски, только простои публикуем».
+    # 'Простой' (production halt) IS news; scheduled vacation is not.
+    "scheduled corporate vacation",
+    "корпоративный отпуск",
+    "корпоративные отпуска",
+    "плановый отпуск",
+    "ушли в плановый",
+
+    # ---------- Per-model price changes (editor: «помодельные снижения не постим») ----------
+    # Editor row 129/133: «мы снижение цен помодельное не постим. Интересует
+    # только средние цены за период (месяц/квартал)».
+    "prices dropped",
+    "prices for two",
+    "prices for three",
+    "snizhenie tsen na ... model",  # transliterated form, just in case
+    "price adjusted in russia",
+    "цены снижены на",
+    "снизили цены на",
+    "снизил цены на",
+    "снизила цены на",
+    "цены опустили",
+    "цены упали на модел",  # avoid matching general car-market price drops
+
+    # ---------- Parallel-imports collective stories ----------
+    # Editor row 21: «Параллельный импорт сборные статьи — НЕТ. Только когда
+    # статья посвящена ввозу конкретной модели по официальным каналам».
+    "parallel imports:",
+    "parallel imports list",
+    "параллельный импорт:",
+    "по параллельному импорту появятся",
+    "ввезут по параллельному",
+
+    # ---------- Single-country foreign market reports ----------
+    # Editor: «по Норвегии/Британии/только Кореи статистику не постим».
+    # These phrases trigger only when title is about a single foreign market.
+    "in norway as",
+    "in norway reach",
+    "tops ev sales in norway",
+    "ev market share in norway",
+    "registered in the u.k. in",
+    "in the u.k. in april",  # OMODA UK April registration — caught
+    "in the u.k. in march",
+    "in the u.k. in may",
+    "korea's leading automaker",  # Kia overtook Hyundai in Korea
+
+    # ---------- Series-history / vintage retrospectives ----------
+    # Editor row 187: «Holden Commodore SSV: V-8 sport sedan» — нам не нужно.
+    # Editor row 16: «Lamborghini Miura P400 Jota: history of the most powerful».
+    # Pattern: brand + model + colon + descriptive past tense
+    "americans never got",
+    "history of the most powerful",
+    "the v-8 sport sedan",
+    "v-8 sport sedan",
+    "history of the segment",
+    "automotive history:",  # editor row 108
+
+    # ---------- Main-rivals collective sentinel ----------
+    # Editor row 51: «Volga to compete with Camry: main rivals named — НЕТ».
+    "main rivals named",
+    "main rivals for new",
+    "rivals for new russian",
+    "konkurenty dlya novyh",  # transliterated
+
+    # ---------- Russian-source sales requires official confirmation ----------
+    # Editor: «Продажи по брендам постим только если это пресс-релиз бренда».
+    # Statitstics from Tselikov / PPK alone — not enough.
+    "tselikov: ", "tselikov,",
+    "целиков: ", "целиков,",
+    "ппк сообщает", "ппк назвал", "ппк опубликовал",
+
+    # ---------- Academic / research partnerships without auto deal ----------
+    # Editor row 76: «Toyota University of Michigan partnership» — не нужно
+    # Editor row 42: «МГУ AI faculty» — не наша
+    "research institute",
+    "research partnership with university",
+    "with university of michigan",
+    "moscow state university",
+    "московский государственный университет",
+    "мгу запустил",
+    "мгу открыл",
+
+    # ---------- Anniversary swap-counts / reach-N-million milestones ----------
+    # Editor row 254: «100 million battery swaps» — старый юбилей, не интересно
+    "battery swaps", "обменов батарей",
+    "achieved 100 million",
+    "достигли 100 миллионов",
+
+    # ---------- Carsharing dispute / mass-sale (editor row 96 Green Crab) ----------
+    # Different from "fleet expansion" which IS Local. This is dispute/disposal.
+    "carsharing explains mass",
+    "массовую распродажу",
+    "carsharing mass sale",
+
+    # ---------- Russia-Cuba / unrelated international projects ----------
+    # Editor row "Construction of joint Russian-Cuban project" — political,
+    # not auto.
+    "russian-cuban project",
+    "российско-кубинск",
+
+    # ---------- Tesla employee / one-of-one stories ----------
+    # Editor row 91: «Tesla employee shows final Model X» — нет
+    # Editor row 184: «BMW 7 Series hides button» — нет
+    "tesla employee shows",
+    "final model x produced",
+    "hides button for",
+    "скрыли кнопку",
 )
 
 
