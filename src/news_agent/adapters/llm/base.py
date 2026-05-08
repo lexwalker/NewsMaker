@@ -762,8 +762,19 @@ Return ONLY structured JSON. Two-stage decision:
   1. should_publish: True/False — is this a publishable item?
   2. If publish=True: section (one of the 9 listed), region (Local/Global),
      confidence (0..1).
-Always include a one-sentence "reason" explaining your call (visible to
-the editor for rejected rows).
+Always include a one-sentence "reason" explaining your call.
+
+REASON LANGUAGE: Write the reason in RUSSIAN — the editor reads it directly
+in the sheet column. Examples of acceptable Russian phrasing:
+  • "Запуск модели от бренда с конкретными ценами"
+  • "Финрезультаты OEM (квартальные)"
+  • "Желтопрессный заголовок «Россияне нашли способ»"
+  • "Российский агрегатор без официального источника от бренда"
+  • "Single-country market report (только Норвегия)"
+  • "Мотоспорт — категория исключена"
+  • "Дзен-листикл: «5 лучших...»"
+Length: 5-15 words, factual, no padding. The editor scans dozens of
+rows — terse beats verbose.
 
 ============================================================
 WHAT WE PUBLISH (use the listed section names exactly)
@@ -953,64 +964,64 @@ WORKED EXAMPLES (real cases from editor review, may-2026)
 
 src: "В Geely запустили продажи Galaxy M7"
 → {publish: true, section: "Confirmed", region: "Global",
-   confidence: 0.92, reason: "Brand-confirmed model sales launch"}
+   confidence: 0.92, reason: "Запуск продаж модели от бренда"}
 
 src: "Прогноз продаж новых легковых автомобилей в России от Автостата"
 → {publish: true, section: "Local specifics", region: "Local",
-   confidence: 0.88, reason: "RU market data (Avtostat)"}
+   confidence: 0.88, reason: "Данные РФ-рынка от Автостата"}
 
 src: "Nissan reported Q1 financial results for 2026"
 → {publish: true, section: "Other news", region: "Global",
-   confidence: 0.9, reason: "OEM financial results"}
+   confidence: 0.9, reason: "Финрезультаты OEM (квартальные)"}
 
 src: "GAC M8 minivan entered service with Moscow firefighters"
 → {publish: true, section: "LCV news", region: "Local",
-   confidence: 0.85, reason: "Body-type minivan = LCV"}
+   confidence: 0.85, reason: "Тип кузова — минивэн (LCV)"}
 
 src: "Lamborghini opened new showroom in Katowice"
 → {publish: true, section: "Other news", region: "Global",
-   confidence: 0.85, reason: "Foreign showroom = Other (not Dealer)"}
+   confidence: 0.85, reason: "Открытие шоурума за рубежом → Другие"}
 
 src: "Hongqi hybrid SUV may arrive in Russia (per company press release)"
 → {publish: true, section: "Confirmed", region: "Local",
-   confidence: 0.7, reason: "Brand-sourced statement, not rumor"}
+   confidence: 0.7, reason: "Заявление бренда, не слух"}
 
 src: "Tesla Roadster reportedly retains manual controls"
 → {publish: true, section: "Rumors", region: "Global",
-   confidence: 0.6, reason: "Speculation without brand statement"}
+   confidence: 0.6, reason: "Спекуляция без заявления бренда"}
 
 src: "Volkswagen Unyx 08 debut at Beijing Motor Show"
 → {publish: true, section: "Confirmed", region: "Global",
-   confidence: 0.85, reason: "Single-model debut = Facts, not Motorshow"}
+   confidence: 0.85, reason: "Дебют одной модели → Факты, не Выставки"}
 
 src: "14 bright debuts at Beijing Auto Show 2026"
-→ {publish: false, confidence: 0.9, reason: "Editorial digest /
-   listicle of multiple debuts"}
+→ {publish: false, confidence: 0.9,
+   reason: "Дзен-листикл: 14 моделей одной статьёй"}
 
 src: "AvtoVAZ enters scheduled corporate vacation"
-→ {publish: false, confidence: 0.9, reason: "Corporate vacation —
-   editor wants only production halts (простой), not vacations"}
+→ {publish: false, confidence: 0.9,
+   reason: "Корпоративный отпуск — редактор хочет только простои"}
 
 src: "Russians found way to save up to 40% on car purchase"
-→ {publish: false, confidence: 0.92, reason: "Yellow-press
-   'россияне нашли способ' framing"}
+→ {publish: false, confidence: 0.92,
+   reason: "Желтопрессный заголовок «Россияне нашли способ»"}
 
 src: "Tselikov: automakers' pricing policy in chaos"
-→ {publish: false, confidence: 0.85, reason: "Russian aggregator
-   without official brand source"}
+→ {publish: false, confidence: 0.85,
+   reason: "Русский агрегатор без официального источника от бренда"}
 
 src: "Toyota continues research partnership with University of Michigan"
-→ {publish: false, confidence: 0.9, reason: "Academic partnership
-   without auto product deal"}
+→ {publish: false, confidence: 0.9,
+   reason: "Академическое партнёрство без авто-продукта"}
 
 src: "AvtoVAZ patented LADA model parts"
 → {publish: true, section: "Confirmed", region: "Local",
-   confidence: 0.85, reason: "Brand patent on specific model parts"}
+   confidence: 0.85, reason: "Патент бренда на конкретную модель"}
 
 src: "Hyundai patented integrated battery platform for body-on-frame EV"
 → {publish: true, section: "Other news", region: "Global",
-   confidence: 0.7, reason: "Platform patent (not specific model) →
-   Other, not Confirmed"}
+   confidence: 0.7,
+   reason: "Патент на платформу (не модель) → Другие"}
 
 ============================================================
 DECISION RULE

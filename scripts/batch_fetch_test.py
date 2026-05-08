@@ -1241,6 +1241,7 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             row.llm_confidence = cached.get("llm_confidence", "")
             row.llm_title_en = cached.get("llm_title_en", "")
             row.llm_title_ru = cached.get("llm_title_ru", "")
+            row.llm_reason = cached.get("llm_reason", "")
             # Always mark every cache restoration with "из кэша" so the
             # editor can see at a glance that the row wasn't re-evaluated
             # this run. Cached rows still carry the full verdict / section
@@ -1651,6 +1652,7 @@ def main(argv: list[str] | None = None) -> int:
                 "llm_title_en": row.llm_title_en[:300],
                 "llm_title_ru": row.llm_title_ru[:300],
                 "llm_note": note_out,
+                "llm_reason": (row.llm_reason or "")[:300],
                 "primary_url": row.primary_url,
                 "primary_domain": row.primary_domain,
                 "primary_confidence": row.primary_confidence,
