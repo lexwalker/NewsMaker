@@ -347,10 +347,11 @@ def main() -> int:
     press_release_hosts = {h.lower() for h in cues.press_release_hosts}
 
     svc = _svc()
-    # Extended to AD to read launch stage (AC) + brand+model (AD) added
-    # in Phase 1 launch-lifecycle tracking.
+    # Extended to AE to read:
+    #   AC = launch stage, AD = brand+model (Phase 1 lifecycle)
+    #   AE = LLM reason (may-2026 editorial review)
     resp = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:AD"
+        spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:AE"
     ).execute()
     rows = resp.get("values", []) or []
     print(f"Loaded {len(rows)} rows from '{tab}'.")
