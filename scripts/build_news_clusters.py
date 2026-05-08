@@ -69,6 +69,8 @@ COL_VERDICT = 14
 # Phase-1 launch lifecycle (added in apr-2026)
 COL_LAUNCH_STAGE = 28  # AC
 COL_LAUNCH_BRAND_MODEL = 29  # AD
+# LLM editorial review reason (added may-2026)
+COL_LLM_REASON = 30  # AE
 
 SIMILARITY_THRESHOLD = 65  # rapidfuzz token_set_ratio (0-100). Lowered
                             # from 72 after v22: Avtotor JETOUR triple
@@ -341,6 +343,17 @@ def main() -> int:
         primary_conf = _get(r, COL_PRIMARY_CONF)
         launch_stage = _get(r, COL_LAUNCH_STAGE)
         launch_brand_model = _get(r, COL_LAUNCH_BRAND_MODEL)
+        # LLM reason: prefer the dedicated col AE; fall back to extracting
+        # "reason: ..." substring from llm_note (col M) for legacy v30 rows
+        # that pre-date the AE column.
+        llm_reason = _get(r, COL_LLM_REASON)
+        if not llm_reason:
+            note = _get(r, COL_NOTE)
+            if "reason:" in note:
+                # Extract "reason: <text>" up to next " | " divider or end.
+                start = note.find("reason:") + len("reason:")
+                end = note.find(" | ", start)
+                llm_reason = note[start:end if end > 0 else None].strip()
         articles.append({
             "sheet_row": sheet_idx,
             "url": url,
@@ -356,6 +369,7 @@ def main() -> int:
             "image_url": image_url,
             "launch_stage": launch_stage,
             "launch_brand_model": launch_brand_model,
+            "llm_reason": llm_reason,
             "primary_dom": primary_dom,
             "primary_url": primary_url,
             "primary_conf": primary_conf,
@@ -387,12 +401,15 @@ def main() -> int:
         # others; one populated value across the cluster wins.
         launch_stage = ""
         launch_brand_model = ""
+        llm_reason = ""
         for a in grp_sorted:
             if not launch_stage and a.get("launch_stage"):
                 launch_stage = a["launch_stage"]
             if not launch_brand_model and a.get("launch_brand_model"):
                 launch_brand_model = a["launch_brand_model"]
-            if launch_stage and launch_brand_model:
+            if not llm_reason and a.get("llm_reason"):
+                llm_reason = a["llm_reason"]
+            if launch_stage and launch_brand_model and llm_reason:
                 break
 
         cluster = {
@@ -411,6 +428,7 @@ def main() -> int:
             "primary_conf": canonical["primary_conf"],
             "launch_stage": launch_stage,
             "launch_brand_model": launch_brand_model,
+            "llm_reason": llm_reason,
             "members": [
                 {
                     "url": a["url"],

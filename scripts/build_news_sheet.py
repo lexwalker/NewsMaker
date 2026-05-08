@@ -67,6 +67,10 @@ HEADER = [
     # going forward when batch_fetch_test detects a model-launch stage.
     "Стадия запуска",        # Q
     "Бренд + модель",        # R
+    # LLM editorial reason (may-2026): the bot's one-line explanation of
+    # why this row was accepted (or rejected — visible only on rejected
+    # rows in ТЕСТ статьи). Editor sees the rationale at a glance.
+    "Обоснование LLM",       # S
 ]
 
 
@@ -378,6 +382,8 @@ def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
         # Phase-1 launch lifecycle (Q, R)
         c.get("launch_stage", "") or "",
         c.get("launch_brand_model", "") or "",
+        # LLM editorial reason (S)
+        c.get("llm_reason", "") or "",
     ]
 
 
@@ -457,6 +463,7 @@ def _apply_full_formatting(svc, sheet_id: int) -> None:
         15: 200,  # Комментарий
         16: 160,  # Стадия запуска (Phase 1)
         17: 180,  # Бренд + модель (Phase 1)
+        18: 280,  # Обоснование LLM (may-2026)
     }
     for col, px in widths.items():
         requests.append({

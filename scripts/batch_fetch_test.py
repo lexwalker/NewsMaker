@@ -204,6 +204,9 @@ class ArticleRow:
     # Phase-1 model-launch lifecycle tracking (heuristic, no LLM)
     launch_stages: list[str] = field(default_factory=list)
     launch_brand_model: str = ""
+    # LLM editorial review: short reason for accept/reject. Visible to
+    # editor in dedicated sheet column so they understand what the bot saw.
+    llm_reason: str = ""
 
 
 @dataclass
@@ -360,6 +363,8 @@ ARTICLES_HEADER = [
     # --- Phase-1 launch lifecycle (visible after Block 4) ---------------
     "Стадия запуска",                  # AC
     "Бренд + модель",                  # AD
+    # --- LLM editorial review reason ------------------------------------
+    "Обоснование LLM",                 # AE
 ]
 
 # Portal → country label (visible in the sheet) + numeric code (kept for
@@ -482,6 +487,8 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
                 # Phase-1 lifecycle metadata
                 ", ".join(r.launch_stages),
                 r.launch_brand_model,
+                # LLM editorial reason
+                r.llm_reason,
             ]
         )
     svc.spreadsheets().values().update(
@@ -818,6 +825,10 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 continue
 
             r.llm_relevance = "Да" if review.should_publish else "Нет"
+            # Always capture the editor-facing reason in a dedicated field;
+            # this populates the new "Обоснование LLM" sheet column so the
+            # editor can see exactly why the bot accepted or rejected.
+            r.llm_reason = review.reason[:300] if review.reason else ""
 
             if not review.should_publish:
                 # LLM rejected. Mark verdict + reason for editor.
