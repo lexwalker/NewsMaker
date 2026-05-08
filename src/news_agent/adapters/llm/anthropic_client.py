@@ -13,17 +13,21 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from news_agent.adapters.llm.base import (
     CLASSIFY_SCHEMA,
     CLASSIFY_SYSTEM,
+    EDITORIAL_REVIEW_SCHEMA,
     RELEVANCE_SCHEMA,
     RELEVANCE_SYSTEM,
     TRANSLATE_SCHEMA,
     TRANSLATE_SYSTEM,
     build_classify_system,
     build_classify_user,
+    build_editorial_review_system,
+    build_editorial_review_user,
     prompt_hash,
 )
 from news_agent.adapters.llm.pricing import estimate_cost_with_cache
 from news_agent.core.models import (
     Classification,
+    EditorialReview,
     FewShotExample,
     LLMUsage,
     RelevanceCheck,
@@ -98,6 +102,37 @@ class AnthropicLLMClient:
             system=system, user=user, tool=tool, max_tokens=500
         )
         return Classification.model_validate(data), usage
+
+    def editorial_review(
+        self,
+        *,
+        title: str,
+        body: str,
+        sections: list[SectionDefinition],
+        portal_country: str,
+    ) -> tuple[EditorialReview, LLMUsage]:
+        """Consolidated editorial decision: replaces is_automotive +
+        classify_section in a single call. Returns publish/skip + section
+        + region + confidence + reason, encoding the editor's mental model
+        from 4 rounds of feedback (300+ rules) in one prompt.
+        """
+        tool = _tool(
+            "record_editorial_review",
+            "Record the editor's verdict: should we publish this? "
+            "If yes, in which section and region.",
+            EDITORIAL_REVIEW_SCHEMA,
+        )
+        system = build_editorial_review_system(sections, portal_country)
+        user = build_editorial_review_user(title, body)
+        data, usage = self._tool_call(
+            system=system, user=user, tool=tool, max_tokens=600
+        )
+        # Tolerate missing optional fields when should_publish=False
+        if not data.get("should_publish"):
+            data.setdefault("section", "")
+            data.setdefault("region", None)
+            data.setdefault("confidence", 0.5)
+        return EditorialReview.model_validate(data), usage
 
     def translate_title(
         self, *, title: str, source_language_hint: str | None

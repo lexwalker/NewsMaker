@@ -12,16 +12,20 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from news_agent.adapters.llm.base import (
     CLASSIFY_SCHEMA,
     CLASSIFY_SYSTEM,
+    EDITORIAL_REVIEW_SCHEMA,
     RELEVANCE_SCHEMA,
     RELEVANCE_SYSTEM,
     TRANSLATE_SCHEMA,
     TRANSLATE_SYSTEM,
     build_classify_user_prompt,
+    build_editorial_review_system,
+    build_editorial_review_user,
     prompt_hash,
 )
 from news_agent.adapters.llm.pricing import estimate_cost_with_cache as estimate_cost
 from news_agent.core.models import (
     Classification,
+    EditorialReview,
     FewShotExample,
     LLMUsage,
     RelevanceCheck,
@@ -90,6 +94,31 @@ class OpenAILLMClient:
             max_tokens=500,
         )
         return Classification.model_validate(data), usage
+
+    def editorial_review(
+        self,
+        *,
+        title: str,
+        body: str,
+        sections: list[SectionDefinition],
+        portal_country: str,
+    ) -> tuple[EditorialReview, LLMUsage]:
+        """Consolidated editorial decision (replaces is_automotive +
+        classify_section)."""
+        system = build_editorial_review_system(sections, portal_country)
+        user = build_editorial_review_user(title, body)
+        data, usage = self._json_call(
+            system=system,
+            user=user,
+            schema_name="editorial_review",
+            schema=EDITORIAL_REVIEW_SCHEMA,
+            max_tokens=600,
+        )
+        if not data.get("should_publish"):
+            data.setdefault("section", "")
+            data.setdefault("region", None)
+            data.setdefault("confidence", 0.5)
+        return EditorialReview.model_validate(data), usage
 
     def translate_title(
         self, *, title: str, source_language_hint: str | None

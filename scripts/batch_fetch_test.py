@@ -754,9 +754,12 @@ def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
         _fetch_and_score(client, link, result, source_idx, idx, article_rows)
 
 
-def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
-    """For every certain/possible row: run LLM relevance (possible only), then
-    classify_section + translate_title. Populates llm_* fields in-place.
+def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> None:
+    """For every certain/possible row: run LLM editorial review + translate.
+
+    By default uses the consolidated `editorial_review` call (replaces
+    is_automotive + classify_section in one). Pass ``use_legacy=True`` to
+    fall back to the old 2-call sequence.
 
     Stops early on budget exhaustion (raises BudgetExceeded)."""
     settings = get_settings()
@@ -787,77 +790,128 @@ def _run_llm_pass(article_rows: list[ArticleRow]) -> None:
         f"certain={sum(1 for r in candidates if r.verdict == 'Точно новость')}, "
         f"possible={sum(1 for r in candidates if r.verdict == 'Возможно новость')})"
     )
-    print(f"  provider: {client.provider_name}  model: {client.model}  cap: ${LLM_BUDGET_USD}")
+    mode = "legacy (relevance + classify)" if use_legacy else "editorial_review (consolidated)"
+    print(f"  provider: {client.provider_name}  model: {client.model}  mode: {mode}  cap: ${LLM_BUDGET_USD}")
 
     country = "Russia"  # portal country for now; будет параметром позже
     section_names = {s.name for s in sections}
 
     for i, r in enumerate(candidates, start=1):
-        # 1. LLM relevance check — runs for BOTH 'certain' and 'possible'
-        # rows now. The heuristic is good but produces ~10-15% of false
-        # positives (Samsung TVs, government news mentioning transport,
-        # corporate ESG statements) that LLM catches reliably. The cost
-        # is ~$0.001 per article, ~$0.05 per run — worth the precision.
-        try:
-            rel, u = client.is_automotive(r.title, r.body_excerpt or r.title)
-            budget.record(u)
-            r.llm_relevance = "Да" if rel.is_automotive_or_economy else "Нет"
-            r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
-        except Exception as e:  # noqa: BLE001
-            r.llm_note = f"relevance error: {e!s:100}"
-            continue
-        if not rel.is_automotive_or_economy:
-            # LLM rejected — even if heuristic was certain, trust LLM.
-            r.llm_note = (r.llm_note + " | " if r.llm_note else "") + "LLM: не авто/эконом"
-            r.verdict = "Отклонено LLM"
-            print(f"  [{i}/{len(candidates)}] {r.title[:60]!r} → relevance=Нет (отсечено)")
-            continue
-
-        # 2. Classify section — but first try the hard heuristic pre-classifier.
-        # If a high-confidence rule fires (e.g. body-type word "pickup" in the
-        # title → LCV news), skip the LLM section call entirely. Saves
-        # ~$0.005/row and is much more consistent than the LLM, which tends
-        # to forget the editor's specific routing rules across runs.
-        pre = heuristic_section(
-            title=r.title,
-            body_excerpt=r.body_excerpt,
-            domain=domain_of(r.article_url),
-        )
-        if pre is not None:
-            r.llm_section = pre.section if pre.section in section_names else "Other news"
-            r.llm_region = pre.region
-            r.llm_confidence = round(pre.confidence, 2)
-            r.llm_note = (
-                (r.llm_note + " | " if r.llm_note else "")
-                + f"эвристика: {pre.reason}"
-            )
-            if r.llm_section == "Test-drive":
-                r.llm_note += " | требует ручной проверки — Test-drive"
-            print(
-                f"  [{i}/{len(candidates)}]  HEUR  {r.llm_section:22}  "
-                f"{r.llm_region:6}  conf={r.llm_confidence}  ({pre.reason})"
-            )
-        else:
+        # ============================================================
+        # Stage 1+2: editorial review (NEW path — consolidated call)
+        # OR legacy is_automotive + classify_section (old path)
+        # ============================================================
+        if not use_legacy:
+            # NEW PATH: one consolidated LLM call returning publish/skip
+            # + section + region + confidence + reason.
             try:
-                cls, u = client.classify_section(
+                review, u = client.editorial_review(
                     title=r.title,
                     body=r.body_excerpt or r.title,
                     sections=sections,
-                    few_shots=[],
                     portal_country=country,
                 )
                 budget.record(u)
-                r.llm_section = cls.section if cls.section in section_names else "Other news"
-                r.llm_region = cls.region
-                r.llm_confidence = round(cls.confidence, 2)
                 r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
-                if r.llm_section == "Test-drive":
-                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                        "требует ручной проверки — Test-drive"
             except Exception as e:  # noqa: BLE001
-                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                    f"classify error: {e!s:100}"
+                r.llm_note = f"editorial_review error: {e!s:100}"
                 continue
+
+            r.llm_relevance = "Да" if review.should_publish else "Нет"
+
+            if not review.should_publish:
+                # LLM rejected. Mark verdict + reason for editor.
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    f"LLM: {review.reason[:120]}"
+                r.verdict = "Отклонено LLM"
+                print(
+                    f"  [{i}/{len(candidates)}] REJECT  conf={review.confidence:.2f}  "
+                    f"{review.reason[:60]}  |  {r.title[:50]}"
+                )
+                continue
+
+            # Accepted — populate section/region. Apply heuristic pre-classifier
+            # to override LLM if heuristic is confident (e.g. body-type pickup
+            # → LCV always wins). This is a safety net: heuristic catches
+            # systematic LLM mistakes (e.g. body-type confusion).
+            pre = heuristic_section(
+                title=r.title,
+                body_excerpt=r.body_excerpt,
+                domain=domain_of(r.article_url),
+            )
+            if pre is not None:
+                r.llm_section = pre.section if pre.section in section_names else "Other news"
+                r.llm_region = pre.region
+                r.llm_confidence = round(pre.confidence, 2)
+                r.llm_note = (
+                    (r.llm_note + " | " if r.llm_note else "")
+                    + f"эвристика: {pre.reason} (LLM said {review.section})"
+                )
+            else:
+                r.llm_section = (
+                    review.section if review.section in section_names else "Other news"
+                )
+                r.llm_region = review.region or "Global"
+                r.llm_confidence = round(review.confidence, 2)
+                if review.reason:
+                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                        f"reason: {review.reason[:100]}"
+
+            if r.llm_section == "Test-drive":
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    "требует ручной проверки — Test-drive"
+        else:
+            # LEGACY PATH: 2 separate LLM calls (relevance + classify)
+            try:
+                rel, u = client.is_automotive(r.title, r.body_excerpt or r.title)
+                budget.record(u)
+                r.llm_relevance = "Да" if rel.is_automotive_or_economy else "Нет"
+                r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+            except Exception as e:  # noqa: BLE001
+                r.llm_note = f"relevance error: {e!s:100}"
+                continue
+            if not rel.is_automotive_or_economy:
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + "LLM: не авто/эконом"
+                r.verdict = "Отклонено LLM"
+                print(f"  [{i}/{len(candidates)}] {r.title[:60]!r} → relevance=Нет (отсечено)")
+                continue
+
+            pre = heuristic_section(
+                title=r.title,
+                body_excerpt=r.body_excerpt,
+                domain=domain_of(r.article_url),
+            )
+            if pre is not None:
+                r.llm_section = pre.section if pre.section in section_names else "Other news"
+                r.llm_region = pre.region
+                r.llm_confidence = round(pre.confidence, 2)
+                r.llm_note = (
+                    (r.llm_note + " | " if r.llm_note else "")
+                    + f"эвристика: {pre.reason}"
+                )
+                if r.llm_section == "Test-drive":
+                    r.llm_note += " | требует ручной проверки — Test-drive"
+            else:
+                try:
+                    cls, u = client.classify_section(
+                        title=r.title,
+                        body=r.body_excerpt or r.title,
+                        sections=sections,
+                        few_shots=[],
+                        portal_country=country,
+                    )
+                    budget.record(u)
+                    r.llm_section = cls.section if cls.section in section_names else "Other news"
+                    r.llm_region = cls.region
+                    r.llm_confidence = round(cls.confidence, 2)
+                    r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+                    if r.llm_section == "Test-drive":
+                        r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                            "требует ручной проверки — Test-drive"
+                except Exception as e:  # noqa: BLE001
+                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                        f"classify error: {e!s:100}"
+                    continue
 
         # 3. Translate title
         try:
@@ -1330,6 +1384,13 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
              "heuristic, but classify/translate are skipped. After API is "
              "restored, run retry_failed_llm.py on the resulting tab.",
     )
+    p.add_argument(
+        "--legacy-llm", action="store_true",
+        help="Use the old 2-call LLM sequence (is_automotive + "
+             "classify_section) instead of the consolidated editorial_review. "
+             "Default: editorial_review. Useful for A/B comparison or "
+             "rollback if the new prompt produces worse results.",
+    )
     return p.parse_args(argv)
 
 
@@ -1525,7 +1586,7 @@ def main(argv: list[str] | None = None) -> int:
     # ------------------------------------------ LLM pass (certain + possible)
     if ENABLE_LLM and not args.no_llm:
         try:
-            _run_llm_pass(article_rows)
+            _run_llm_pass(article_rows, use_legacy=args.legacy_llm)
         except BudgetExceeded as e:
             print(f"\n!!! Бюджет LLM превышен: {e}", file=sys.stderr)
     elif args.no_llm:

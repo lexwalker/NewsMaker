@@ -66,6 +66,25 @@ class RelevanceCheck(BaseModel):
     reason: str = ""
 
 
+class EditorialReview(BaseModel):
+    """Consolidated LLM editorial decision — replaces is_automotive +
+    classify_section in one call.
+
+    Editor's mental model encoded in a single prompt:
+      • should_publish: True iff this article would survive editor review
+      • section: one of the 9 canonical sections (only meaningful if publish=True)
+      • region: Local | Global (only meaningful if publish=True)
+      • confidence: 0..1, used as a soft-flag threshold
+      • reason: one short sentence — visible to editor for rejected rows
+    """
+
+    should_publish: bool
+    section: str = ""
+    region: Region | None = None
+    confidence: float = Field(ge=0.0, le=1.0, default=0.0)
+    reason: str = ""
+
+
 class TitlePair(BaseModel):
     """English + Russian title pair with source-language code."""
 
@@ -186,6 +205,7 @@ __all__ = [
     "Candidate",
     "Classification",
     "ClassifiedNews",
+    "EditorialReview",
     "FewShotExample",
     "HttpUrl",
     "LLMUsage",
