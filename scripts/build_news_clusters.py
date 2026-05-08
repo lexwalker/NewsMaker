@@ -112,11 +112,26 @@ _BRANDS_LOWER: list[str] = []
 
 
 def _brand_overlap(a: str, b: str) -> bool:
-    """Return True if both titles mention at least one of the same brands."""
+    """Cluster-eligibility check based on brand mentions.
+
+    Decision matrix:
+      • Both titles share at least one brand → eligible (same story).
+      • Both titles have NO brand → eligible — defer to fuzzy + proper-noun
+        guards. Catches market-stat articles like "Sales of global brand
+        cars increased 2,4x" vs "Global brand sales increased 2.4-fold"
+        (same news, no specific brand named).
+      • One has a brand, the other doesn't → NOT eligible (likely
+        different stories — one talks about a specific brand, the other
+        about a market in general).
+    """
     a_brands = {br for br in _BRANDS_LOWER if br in a}
-    if not a_brands:
-        return False
     b_brands = {br for br in _BRANDS_LOWER if br in b}
+    if not a_brands and not b_brands:
+        # No brand mentions on either side — defer to fuzzy + proper-noun.
+        return True
+    if not a_brands or not b_brands:
+        # Asymmetric: one has brand, one doesn't → different stories.
+        return False
     return bool(a_brands & b_brands)
 
 
@@ -279,6 +294,21 @@ def cluster_articles(
                 and _proper_noun_overlap(ti, tj) < PROPER_NOUN_OVERLAP_MIN
             ):
                 continue
+            # Stricter no-brand guard: when neither title names a brand,
+            # the fuzzy/proper-noun signals are weaker (generic words like
+            # "продажи", "автомобили", "Россия" pass even between unrelated
+            # market-stat stories). Require fuzz ≥ 80 AND proper-noun ≥ 4
+            # to prevent gluing different stories like "TOP used luxury
+            # cars in Russia" + "Sales of global brand cars increased 2,4x"
+            # which share enough generic tokens to cross 65 + 2.
+            if not primary_match:
+                ai_brands = {br for br in _BRANDS_LOWER if br in ti}
+                bj_brands = {br for br in _BRANDS_LOWER if br in tj}
+                if not ai_brands and not bj_brands:
+                    if sim < 80:
+                        continue
+                    if _proper_noun_overlap(ti, tj) < 4:
+                        continue
             # Time window guard (only if both have timestamps)
             aj_pub = articles[j]["pub_dt"]
             if (
