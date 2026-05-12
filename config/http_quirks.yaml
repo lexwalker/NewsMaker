@@ -69,6 +69,11 @@ impersonate_domains:
   - www.carscoops.com
   - motor1.com                  # global auto news, recall audit add
   - www.motor1.com
+  # v33 follow-up: also CF-protected, confirmed via impersonate test
+  - autoevolution.com
+  - www.autoevolution.com
+  - autonews.ru                 # Russian auto news, also slow (needs >20s)
+  - www.autonews.ru
 
 # Domains that require Playwright (headless Chromium) instead of httpx.
 # Use this only when either:
