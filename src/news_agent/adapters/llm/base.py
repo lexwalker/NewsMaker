@@ -151,20 +151,27 @@ These rules override generic intuition. Apply them in this exact order:
     "opens showroom in [non-RU city]", "partners with",
     "strategic cooperation", "signed agreement with".
 
-(5) "Dealer news / Promo" is RESERVED for ONE thing only:
-    a NEW physical dealership / showroom OPENING in Russia.
-    Triggers: "открыли ДЦ", "новый дилерский центр", "опен дилер",
-    "открытие дилерского центра", "official dealer launch in Russia".
+(5) "Dealer news / Promo" — three publishable cases:
+    (a) NEW physical dealership / showroom OPENING in Russia
+        Triggers: "открыли ДЦ", "новый дилерский центр",
+        "official dealer launch in Russia", "новый Avatr ДЦ в Новосибирске"
+    (b) Brand DEALER NETWORK EXPANSION across multiple RF cities
+        Examples editor flagged should be Dealer (not Local):
+          "Moskovich accepting orders in five cities"
+          "Top 100 Russian dealers' revenue reached 3,2 trillion RUB"
+    (c) Brand-owner PROMO offers / seasonal service / cashback
+        Example: "Belgee seasonal service for 4,490 RUB"
 
-    Anything else dealer-adjacent goes to OTHER NEWS, not Dealer:
+    Everything else dealer-adjacent goes to OTHER NEWS:
        • Awards (DSI, "best dealer", "лучший дилер года") → Other news
-       • Trade-association partnerships, conventions, forums → Other news
+       • Trade-association forums, conventions → Other news
        • Foreign dealer / showroom openings → Other news
        • Dealer association comments, statements → Other news
+       • Lexus + athlete promo (sport partnership) → Other news
        • ROAD / Автостат / RAD reports & analytics → Local specifics
          (RU subject) or Other news (global subject)
-    Editor: «В дилерах ТОЛЬКО открытие ДЦ в РФ. Премии, форумы,
-    конференции, партнёрства, награждения — это Другие.»
+    Editor: «В дилерах ТОЛЬКО открытие ДЦ или расширение сети в РФ.
+    Премии, форумы, конференции, спортивные коллабы — это Другие.»
 
 (6) Commercial vehicles by body type → "LCV news":
     pickup, van, truck, bus, panel van, minivan, lorry, microbus,
@@ -261,6 +268,136 @@ ROUND 4 ADDITIONS (may-2026 review of Лист «Новости (новые)»)
      primary source (abreview.ru, autonews.ru, autostat.ru, or the
      brand's official site). Set primary_confidence to "low" if no
      alternative is available.
+
+============================================================
+ROUND 5 ADDITIONS (may-2026 — review of v30-v33 push to "Новости (новые)")
+============================================================
+
+(22) Government decisions / EAEU regulations clarifications →
+     REJECT unless concrete regulatory decision is announced.
+     Editor: «не постим, только реальные решения по факту».
+     Examples editor REJECTED:
+       "Government decisions from May 6, 2026 meeting"
+       "EAEU Commission to clarify EV/hybrid definitions tomorrow"
+       "Hormuz Strait crisis to accelerate EU phase-out of ICE"
+
+(23) Motorshow "summary" / "trends" / "concluded" / "attendance"
+     articles — REJECT. These are editorial commentary, not auto news.
+     Editor REJECTED:
+       "Bangkok Motor Show reveals EV adoption milestone in Thailand"
+       "Main automotive trends of Beijing Motor Show named"
+       "Beijing Auto Show 2026 concluded with record attendance"
+       "When Chinese SUVs presented in Beijing will arrive on sale"
+       "Robots on display at Auto China 2026"
+     Motorshow section only takes:
+       • OEM multi-model line-up press releases from the show
+       • Single-model debuts go to Confirmed, not Motorshow
+
+(24) Cars listed for sale / archive auctions / custom builds → REJECT.
+     This is private listings or aftermarket modification, not industry.
+     Editor REJECTED:
+       "Rare Tagaz Aquila listed for sale in Russia"
+       "Lada Monomakh prototype spied on roads in France" (custom build
+        on Mercedes — not official Lada project)
+       "New Rolls-Royce Cullinan resembles garage tuner car" (custom)
+
+(25) "N new car models introduced in [country] in [month]" digest
+     listicle → REJECT.
+     Editor REJECTED: "15 new car models introduced in Russia in April"
+
+(26) Brand "established operations in [country]" without scale →
+     REJECT unless RF or significant announcement (factory, JV, plant).
+     Editor REJECTED: "Geely established operations in the U.S."
+
+(27) Anniversary tours / multi-stop celebrations — REJECT if no new
+     product launched, just commemorative event.
+     Editor REJECTED: "Mercedes-Benz celebrates 140 years with new
+     S-Class tour across Asia" (already-published global tour).
+
+(28) "X returns to Russian market" ретроспектива → REJECT unless
+     concrete launch event with current details (price, dealer network).
+     Editor REJECTED: "Volga returns to Russian market".
+
+(29) Russian aggregator (Avtostat, Tselikov, ППК) statistics BY BRAND
+     without official brand statement → REJECT. Editor wants oficial
+     press release or English-language source from the brand.
+     Examples REJECTED:
+       "Tselikov: automakers' pricing policy in chaos"
+       "Mazda began losing market share after a breakthrough"
+       "Tenet T7 outsold Jolion and Granta in April 2026"
+       "Changan sales in April 2026" (Russian aggregator without official)
+     Russian aggregator MARKET-WIDE statistics (sales total, segment
+     share) are OK if data comes from Avtostat/AEB.
+
+(30) Political-economic editorials about car industry → REJECT.
+     Examples REJECTED:
+       "Auto industry interests diverge from Europe's priorities"
+       "Hormuz Strait crisis to accelerate EU's phase-out of ICE"
+
+============================================================
+SECTION ROUTING — explicit edge cases (may-2026)
+============================================================
+
+PATENTS:
+  • Patent on a SPECIFIC named model → Confirmed (Facts)
+      "AvtoVAZ patented LADA Niva parts"          → Confirmed
+      "AvtoVAZ revealed design of new NIVA"       → Confirmed
+  • Patent on a PLATFORM / generic technology → Other news
+      "Hyundai patented integrated battery platform" → Other news
+
+ENGINE / TECHNOLOGY UPDATES:
+  • New engine technology without new model → Other news
+      "BMW M upgraded inline-six engine with pre-chamber ignition"
+      → Other news (description of technology dominates)
+  • New engine variant launched in named models → Confirmed
+      "Updated 3.0L coming to M2, M3, M4 this year" → Confirmed
+
+RUSSIAN REGULATIONS:
+  • Russian exam / license / traffic rules → Local specifics
+      "Russia approved new exam rules for driving license"
+      → Local specifics (NOT Other news)
+
+FOREIGN BRAND QUARTERLY / ANNUAL FINANCIALS:
+  • Q1/Q2/Q3/Q4/year financials from foreign OEM → Other news
+      "GM to report Q1 earnings"                  → Other (global)
+      "China auto industry profit fell 18% in Q1" → Other
+      NOT Economics — financial results belong in Other news.
+
+FOREIGN BRAND MODEL LAUNCH IN NON-RF COUNTRY:
+  • Sales started in Kazakhstan / India / Brazil → Confirmed (Facts)
+      "Subaru Outback sales started in Kazakhstan" → Confirmed
+      NOT Other — it's a real model launch event.
+
+TOP-N RU DEALERS:
+  • "Top 100 Russian dealers revenue" → Dealer news / Promo
+      NOT Local specifics.
+
+BRAND REGISTERING MODEL RIGHTS / TRADEMARK IN RF:
+  • "Hyundai registered Solaris/Terracan in Russia"
+      → Confirmed (Facts) — trademark prepares launch.
+
+BRAND-CONFIRMED MODELS FOR FOREIGN MARKET:
+  • "Joyee models may arrive in Russia, Bestune's office confirmed"
+      → Confirmed (NOT Rumors — brand-sourced).
+  • "Rivian may develop pickup based on R2, CEO said"
+      → NOT Rumors. But editor: «писать нечего» if just one-line
+      statement. Use confidence ≤ 0.4 in such cases.
+
+CARSHARING IN RF:
+  • Fleet expansion (Yandex Drive added X cars) → Local specifics
+  • Mass-sale (carsharing selling its fleet, private resale) → reject
+  • Dispute / labor / strike → reject (not core auto news)
+
+DEALER NETWORK EXPANSION:
+  • Brand opening NEW dealer center in RF → Dealer news / Promo
+  • Brand "accepting orders in N RF cities" → Dealer news / Promo
+      "Moskovich accepting orders in five cities" → Dealer
+      NOT Local specifics.
+
+CORPORATE R&D / BUDGET REPORTS:
+  • "JAC increased R&D spending by 20% in 2025"
+      → REJECT if from aggregator without full annual report linked.
+      → Other news if linked to brand's official annual report PDF.
 
 ============================================================
 HARD NEVER-POST CATEGORIES (set confidence ≤ 0.15)
@@ -836,11 +973,16 @@ WHAT WE PUBLISH (use the listed section names exactly)
     foreign showroom openings, dealer association comments. Those go
     to "Other news" (or "Local specifics" for RU subject).
 
-(6) "LCV news" — body-type detection:
-      • pickup, van, truck, lorry, bus, panel van, minivan, microbus
-      • light commercial vehicle, 3.5+ ton commercial
-    Body-type wins over brand. Even if BMW/Lada/Ford makes it.
-    Editor: «коммерческие ТС — всегда LCV».
+(6) "LCV news" — STRICT body-type rule (editor may-2026):
+      • Pickups, trucks, lorries — always LCV
+      • Buses, microbuses, double-decker buses — always LCV (8+ seats)
+      • Panel vans, cargo vans, delivery vans — always LCV (commercial)
+      • Passenger minivans (5-7 seats) like Luxeed V9, Suzuki MPV,
+        GAC M8 are NOT LCV → route to Confirmed (Facts) instead.
+    Editor quote: «в ЛСВ идут только ТС с числом сидений >8».
+    Body-type wins over brand for the clear cases above. For "minivan"
+    or "MPV" without explicit seat count, default to Confirmed unless
+    body explicitly mentions 8+/9-seater configuration.
 
 (7) "Motorshow" — Multi-model OEM line-up release at a motorshow.
     Single-model debut at a motorshow → "Confirmed", NOT Motorshow.

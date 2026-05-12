@@ -31,9 +31,15 @@ def test_russian_pickup_routes_to_lcv() -> None:
     assert h is not None and h.section == "LCV news"
 
 
-def test_minivan_routes_to_lcv() -> None:
+def test_minivan_defers_to_llm() -> None:
+    """Editor rule (may-2026): LCV only for ТС with 8+ seats. Passenger
+    minivans (5-7 seats like Luxeed V9, Suzuki MPV, GAC M8) are NOT LCV
+    by body-type alone. Defer to LLM which knows the seat count rule.
+    """
     h = heuristic_section(title="GAC M8 minivan entered service with Moscow firefighters")
-    assert h is not None and h.section == "LCV news"
+    # Should defer to LLM (return None) or route to Local — but NOT auto-LCV
+    if h is not None:
+        assert h.section != "LCV news"
 
 
 def test_double_decker_bus_routes_to_lcv() -> None:

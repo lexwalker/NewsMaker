@@ -1028,34 +1028,49 @@ def grade_article(article: ArticleVerdict, topic: TopicVerdict) -> Grade:
 # (saves ~$0.005/row). LLM `translate_title` and `is_automotive` still run.
 # ============================================================================
 
-# Body-type words that always mean "commercial vehicle" — editor routes
-# anything matching these to the LCV section regardless of brand.
+# Body-type words that ALWAYS mean "commercial vehicle, 8+ seats or LCV".
+# Editor's may-2026 rule: LCV section is "ТС с числом сидений >8" — that
+# means buses, microbuses, panel/cargo vans, pickups. Passenger minivans
+# (Luxeed V9 / Suzuki MPV with 5-7 seats) are NOT LCV.
+#
+# Strict list (always LCV regardless of brand):
 _LCV_BODY_TYPES_EN = (
+    # Pickups / trucks — always commercial cargo
     " pickup", " pick-up", " pick up",
-    " van ", " van,", " van.", " van:",
-    " minivan", " mini-van", " mini van",
     " truck ", " truck,", " truck.", " truck:", " trucks ",
     " lorry", " lorries",
+    # Buses — definitionally >8 seats
     " bus ", " buses ", " minibus",
-    " microbus", " microvan",
+    " microbus",
+    " double-decker bus", "double decker bus",
+    # Cargo/commercial vans (NOT generic "van" or "minivan")
+    "panel van", "cargo van", "delivery van",
+    " microvan",
+    # Explicit LCV markers
     " lcv ", " lcv,",
     "light commercial vehicle",
     "commercial vehicle",
-    "panel van",
-    "cargo van",
-    "delivery van",
-    "double-decker bus",
-    "double decker bus",
 )
+# Removed from auto-LCV (editor: ≤8 seats → Facts, not LCV):
+#   " van " / " van,"     — ambiguous; many passenger MPVs called "van"
+#   " minivan"            — Luxeed V9 / Suzuki MPV are 5-7 seats → Facts
+#   " mini-van"           — same as minivan
+# These now defer to LLM, which has explicit guidance in CLASSIFY_SYSTEM.
+
 _LCV_BODY_TYPES_RU = (
-    "пикап", "фургон", "грузовик",
-    "автобус", "минивэн", "микроавтобус",
-    "коммерчес транспорт",  # «коммерческий транспорт»
+    "пикап", "грузовик",
+    "автобус",  # almost always >8 seats
+    "микроавтобус",
+    "панельный фургон", "грузовой фургон", "фургон для доставки",
+    "коммерчес транспорт",
     "коммерческого транспорт",
     "лёгкий коммерчес",
     "легкий коммерчес",
     "лцв",
 )
+# Removed (passenger MPV ≤ 7 seats → defer to LLM):
+#   "фургон" alone — too ambiguous, includes 5-seat car
+#   "минивэн"      — passenger MPVs not LCV per editor
 
 # Phrases that always mean "financial result" — editor: always Other news.
 _FINANCIAL_RESULT_HINTS = (
