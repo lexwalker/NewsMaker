@@ -59,6 +59,16 @@ impersonate_domains:
   - corporate.ferrari.com       # we get 403 here, but retry-path will try PW next
   - www.ferrari.com
   - investor.uber.com
+  # Cloudflare-protected — added may-2026 after recall audit showed
+  # 3 CarNewsChina articles failed extract on v31 due to UA rejection.
+  - carnewschina.com
+  - www.carnewschina.com
+  - cnevpost.com                # Chinese EV news, same Cloudflare gate
+  - www.cnevpost.com
+  - carscoops.com               # global auto news, recall audit add
+  - www.carscoops.com
+  - motor1.com                  # global auto news, recall audit add
+  - www.motor1.com
 
 # Domains that require Playwright (headless Chromium) instead of httpx.
 # Use this only when either:

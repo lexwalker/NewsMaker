@@ -721,9 +721,10 @@ _FORCE_REJECT_PHRASES = (
     # ---------- Motorcycles (editor: «мотоциклы не наша тема») ----------
     " motorcycle ",
     "мотоцикл",
-    "fighting game tournament",
-    "capcom cup",
-    "street fighter ",
+    # NOTE: removed in may-2026 — editor row 90 of Лист7 explicitly
+    # confirmed Suzuki + Capcom Evo sponsorship as publishable. Brand
+    # event-sponsorship collaborations ARE news, not motorcycles.
+    # Kept just true motorcycle category words above.
 
     # ---------- Misc rejects from editor review ----------
     "boycott",

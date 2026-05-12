@@ -104,10 +104,39 @@ from news_agent.settings import get_settings  # noqa: E402
 # ----------------------------------------------------------------- config
 NUM_SOURCES = 400         # effectively all active sources (there are ~357 flagged "1")
 MAX_ARTICLES = 10_000     # soft cap
-ITEMS_PER_SOURCE = 15  # was 5 — active news sites (motortrend, iz.ru,
-                       # carnewschina) publish 10-20 articles/day. Cap of 5
-                       # was clipping real coverage. Downside: fetch time
-                       # goes up ~2x and LLM cost scales linearly.
+ITEMS_PER_SOURCE = 15  # default cap; high-volume sources get more (see below).
+
+# High-volume sources publish 30-50+ articles/day. After may-2026 recall
+# audit (May 7-8 missed ~37 articles from sources in our list), we bumped
+# these specifically to 35. Other sources stay at 15 — most publish <10/day
+# anyway and the cap doesn't bite. Match by domain substring.
+_HIGH_VOLUME_DOMAINS = frozenset({
+    # RU mass-market portals
+    "auto.ru", "auto.mail.ru", "autonews.ru", "autostat.ru",
+    "kolesa.ru", "abreview.ru", "autoreview.ru", "iz.ru",
+    "tass.ru", "ria.ru", "kommersant.ru", "rg.ru",
+    "lenta.ru", "rbc.ru", "naavtotrasse.ru", "motor.ru",
+    "ixbt.com", "drom.ru", "motorpage.ru",
+    # Global mass-market portals (English)
+    "carnewschina.com", "cnevpost.com", "carscoops.com",
+    "motor1.com", "autoevolution.com", "thekoreancarblog.com",
+    "motortrend.com", "bmwblog.com", "electrek.co",
+    "cleantechnica.com", "hearst.com",
+    # Telegram aggregator channels
+    "t.me",
+})
+ITEMS_PER_SOURCE_HIGH_VOLUME = 35
+
+
+def _items_cap_for(url: str) -> int:
+    """Per-source item cap. High-volume domains get 35, others 15."""
+    host = domain_of(url)
+    if host in _HIGH_VOLUME_DOMAINS:
+        return ITEMS_PER_SOURCE_HIGH_VOLUME
+    for hv in _HIGH_VOLUME_DOMAINS:
+        if host.endswith("." + hv):
+            return ITEMS_PER_SOURCE_HIGH_VOLUME
+    return ITEMS_PER_SOURCE
 HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # press rooms) need more patience. Retries are still
                      # DISABLED on timeouts, so this just widens the window once.
@@ -679,7 +708,7 @@ def process_source(
             source_name="",
             source_url=url,
             source_language=None,
-            max_items=ITEMS_PER_SOURCE,
+            max_items=_items_cap_for(url),
         )
         r.detected_type = "telegram"
         r.feed_url = preview
@@ -715,7 +744,8 @@ def process_source(
     ):
         r.detected_type = "rss"
         r.feed_url = url
-        entries = feedparser.parse(html).entries[:ITEMS_PER_SOURCE]
+        cap = _items_cap_for(url)
+        entries = feedparser.parse(html).entries[:cap]
         r.articles_attempted = len(entries)
         _fill_from_rss_entries(client, entries, r, source_idx, article_rows)
         r.elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -726,7 +756,8 @@ def process_source(
         try:
             rss_resp = client.get(feed_url)
             rss_resp.raise_for_status()
-            entries = feedparser.parse(rss_resp.content).entries[:ITEMS_PER_SOURCE]
+            cap = _items_cap_for(url)
+            entries = feedparser.parse(rss_resp.content).entries[:cap]
             if entries:
                 r.detected_type = "rss"
                 r.feed_url = feed_url
@@ -739,7 +770,7 @@ def process_source(
 
     # HTML index mode
     r.detected_type = "html"
-    links = _discover_article_links(url, html, ITEMS_PER_SOURCE)
+    links = _discover_article_links(url, html, _items_cap_for(url))
     r.articles_attempted = len(links)
     for idx, link in enumerate(links, start=1):
         _fetch_and_score(client, link, r, source_idx, idx, article_rows)

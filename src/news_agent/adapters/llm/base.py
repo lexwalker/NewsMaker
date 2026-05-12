@@ -812,13 +812,22 @@ WHAT WE PUBLISH (use the listed section names exactly)
       • Awards, recognitions, premieres of generic vehicles (not RF)
       • Foreign showroom / dealer-center openings (NOT in RF)
       • OEM partnerships, strategic cooperation, supplier agreements
-        (when scale is meaningful — not generic showroom appearance)
+        — INCLUDING "intention to deepen cooperation" / "announce
+        partnership" forward-looking statements. Editor publishes these.
+        Examples that editor DID publish (May 7-8 2026):
+          "Stellantis and Leapmotor expand cooperation"
+          "Suzuki and Capcom expand cooperation"
+          "BAIC Group and CATL deepen strategic cooperation"
+      • Brand-MODEL anniversaries with concrete years (10+, 20, 25, 50)
+        AT THE NAMED MODEL LEVEL — these ARE publishable. Example
+        that editor DID publish:
+          "Honda celebrates 50 years of the Accord model" → Other news
+        DON'T confuse with routine corporate milestones (e.g. "100M
+        battery swaps", "1M cars sold this month") — those are NOT news.
       • Engine technology updates (no new model)
       • Patents on platforms / generic technology (not consumer model)
       • Charging-network expansion (with specific numbers)
-      • Anniversary milestones if newsworthy (NOT routine "100M
-        battery swaps" celebrations)
-    Editor: «финрезы автобрендов — всегда Другие».
+    Editor: «финрезы автобрендов — всегда Другие; партнёрства тоже».
 
 (5) "Dealer news / Promo" — RESERVED: ONLY a NEW dealership / showroom
     OPENING in Russia. Plus seasonal-service promo offers from brand-
@@ -1022,6 +1031,21 @@ src: "Hyundai patented integrated battery platform for body-on-frame EV"
 → {publish: true, section: "Other news", region: "Global",
    confidence: 0.7,
    reason: "Патент на платформу (не модель) → Другие"}
+
+src: "Stellantis and Leapmotor announce intention to expand cooperation"
+→ {publish: true, section: "Other news", region: "Global",
+   confidence: 0.7,
+   reason: "Расширение OEM-партнёрства, редактор такое публикует"}
+
+src: "Honda celebrates 50 years of the Accord model"
+→ {publish: true, section: "Other news", region: "Global",
+   confidence: 0.8,
+   reason: "50-летний юбилей конкретной модели — публикуется"}
+
+src: "Suzuki and Capcom expand cooperation"
+→ {publish: true, section: "Other news", region: "Global",
+   confidence: 0.7,
+   reason: "Расширение бренд-партнёрства с event-спонсором"}
 
 ============================================================
 DECISION RULE
