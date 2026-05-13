@@ -778,6 +778,33 @@ def process_source(
     return r
 
 
+def _rss_pub_date(entry) -> datetime | None:  # type: ignore[no-untyped-def]
+    """Pull authoritative pubDate from an RSS/Atom feedparser entry.
+
+    Tries ``published_parsed`` (struct_time → most reliable, normalised by
+    feedparser) then falls back to ``published``/``pubDate`` as RFC 2822
+    strings. Returns None when no usable date is present.
+    """
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+    if parsed:
+        try:
+            return datetime(*parsed[:6], tzinfo=timezone.utc)
+        except Exception:  # noqa: BLE001
+            pass
+    raw = (entry.get("published") or entry.get("pubDate")
+           or entry.get("updated") or "").strip()
+    if not raw:
+        return None
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
     client: httpx.Client,
     entries,
@@ -789,7 +816,16 @@ def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
         link = (entry.get("link") or "").strip()
         if not link:
             continue
-        _fetch_and_score(client, link, result, source_idx, idx, article_rows)
+        # The RSS pubDate is the publisher's authoritative timestamp.
+        # When we hand it through, extract_article() will trust it over
+        # body-text date heuristics that can misfire on sites where the
+        # article references past events (e.g. abreview.ru). Without this
+        # the freshness gate silently drops fresh items as «stale».
+        rss_pub = _rss_pub_date(entry)
+        _fetch_and_score(
+            client, link, result, source_idx, idx, article_rows,
+            rss_pub_date=rss_pub,
+        )
 
 
 def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> None:
@@ -1075,6 +1111,8 @@ def _fetch_and_score(
     source_idx: int,
     article_idx: int,
     article_rows: list[ArticleRow],
+    *,
+    rss_pub_date: datetime | None = None,
 ) -> None:
     row = ArticleRow(
         source_idx=source_idx,
@@ -1091,6 +1129,7 @@ def _fetch_and_score(
             source_name="",
             source_url="",
             source_language=None,
+            preferred_published=rss_pub_date,
         )
     except Exception as e:  # noqa: BLE001
         r.error = (r.error + f" | {type(e).__name__}")[:200]

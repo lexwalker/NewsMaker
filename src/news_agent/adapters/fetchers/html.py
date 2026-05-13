@@ -129,8 +129,18 @@ def extract_article(
     source_language: str | None,
     fallback_title: str = "",
     fallback_published: datetime | None = None,
+    preferred_published: datetime | None = None,
 ) -> RawArticle | None:
-    """Pure function — tested directly against HTML fixtures."""
+    """Pure function — tested directly against HTML fixtures.
+
+    ``preferred_published`` is an authoritative timestamp from outside the
+    HTML (typically the RSS pubDate). When provided it wins over every
+    in-page heuristic — those heuristics often misfire on sites whose
+    article body references past dated events (e.g. abreview.ru: a fresh
+    13-May post is dated 7-May because the body quotes a May 7 event).
+    Pass only when you trust the source — RSS feeds and CMS-published
+    timestamps are reliable; aggregator listings often aren't.
+    """
     soup = BeautifulSoup(html, "lxml")
 
     title = _pick_title(soup) or fallback_title
@@ -139,7 +149,8 @@ def extract_article(
 
     body = _pick_body(html) or _fallback_body(soup)
     published = (
-        _pick_published(soup)
+        preferred_published
+        or _pick_published(soup)
         or _pick_published_from_url(url)
         or _pick_published_from_text(title, body)
         or _pick_published_trafilatura(html, url)

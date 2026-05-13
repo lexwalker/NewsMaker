@@ -44,7 +44,7 @@ SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-NEWS_TAB = "Новости"
+NEWS_TAB = os.environ.get("NEWS_TAB", "Новости")
 
 HEADER = [
     "Прогон (UTC)",          # A
