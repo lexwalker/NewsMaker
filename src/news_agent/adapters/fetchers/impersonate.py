@@ -38,7 +38,23 @@ except Exception:  # noqa: BLE001
 # Chrome version string passed to curl_cffi. We use a recent stable to
 # match what real users send. Bump ~every 6 months — older impersonations
 # start to stand out again when the real Chrome rolls forward.
+#
+# Note (may-2026): bumping to chrome131 is *not* a strict upgrade. Some
+# sites pin on a specific TLS fingerprint and reject newer Chrome —
+# iz.ru, for instance, returns 403 on chrome131 but 200 on chrome124.
+# Other sites are the opposite: just-auto.com and autonews.ru need
+# chrome131 (chrome124 fails). Use the per-domain override map
+# below — keep the default stable, opt newer ones in by hostname.
 DEFAULT_IMPERSONATE = "chrome124"
+
+# Per-host overrides. Add a hostname here only after smoke-testing that
+# the override actually fixes the failure on that domain.
+PER_HOST_IMPERSONATE: dict[str, str] = {
+    "just-auto.com":     "chrome131",
+    "www.just-auto.com": "chrome131",
+    "autonews.ru":       "chrome131",
+    "www.autonews.ru":   "chrome131",
+}
 
 
 class ImpersonateFetcher:
@@ -66,9 +82,11 @@ class ImpersonateFetcher:
 
         Raises on connection failure so the caller can fall back.
         """
+        host = urlparse(url).netloc.lower()
+        profile = PER_HOST_IMPERSONATE.get(host, self.impersonate)
         r = _cffi_requests.get(  # type: ignore[union-attr]
             url,
-            impersonate=self.impersonate,
+            impersonate=profile,
             timeout=self.timeout,
             allow_redirects=True,
         )

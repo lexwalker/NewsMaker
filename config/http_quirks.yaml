@@ -11,13 +11,19 @@
 ssl_insecure:
   # Sites with expired / broken cert chains that respond fine once we
   # skip verification. Verified via smoke test.
-  #   autoins.ru  — Russian auto insurer PR feed
-  #   kianewscenter.com  — Kia global PR
-  #   vwpress.co.uk  — VW UK press site
+  #   autoins.ru             — Russian auto insurer PR feed
+  #   kianewscenter.com      — Kia global PR
+  #   vwpress.co.uk          — VW UK press site
+  #   volkswagen-group.com   — VW Group corporate (missing-source audit may-2026)
+  #   rosstat.gov.ru         — Russian state statistics (missing-source audit may-2026)
   - autoins.ru
   - www.kianewscenter.com
   - kianewscenter.com
   - vwpress.co.uk
+  - www.volkswagen-group.com
+  - volkswagen-group.com
+  - rosstat.gov.ru
+  - www.rosstat.gov.ru
 
   # NOTE: the following hosts also error on SSL but with
   #   UNEXPECTED_EOF_WHILE_READING — that's not a cert problem, the server
@@ -74,6 +80,9 @@ impersonate_domains:
   - www.autoevolution.com
   - autonews.ru                 # Russian auto news, also slow (needs >20s)
   - www.autonews.ru
+  # missing-source audit (may-2026): UK auto industry feed, 403 on plain httpx
+  - just-auto.com
+  - www.just-auto.com
 
 # Domains that require Playwright (headless Chromium) instead of httpx.
 # Use this only when either:
