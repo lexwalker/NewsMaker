@@ -151,6 +151,21 @@ These rules override generic intuition. Apply them in this exact order:
     "opens showroom in [non-RU city]", "partners with",
     "strategic cooperation", "signed agreement with".
 
+    (4a) Plan P2-D — financial-results SOURCE rule. For Q1/Q2/Q3/Q4 or
+    full-year results, the acceptable PRIMARY URL is ONLY:
+      • the brand's own newsroom (global.toyota, media.subaru.com,
+        audi-mediacenter.com, hondanews.com, media.jaguarlandrover.com,
+        press.bmwgroup.com, etc.)
+      • an exchange filing (HKEX for BYD/Geely/NIO China-listed,
+        SEC EDGAR for US-listed).
+    NOT acceptable as primary: Interfax, Finmarket, Reuters, Bloomberg,
+    CNBC, autoreview, motorpage, auto.mail.ru, LinkedIn snippets,
+    Twitter analyst posts. When the only source is one of these,
+    still publish (section Other news) but set confidence ≤ 0.6 and
+    append to reason: "(нужен пресс <brand> или HKEX/SEC)".
+    Editor rows 149/285/307: «Финрезультаты автобрендов — всегда Другие,
+    но первоисточник нужен официальный пресс или биржа».
+
 (5) "Dealer news / Promo" — THREE publishable cases ONLY:
     (a) NEW physical dealership / showroom OPENING in Russia
         Triggers: "открыли ДЦ", "новый дилерский центр",
@@ -199,6 +214,17 @@ These rules override generic intuition. Apply them in this exact order:
 (7) Multi-model OEM exhibition / motorshow line-up release → "Motorshow".
     Single-model debut at a motorshow → "Confirmed" (Facts), not Motorshow.
     Editor: «в моторшоу только релизы на большой список моделей».
+    Plan P3-A — concrete routing:
+      "Leapmotor unveiled the Lafa5 Ultra at Auto China 2026"
+        → Confirmed (one model = Facts)   [editor row 216]
+      "Volkswagen Unyx 08 debut at Beijing Motor Show"
+        → Confirmed (one model = Facts)   [editor row 264]
+      "BYD shows 8 new models at Shanghai 2026"
+        → Motorshow (multi-model line-up)
+      "What Chinese SUVs from Beijing will arrive on sale"
+        → REJECT (motorshow recap listicle, NEVER PUBLISH cat. P)
+      "Robots on display at Auto China 2026"
+        → REJECT (not a vehicle premiere)
 
 (8) Manufacturer's OWN test results → "Test-drive" (неактивный — flagged).
     Third-party / journalist / blogger test → REJECT (set confidence 0.1
@@ -232,13 +258,24 @@ These rules override generic intuition. Apply them in this exact order:
 ROUND 4 ADDITIONS (may-2026 review of Лист «Новости (новые)»)
 ============================================================
 
-(13) Patents and trademark filings for car models / brands → "Confirmed".
+(13) Patents and trademark filings for car MODELS / brand-name rights →
+     "Confirmed". If the registration is in Russia, set region="Local"
+     (still section Confirmed — it's Facts, NOT "Local specifics").
      Editor row 40 «АвтоВАЗ patented Niva» / row 102 «FAW filed Joyee
-     trademark in Russia» / row 55 «AvtoVAZ patented LADA model parts»:
+     trademark in Russia» / row 55 «AvtoVAZ patented LADA model parts» /
+     row 164 «все что касается регистрации прав на бренды, ТС — это Факты»:
      these are formal registrations of upcoming products, treat as Facts.
-     EXCEPT: patents on platforms / generic technologies not tied to a
-     specific consumer model → "Other news" (e.g. row 32 «Hyundai
-     patented integrated battery platform»).
+     ROUTING:
+       "AvtoVAZ patented LADA Niva" → Confirmed, region Local
+       "FAW filed Joyee trademark in RF" → Confirmed, region Local
+       "JLR registered Jaguar logo in RF" → Confirmed, region Local
+     EXCEPTIONS:
+       • Spare-parts / slogan trademark ("Volga VLG Tech for spare
+         parts") → "Local specifics" (editor row 161: «запчасти,
+         слоганы — в местные»)
+       • Patents on platforms / generic tech not tied to a specific
+         consumer model → "Other news" (row 32 «Hyundai integrated
+         battery platform»).
 
 (14) Engine technology updates without a new model → "Other news",
      NOT Confirmed/Facts.
