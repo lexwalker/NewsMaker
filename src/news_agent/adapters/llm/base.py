@@ -151,7 +151,7 @@ These rules override generic intuition. Apply them in this exact order:
     "opens showroom in [non-RU city]", "partners with",
     "strategic cooperation", "signed agreement with".
 
-(5) "Dealer news / Promo" — three publishable cases:
+(5) "Dealer news / Promo" — THREE publishable cases ONLY:
     (a) NEW physical dealership / showroom OPENING in Russia
         Triggers: "открыли ДЦ", "новый дилерский центр",
         "official dealer launch in Russia", "новый Avatr ДЦ в Новосибирске"
@@ -159,19 +159,37 @@ These rules override generic intuition. Apply them in this exact order:
         Examples editor flagged should be Dealer (not Local):
           "Moskovich accepting orders in five cities"
           "Top 100 Russian dealers' revenue reached 3,2 trillion RUB"
-    (c) Brand-owner PROMO offers / seasonal service / cashback
+    (c) Brand-owner PROMO offers / seasonal service / cashback in RF
         Example: "Belgee seasonal service for 4,490 RUB"
 
-    Everything else dealer-adjacent goes to OTHER NEWS:
-       • Awards (DSI, "best dealer", "лучший дилер года") → Other news
-       • Trade-association forums, conventions → Other news
-       • Foreign dealer / showroom openings → Other news
-       • Dealer association comments, statements → Other news
-       • Lexus + athlete promo (sport partnership) → Other news
-       • ROAD / Автостат / RAD reports & analytics → Local specifics
-         (RU subject) or Other news (global subject)
-    Editor: «В дилерах ТОЛЬКО открытие ДЦ или расширение сети в РФ.
-    Премии, форумы, конференции, спортивные коллабы — это Другие.»
+    Everything else dealer-adjacent goes ELSEWHERE — STRICT MAP:
+
+      → "Other news":
+        • Sport / event / film PARTNERSHIPS (athlete, hotel, resort)
+          Editor row 214: "Lexus + Choo Sung-hoon" → Other
+          Editor row 243: "Lexus + Pinehurst Resort" → Other
+        • FOREIGN showroom openings (NOT in RF)
+          Editor row 247: "Lamborghini Katowice" → Other
+        • Awards (DSI, "лучший дилер года") → Other news
+        • Trade-association forums, conventions, expert opinions
+          ("ROAD realistic targets for dealerships") → Other news
+        • New tire / parts / accessory models
+          Editor row 287: "Kumho Tire Majesty Solus" → Other
+
+      → "Local specifics":
+        • Dealer-association PROPOSALS / inquiries to government (RU)
+        • ROAD / Avtostat / RAD analytical reports about RF market
+
+      → REJECT entirely:
+        • Court rulings against / lawsuits / monetary disputes
+          Editor row 232: "Samara dealer AsAvto court ruling" → no
+        • Dealer comments on competitors / market opinion
+          Editor row 261: "Geely Coolray dealer on competitors" → no
+        • Dealer executive personnel
+          (covered in NEVER PUBLISH category D)
+
+    Editor row 243: «В дилерах ТОЛЬКО открытие ДЦ в РФ».
+    No exceptions for sport collabs, awards, foreign showrooms.
 
 (6) Commercial vehicles by body type → "LCV news":
     pickup, van, truck, bus, panel van, minivan, lorry, microbus,
@@ -1103,6 +1121,43 @@ Y. Niche one-off / curiosity stories: "Tesla employee shows final
 
 Z. NIO/Geely pre-2025 news (unless landmark announcements).
 
+AA. Trivial model facelift / mid-cycle update without new specs:
+    paint-color expansion, positioning piece ("X is game-changer"),
+    minor trim refresh covered by earlier launch.
+    Editor rejected (may-2026 audit):
+      row 167 "Moskvich 3 sedan 2026 update" → no
+      row 78 "Volvo EX60 positioned as game-changer" → no
+      row 123 "Lada Azimut to offer 8 body colors" → no
+      row 162 "Lynk & Co 10 sedan serial production" → no
+    Genuine refresh WITH new engine / price / market entry IS publishable
+    (set confidence 0.7 and let editor decide if borderline).
+
+BB. Brand "unique / limited / one-of-one / Few Off / Capsule edition /
+    Special edition for designer week / tuner-inspired" promotional
+    pieces — REJECT unless paired with new technology OR anniversary.
+    Editor: «в Других по моделям только юбилеи / награды».
+    Editor rejected (may-2026 audit):
+      row 248 "Lamborghini, symbol of Made in Italy"
+      row 249 "Lamborghini Few Off Roadster: emotional, limited"
+      row 246 "Lamborghini Urus SE Tettonero at Milan Design Week"
+      row 147 "New Rolls-Royce Cullinan resembles tuner car"
+    Exception (still publish): commemorative editions tied to brand
+    anniversary like "Skoda Fabia Motorsport 125-year edition" — but
+    only when anniversary is stated in title/lede.
+
+CC. Russian Telegram aggregators (t.me/sergtselikov,
+    t.me/autopotoknews, t.me/chinamashina_news) reporting single
+    GLOBAL-brand monthly sales / market share / "теряет позиции" /
+    "обогнал" → REJECT.
+    Only OFFICIAL brand press release or HKEX/SEC filing accepted
+    for global-brand sales. AvtoVAZ / Lada / Moskvich / UAZ sales
+    figures from these aggregators stay OK as Local specifics.
+    Editor rejected (may-2026 audit):
+      row 105 "Changan sales April 2026" (chinamashina)
+      row 138 "Great Wall sales 106k April" (chinamashina)
+      row 168 "Mazda losing market share" (sergtselikov)
+      row 199 "BYD sales declined" — «продажи BYD только с HKEX»
+
 ============================================================
 PRIMARY-SOURCE WARNINGS (don't reject, but mark in reason)
 ============================================================
@@ -1125,9 +1180,13 @@ src: "Nissan reported Q1 financial results for 2026"
 → {publish: true, section: "Other news", region: "Global",
    confidence: 0.9, reason: "Финрезультаты OEM (квартальные)"}
 
+src: "Sales of the Luxeed V9 minivan by Chery and Huawei start in China"
+→ {publish: true, section: "Confirmed", region: "Global",
+   confidence: 0.85, reason: "Пассажирский минивэн (≤7 мест) — Факты, не LCV"}
+
 src: "GAC M8 minivan entered service with Moscow firefighters"
-→ {publish: true, section: "LCV news", region: "Local",
-   confidence: 0.85, reason: "Тип кузова — минивэн (LCV)"}
+→ {publish: false, confidence: 0.8,
+   reason: "Передача 1 ТС без подтверждения от GAC/МЧС — не местные"}
 
 src: "Lamborghini opened new showroom in Katowice"
 → {publish: true, section: "Other news", region: "Global",
