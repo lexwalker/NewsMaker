@@ -35,6 +35,40 @@ Confidence = Literal["high", "medium", "low"]
 # Trim "www." + known ccTLDs so media.bmwgroup.com matches press.bmwgroup.com
 _SUBDOMAIN_STRIP = re.compile(r"^(?:www|m|amp)\.")
 
+# Plan P2-A (may-2026, 248-comment editor audit). The editor repeatedly
+# insisted the bot surface the *original journalistic* source when an
+# article is hosted on a Russian redistribution portal that merely
+# reposts. Example editor flags:
+#   row  92 "первоисточником должен быть Carscoops, на него ссылается Автомейл"
+#   row 141 "первоисточник - thekoreancarblog.com"
+#   row  98 "первоисточником должен быть ANCAP"
+#
+# When the article domain is one of these redistributors AND the body
+# links out to a recognised primary journalistic/official host, that
+# outbound link is promoted to the primary source (high confidence).
+# This tier is GATED on the redistribution-host check, so articles on
+# any other domain keep the exact pre-existing tier behaviour — no
+# regression risk to the 9 existing detect_primary_source tests.
+_REDISTRIBUTION_HOSTS: frozenset[str] = frozenset({
+    "auto.mail.ru", "mail.ru",
+    "asroad.org",
+    "1prime.ru", "ria.ru", "tass.ru", "iz.ru",
+    "interfax.ru", "finmarket.ru",
+    "autonews.ru", "motorpage.ru",
+    "quto.ru", "kolesa.ru",
+})
+_PREFERRED_PRIMARY_HOSTS: frozenset[str] = frozenset({
+    # journalistic primaries the editor named explicitly
+    "carscoops.com", "motor1.com",
+    "thekoreancarblog.com",
+    "carnewschina.com", "cnevpost.com",
+    "autoevolution.com", "electrek.co",
+    "carsdirect.com", "autocarindia.com",
+    # official / industry bodies
+    "ancap.com.au", "euroncap.com",
+    "aebrus.ru", "nhtsa.gov",
+})
+
 
 def _normalise_domain(d: str) -> str:
     return _SUBDOMAIN_STRIP.sub("", d.lower())
@@ -176,6 +210,20 @@ def detect_primary_source(
             continue
         if _press_release_host(d, cues.press_release_hosts):
             return link, d, "high"
+
+    # Tier 1.5 — Plan P2-A: redistribution host → promote a recognised
+    # journalistic / official primary that the body links to. Gated on
+    # article_domain being a known redistributor, so this is a no-op for
+    # every other source (zero regression to existing behaviour).
+    if _normalise_domain(article_domain) in _REDISTRIBUTION_HOSTS or \
+            article_domain in _REDISTRIBUTION_HOSTS:
+        for link in outbound_links:
+            d = domain_of(link)
+            nd = _normalise_domain(d)
+            if nd == article_domain:
+                continue
+            if nd in _PREFERRED_PRIMARY_HOSTS or d in _PREFERRED_PRIMARY_HOSTS:
+                return link, d, "high"
 
     # Tier 2 — brand-owned domain, brand mentioned in article.
     if mentioned:

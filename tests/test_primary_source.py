@@ -166,6 +166,71 @@ def test_cue_phrase_with_external_link_is_medium() -> None:
     assert conf == "medium"
 
 
+# ----- Plan P2-A: redistribution host → promote journalistic primary --------
+
+def test_redistribution_host_promotes_carscoops() -> None:
+    """auto.mail.ru reposting a Carscoops story → Carscoops is primary.
+    Editor row 92: «первоисточником должен быть Carscoops»."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://auto.mail.ru/article/12345-nissan-plant/",
+        body="По данным Carscoops, завод Nissan переедет. Подробности.",
+        title="Nissan переносит европейский завод",
+        outbound_links=["https://www.carscoops.com/2026/05/nissan-plant-move/"],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    assert dom.endswith("carscoops.com")
+    assert conf == "high"
+
+
+def test_redistribution_host_promotes_ancap() -> None:
+    """1prime.ru reposting an ANCAP crash test → ANCAP is primary.
+    Editor row 98: «первоисточником должен быть ANCAP»."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://1prime.ru/20260512/byd-seal-99999.html",
+        body="BYD Seal 6 DM-i прошёл краш-тест ANCAP с максимальной оценкой.",
+        title="BYD Seal 6 DM-i получил 5 звёзд ANCAP",
+        outbound_links=["https://www.ancap.com.au/safety-ratings/byd/seal-6/"],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    assert dom.endswith("ancap.com.au")
+    assert conf == "high"
+
+
+def test_non_redistribution_host_unaffected_by_p2a() -> None:
+    """A normal blog linking to carscoops must NOT trigger Tier 1.5 —
+    it should fall through to existing tiers (low confidence here)."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://autoblog.example/story",
+        body="Some article about a Carscoops piece, no cue phrase.",
+        title="Some auto headline",
+        outbound_links=["https://www.carscoops.com/2026/05/story/"],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    # autoblog.example is NOT a redistribution host → Tier 1.5 skipped.
+    # No brand domain, no cue phrase → falls back to self/low.
+    assert url == "https://autoblog.example/story"
+    assert conf == "low"
+
+
+def test_redistribution_host_no_preferred_link_falls_through() -> None:
+    """auto.mail.ru but the only outbound is a random blog → Tier 1.5
+    does not fire; behaviour is the pre-existing fallback."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://auto.mail.ru/article/777-some-news/",
+        body="Просто новость без ссылки на признанный первоисточник.",
+        title="Автомобильная новость",
+        outbound_links=["https://randomblog.example/post/1"],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    # No preferred-primary link → Tier 1.5 inert, falls to self/low.
+    assert url == "https://auto.mail.ru/article/777-some-news/"
+    assert conf == "low"
+
+
 # ----- Level 2: earliest appearance in corpus -------------------------------
 def _t(iso: str) -> datetime:
     return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc)
