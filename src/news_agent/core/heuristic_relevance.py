@@ -927,6 +927,94 @@ _FORCE_REJECT_PHRASES = (
     "final model x produced",
     "hides button for",
     "скрыли кнопку",
+
+    # ====================================================================
+    # may-2026 plan P1-D + P2-C: 248-comment editor audit on
+    # «Новости (новые)» tab in editor's working spreadsheet.
+    # ====================================================================
+
+    # ---------- Per-model price changes / monthly discounts (P1-D) ----------
+    # Editor row 191: «снижение цен помодельное не постим. Интересует только
+    #   средние цены за период (месяц, год, квартал)»
+    # Editor row 103: «скидки не постим, только постоянное снижение РРЦ»
+    # Editor row 91 «Выгоды от производителей в новости с буллетами не постим,
+    #   это идет в Акции (мониторят коллеги)»
+    "revised price list", "revised price lists",
+    "переписали прайс-лист",
+    "переписавших прайс-лист",
+    "переписавшие прайс-лист",
+    "ev incentives in",
+    "incentives in may", "incentives in june", "incentives in april",
+    "favorable conditions for suv",
+    "favorable conditions for sedan",
+    "благоприятные условия для покупки",
+    "выгодных условиях покупки",
+    "выгоды от производителей",
+    "incentives for buying ev",
+    "discounts on ev", "discounts on suv",
+    # gray-import phrasing — "X undercuts Vesta/Iskra/Lada"
+    "undercutting vesta", "undercutting iskra",
+    "undercut the vesta", "undercut the iskra",
+    "обогнала ладу по цене",
+
+    # ---------- Off-topic content (P2-C) — politics/world economy ----------
+    # Editor row 100: «Решения, принятые на заседании правительства — не Другие»
+    "government decisions from",
+    "решения, принятые на заседании",
+    # Editor row 255: «Путин поддержал… вообще к автотематике не относится»
+    "putin supported", "путин поддержал",
+    # Editor row 273: «Czech PM gas plans — нас такое не касается»
+    "czech prime minister",
+    "premier ministra česk",
+    # Editor row 277: «Выручка Газпрома — не постим»
+    "gazprom revenue", "выручка газпрома",
+    # Editor row 212: «Fuel prices in Germany — не постим»
+    "fuel prices rose in germany",
+    "fuel prices in germany",
+    "gas prices in germany",
+    "цены на бензин в германии",
+    "горючее подорожало",
+
+    # ---------- Off-topic content (P2-C) — transport hubs / unrelated ----------
+    # Editor row 82: «Vnukovo airport medics — не Другие, не постим»
+    "vnukovo airport",
+    "внуково",  # we have no airport-news category at all
+    # Editor row 289: «Уровень пробок в Москве — никогда не постим»
+    "traffic congestion level",
+    "уровень пробок",
+    "баллов в москве",  # ЦОДД traffic jam reports
+    "по данным цодд",
+    # Editor row 117: «Rospotrebnadzor viruses — вообще не по теме»
+    "rospotrebnadzor warns",
+    "роспотребнадзор предупре",
+    "rotavirus", "ротавирус",
+    "ticks attack", "клещи нападают",
+
+    # ---------- Off-topic content (P2-C) — generic listicles / lifestyle ----------
+    # Editor row 222: «Largest automotive fines in history — не постим»
+    "largest automotive fines",
+    "крупнейшие штрафы в истор",
+    # Editor rows 248-249: «Lamborghini "symbol of Italy" / "Few Off" —
+    #   только юбилеи/награды по конкретным моделям»
+    "symbol of made in italy",
+    "символ итальянского качеств",
+    "few off roadster",
+    "emotional, limited and open",
+    # Editor row 244: «Cars Americans never got — не постим»
+    "americans never got",
+    "americans never had",
+
+    # ---------- Adjacent industries (P2-C) ----------
+    # Editor row 293: «прогнозы рынка direct-to-cell не постим»
+    "direct-to-cell market",
+    "прямой сотовой связи",
+    # Editor row 217: «BYD labor abuse Hungary — не постим в таком ключе»
+    "labor abuse allegations",
+    "обвинения в трудовых нарушениях",
+    # Editor row 191 «POSCO/HD Hyundai steel/shipbuilding» (rule 22 area)
+    "shipbuilding sector",
+    "steelmaking sector",
+    "сталелитейн", "судостроительн",
 )
 
 
