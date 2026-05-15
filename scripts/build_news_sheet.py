@@ -40,7 +40,18 @@ load_dotenv(ROOT / ".env", override=True)
 
 from news_agent.core.config_loader import load_brand_domains  # noqa: E402
 
-SHEET_ID = os.environ["SPREADSHEET_ID"]
+# Target sheet for the PUSH. The pipeline fetches against SPREADSHEET_ID
+# (curated source list) but publishes clusters into the editor's working
+# spreadsheet. NEWS_TARGET_SHEET_ID lets the caller redirect the push
+# WITHOUT touching .env — load_dotenv(override=True) would otherwise
+# clobber a shell-level SPREADSHEET_ID, so we read this dedicated var
+# (which is intentionally NOT in .env) first, then EDITOR_SPREADSHEET_ID,
+# then fall back to SPREADSHEET_ID.
+SHEET_ID = (
+    os.environ.get("NEWS_TARGET_SHEET_ID")
+    or os.environ.get("EDITOR_SPREADSHEET_ID")
+    or os.environ["SPREADSHEET_ID"]
+)
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
