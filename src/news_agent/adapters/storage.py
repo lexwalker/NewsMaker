@@ -109,6 +109,48 @@ class DedupStore:
                 continue
         return out
 
+    def recent_brand_models(
+        self, portal: str, *, days: int = 30
+    ) -> dict[str, tuple[str, str]]:
+        """Plan P3-D (advisory): {normalised brand+model → (last_seen_at,
+        canonical_url)} for everything classified on ``portal`` whose
+        ``last_seen_at`` is within the last ``days``.
+
+        Read-only. Used purely to annotate the editor-facing reason with
+        a "we wrote about this model recently" hint — it never changes
+        publish / section decisions, so a stale or missing value is
+        harmless. Rows whose cached JSON lacks ``launch_brand_model``
+        (pre-P3-D snapshots) are silently skipped.
+        """
+        from datetime import timedelta
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat()
+        out: dict[str, tuple[str, str]] = {}
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT canonical_url, last_seen_at, cached_row_json "
+                "FROM seen_articles "
+                "WHERE portal = ? AND last_seen_at IS NOT NULL "
+                "AND last_seen_at >= ? "
+                "AND cached_row_json IS NOT NULL AND cached_row_json != ''",
+                (portal, cutoff),
+            ).fetchall()
+        for r in rows:
+            try:
+                blob = json.loads(r["cached_row_json"])
+            except (ValueError, TypeError):
+                continue
+            bm = (blob.get("launch_brand_model") or "").strip().lower()
+            if not bm:
+                continue
+            prev = out.get(bm)
+            # Keep the most recent sighting per model.
+            if prev is None or r["last_seen_at"] > prev[0]:
+                out[bm] = (r["last_seen_at"], r["canonical_url"])
+        return out
+
     # ----------------------------------------------------- write
     def mark_many(
         self,

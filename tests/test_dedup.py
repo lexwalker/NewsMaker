@@ -1,4 +1,6 @@
-from news_agent.core.dedup import title_is_duplicate
+from datetime import datetime, timezone
+
+from news_agent.core.dedup import recent_model_dup_hint, title_is_duplicate
 
 
 def test_exact_match_is_duplicate() -> None:
@@ -24,3 +26,91 @@ def test_unrelated_title_not_duplicate() -> None:
 def test_empty_inputs_safe() -> None:
     assert not title_is_duplicate("", [], threshold=0.85)
     assert not title_is_duplicate("anything", [], threshold=0.85)
+
+
+# ----------- Plan P3-D: advisory recent-model dup hint --------------------
+
+_NOW = datetime(2026, 5, 14, 12, 0, tzinfo=timezone.utc)
+
+
+def test_recent_model_hint_fires_for_recent_model() -> None:
+    recent = {
+        "geely emgrand": ("2026-05-10T09:00:00+00:00",
+                          "https://other.example/emgrand-old"),
+    }
+    hint = recent_model_dup_hint(
+        "Geely Emgrand", recent,
+        "https://new.example/emgrand-new", now=_NOW,
+    )
+    assert hint is not None
+    assert "Geely Emgrand" in hint
+    assert "4 дн" in hint  # 14 May - 10 May
+
+
+def test_recent_model_hint_none_when_not_seen() -> None:
+    assert recent_model_dup_hint(
+        "Toyota Camry",
+        {"geely emgrand": ("2026-05-10T09:00:00+00:00", "u")},
+        "https://x.example/y", now=_NOW,
+    ) is None
+
+
+def test_recent_model_hint_none_for_same_url_rerun() -> None:
+    """Same URL = re-run of identical article, not a dup signal."""
+    same = "https://same.example/article-1"
+    recent = {"lada azimut": ("2026-05-13T09:00:00+00:00", same)}
+    assert recent_model_dup_hint(
+        "Lada Azimut", recent, same, now=_NOW,
+    ) is None
+
+
+def test_recent_model_hint_empty_brand_model_safe() -> None:
+    assert recent_model_dup_hint("", {"x": ("t", "u")},
+                                 "url", now=_NOW) is None
+    assert recent_model_dup_hint("   ", {"x": ("t", "u")},
+                                 "url", now=_NOW) is None
+
+
+def test_recent_model_hint_today() -> None:
+    recent = {"haval h9": ("2026-05-14T06:00:00+00:00",
+                           "https://a.example/h9")}
+    hint = recent_model_dup_hint(
+        "Haval H9", recent, "https://b.example/h9", now=_NOW,
+    )
+    assert hint is not None and "сегодня" in hint
+
+
+def test_recent_model_hint_bad_timestamp_degrades() -> None:
+    """Unparseable last_seen → 'недавно', never raises."""
+    recent = {"byd seal": ("not-a-date",
+                           "https://a.example/seal")}
+    hint = recent_model_dup_hint(
+        "BYD Seal", recent, "https://b.example/seal", now=_NOW,
+    )
+    assert hint is not None and "недавно" in hint
+
+
+def test_dedup_store_recent_brand_models(tmp_path) -> None:
+    """DedupStore.recent_brand_models reads only within window + parses
+    launch_brand_model from cached JSON. Pre-P3-D rows (no bm) skipped."""
+    import json
+
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "t.sqlite")
+    fresh_json = json.dumps({"verdict": "Точно новость",
+                             "launch_brand_model": "Geely Emgrand"})
+    no_bm_json = json.dumps({"verdict": "Точно новость"})
+    store.mark_many_with_cache([
+        ("h1", "https://a.example/1", "t1", None, "a.example",
+         "RU", fresh_json),
+        ("h2", "https://a.example/2", "t2", None, "a.example",
+         "RU", no_bm_json),
+    ])
+    out = store.recent_brand_models("RU", days=30)
+    assert "geely emgrand" in out
+    assert out["geely emgrand"][1] == "https://a.example/1"
+    # h2 had no launch_brand_model → not present
+    assert len(out) == 1
+    # Different portal → nothing
+    assert store.recent_brand_models("KZ", days=30) == {}

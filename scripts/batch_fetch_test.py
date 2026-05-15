@@ -71,6 +71,7 @@ from news_agent.core.config_loader import (  # noqa: E402
     load_source_quality,
     load_whitelist_domains,
 )
+from news_agent.core.dedup import recent_model_dup_hint  # noqa: E402
 from news_agent.core.freshness import is_fresh, is_in_window  # noqa: E402
 from news_agent.core.run_state import RunState, RunWindow  # noqa: E402
 from news_agent.core.primary_source import (  # noqa: E402
@@ -870,6 +871,20 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     country = "Russia"  # portal country for now; будет параметром позже
     section_names = {s.name for s in sections}
 
+    # Plan P3-D (advisory): load the recently-classified brand+model map
+    # once. Read-only; failure must NOT abort the LLM pass (the hint is
+    # purely cosmetic for the editor's reason column).
+    recent_bm: dict[str, tuple[str, str]] = {}
+    try:
+        if DEDUP_STORE is not None:
+            recent_bm = DEDUP_STORE.recent_brand_models(DEDUP_PORTAL, days=30)
+            if recent_bm:
+                print(f"  P3-D: {len(recent_bm)} models seen in last 30d "
+                      f"(advisory dup hints enabled)")
+    except Exception as _e:  # noqa: BLE001
+        print(f"  P3-D: recent-model lookup skipped ({type(_e).__name__})")
+        recent_bm = {}
+
     for i, r in enumerate(candidates, start=1):
         # ============================================================
         # Stage 1+2: editorial review (NEW path — consolidated call)
@@ -938,6 +953,23 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             if r.llm_section == "Test-drive":
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                     "требует ручной проверки — Test-drive"
+
+            # Plan P3-D (advisory) — accepted row only. If we classified
+            # the same brand+model within the last 30 days, append a hint
+            # to the editor-facing reason. Never changes verdict/section.
+            if r.launch_brand_model and recent_bm:
+                try:
+                    hint = recent_model_dup_hint(
+                        r.launch_brand_model,
+                        recent_bm,
+                        canonicalise(r.article_url),
+                    )
+                    if hint:
+                        r.llm_reason = ((r.llm_reason + " ") if r.llm_reason
+                                        else "") + hint
+                        r.llm_reason = r.llm_reason[:300]
+                except Exception:  # noqa: BLE001
+                    pass  # advisory only — never break the pass
         else:
             # LEGACY PATH: 2 separate LLM calls (relevance + classify)
             try:
@@ -1727,6 +1759,9 @@ def main(argv: list[str] | None = None) -> int:
                 "primary_domain": row.primary_domain,
                 "primary_confidence": row.primary_confidence,
                 "primary_method": row.primary_method,
+                # Plan P3-D: persist brand+model so a later run can emit a
+                # "we wrote about this model recently" advisory hint.
+                "launch_brand_model": row.launch_brand_model,
             }
             entries.append((
                 uh,
