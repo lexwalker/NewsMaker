@@ -1048,6 +1048,13 @@ def blacklist_hit(
     for phrase in _FORCE_REJECT_PHRASES:
         if phrase in title:
             return BlacklistVerdict(True, f"clickbait/yellow-press: {phrase!r}")
+    # Tier 1b — Plan P1-A: RU TG aggregator + single-brand sales (may-2026).
+    # Source-aware: needs URL not just title. Editor rejects these even
+    # when title looks "newsy" because the data has no official backing.
+    if is_ru_aggregator_single_brand_sales(raw.title or "", raw.url or ""):
+        return BlacklistVerdict(
+            True, "ru-tg-aggregator-single-brand-sales (нужен оф первоисточник)"
+        )
     # Tier 2 — topic phrases that allow brand override.
     for phrase in bl.all_phrases():
         if not phrase or phrase not in title:
@@ -1329,6 +1336,87 @@ SECTION_OTHER = "Other news"
 SECTION_LOCAL = "Local specifics"
 SECTION_RUMORS = "Rumors"
 SECTION_CONFIRMED = "Confirmed"
+
+
+# ---------- Plan P2-B: RU market data → force Local -----------------------
+# When the title carries _is_ru_auto_subject markers AND one of these
+# phrases, route to Local even without a RU-portal domain. The editor
+# never wants these in Economics — they're always RF market mechanics.
+_RU_LOCAL_FORCE_PHRASES: tuple[str, ...] = (
+    # Stock / inventory levels
+    "stocks of new passenger", "стоки новых",
+    "new car stocks", "запасы новых автомобилей",
+    "car stocks declining", "запасы снижаются",
+    # Import figures
+    "imports of new passenger", "import of new passenger",
+    "passenger car imports", "passenger-car imports",
+    "импорт новых легк", "импорта новых легк",
+    "imports came from individuals", "ввезли частники",
+    # Sales-forecast / sales-week / sales-month figures
+    "sales forecast for", "sales forecast in",
+    "forecast for april", "forecast for may", "forecast for june",
+    "may sales forecast", "april sales forecast",
+    "прогноз продаж", "прогноз продаж новых",
+    "sales increased over the week",
+    "продажи выросли за неделю",
+    "продажи за неделю выросли",
+    # Aggregate national fleet stats
+    "8 million commercial vehicles",
+    "8 млн коммерческих ",
+    "registered cars in russia",
+    "автопарк в россии",
+)
+
+
+# ---------- Plan P1-A: RU TG aggregators reporting global-brand sales -----
+# When the URL points to one of these Russian Telegram aggregators AND
+# the title is about a SINGLE global brand's recent sales / market share,
+# the editor consistently rejects (rows 105, 138, 168, 199 in may-2026
+# audit). Only AvtoVAZ / Lada / Moskvich / UAZ stays OK as Local.
+_RU_AGGREGATOR_TG: tuple[str, ...] = (
+    "t.me/sergtselikov",
+    "t.me/autopotoknews",
+    "t.me/chinamashina_news",
+)
+
+# Single-brand sales pattern: brand-name token followed by sales/share
+# phrasing tied to a month or quarter.
+_SINGLE_BRAND_SALES_RE = re.compile(
+    r"\b(sales|продажи|market share|доля рынка|deliveries|поставки)\b.*"
+    r"\b(in|в)\s+("
+    r"jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|"
+    r"янв|февр|март|апрел|ма[ея]|июн|июл|авгу|сент|октя|нояб|декаб|"
+    r"q1|q2|q3|q4|1 квартал|2 квартал|3 квартал|4 квартал"
+    r")",
+    re.IGNORECASE,
+)
+
+# Russian domestic brands the editor allows from these aggregators
+_RU_DOMESTIC_BRANDS = (
+    "lada", "лада", "avtovaz", "автоваз", "uaz", "уаз",
+    "moskvich", "москвич", "moskovich", "gaz", "газ",
+    "kamaz", "камаз", "iskra", "искра", "azimut", "азимут",
+)
+
+
+def is_ru_aggregator_single_brand_sales(title: str, url: str) -> bool:
+    """Plan P1-A: editor rejects single-brand monthly sales from RU TG.
+
+    Returns True when the URL is from a Russian TG aggregator AND the
+    title is about a global-brand monthly sales / market share report.
+    Domestic Russian brands (Lada, UAZ, Moskvich, etc.) are excluded
+    because their sales statistics from these channels stay publishable
+    as Local specifics.
+    """
+    if not url or not title:
+        return False
+    url_lower = url.lower()
+    if not any(host in url_lower for host in _RU_AGGREGATOR_TG):
+        return False
+    t = title.lower()
+    if any(b in t for b in _RU_DOMESTIC_BRANDS):
+        return False  # domestic brand — let LLM handle as Local
+    return bool(_SINGLE_BRAND_SALES_RE.search(t))
 
 
 # ---------- Rumor signals (title) ----------
@@ -1632,6 +1720,27 @@ def heuristic_section(
             region="Local",
             confidence=0.85,
             reason=f"ru-portal:{domain}",
+        )
+
+    # ----- Tier 4b: RU-market-data phrases = force Local --------------------
+    # Plan P2-B (may-2026): editor consistently routes RF passenger-car
+    # stats / forecasts / import figures to Local specifics, but the LLM
+    # mis-routes them to Economics because of words like «прогноз» or
+    # «продажи». When the title clearly references RF market mechanics,
+    # force Local regardless of domain.
+    # Editor rejected (mis-routed to Economics):
+    #   row 209 "passenger imports from individuals" → Local
+    #   row 239 "April sales forecast 115-120k" → Local
+    #   row 251 "Total new car stocks 400k" → Local
+    #   row 267 "New passenger car stocks declining" → Local
+    #   row 284 "Russia sales increased over week" → Local
+    #   row 292 "Russia 8M commercial vehicles" → Local
+    if _is_ru_auto_subject(t) and any(p in t for p in _RU_LOCAL_FORCE_PHRASES):
+        return HeuristicSection(
+            section=SECTION_LOCAL,
+            region="Local",
+            confidence=0.85,
+            reason="ru-market-data-force-local",
         )
 
     # ----- Tier 5: Rumors detection (title speculation + no brand voice) ----

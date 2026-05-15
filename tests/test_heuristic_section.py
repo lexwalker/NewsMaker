@@ -275,3 +275,157 @@ def test_single_word_title_rejected_as_placeholder() -> None:
     v = looks_like_article(raw)
     assert not v.is_article
     assert "single-word-placeholder-title" in v.reasons
+
+
+# ----------- Plan P2-B: RU market data → force Local ----------------------
+
+def test_ru_passenger_imports_forces_local() -> None:
+    """Editor row 209: «passenger imports from individuals — Local, not Economics»."""
+    h = heuristic_section(
+        title="Nearly half of new passenger car imports in Q1 2026 came from individuals in Russia"
+    )
+    assert h is not None and h.section == "Local specifics"
+    assert h.reason == "ru-market-data-force-local"
+
+
+def test_april_sales_forecast_forces_local() -> None:
+    """Editor row 239: «прогноз продаж в апреле — Местные»."""
+    h = heuristic_section(
+        title="April sales forecast: 115-120 thousand new cars in Russia"
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_ru_car_stocks_forces_local() -> None:
+    """Editor row 251: «стоки новых ТС — Местные»."""
+    h = heuristic_section(
+        title="Total stocks of new passenger cars in Russia reached 400 thousand"
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_ru_weekly_sales_forces_local() -> None:
+    """Editor row 284: «продажи выросли за неделю — Местные»."""
+    h = heuristic_section(
+        title="Russia new car sales increased over the week"
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_global_passenger_imports_NOT_forced_local() -> None:
+    """No RU subject markers → tier 4b does NOT trigger."""
+    h = heuristic_section(
+        title="EU passenger car imports forecast for 2027"
+    )
+    # No RU markers → tier 4b skipped. May return None.
+    if h is not None:
+        assert h.reason != "ru-market-data-force-local"
+
+
+# ----------- Plan P1-A: RU TG aggregator + global brand sales = reject ----
+
+def test_ru_tg_aggregator_global_brand_sales_rejected() -> None:
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://t.me/chinamashina_news/13437",
+        title="Great Wall Motor sales in April 2026 reached 106,312 units",
+        body="...", source_name="tg", source_url="https://t.me/chinamashina_news",
+    )
+    v = blacklist_hit(raw, Blacklist())
+    assert v.hit
+    assert "ru-tg-aggregator-single-brand-sales" in (v.reason or "")
+
+
+def test_sergtselikov_mazda_market_share_rejected() -> None:
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://t.me/sergtselikov/12345",
+        title="Mazda market share in Q1 2026 declined",
+        body="...", source_name="tg", source_url="https://t.me/sergtselikov",
+    )
+    assert blacklist_hit(raw, Blacklist()).hit
+
+
+def test_chinamashina_lada_sales_NOT_rejected() -> None:
+    """Domestic brand (Lada) from aggregator is OK — editor allows as Local."""
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://t.me/chinamashina_news/77",
+        title="Lada Iskra sales in April 2026 hit 8,000 units",
+        body="...", source_name="tg", source_url="https://t.me/chinamashina_news",
+    )
+    v = blacklist_hit(raw, Blacklist())
+    # Lada is domestic → exempt from P1-A rejection.
+    assert "ru-tg-aggregator-single-brand-sales" not in (v.reason or "")
+
+
+def test_aggregator_no_sales_pattern_NOT_rejected() -> None:
+    """No sales/month pattern → don't trigger P1-A."""
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://t.me/chinamashina_news/13520",
+        title="Li Auto registered refreshed L6 SUV in China",
+        body="...", source_name="tg", source_url="https://t.me/chinamashina_news",
+    )
+    v = blacklist_hit(raw, Blacklist())
+    assert "ru-tg-aggregator-single-brand-sales" not in (v.reason or "")
+
+
+# ----------- P1-D: per-model price phrases via _FORCE_REJECT_PHRASES ------
+
+def test_revised_price_list_force_rejected() -> None:
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Brands that revised price lists in April 2026",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert blacklist_hit(raw, Blacklist()).hit
+
+
+# ----------- P2-C: off-topic content via _FORCE_REJECT_PHRASES ------------
+
+def test_putin_supported_rejected() -> None:
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Putin supported the idea of extending regional debt repayment",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert blacklist_hit(raw, Blacklist()).hit
+
+
+def test_vnukovo_airport_rejected() -> None:
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Medics assist passengers at Vnukovo Airport",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert blacklist_hit(raw, Blacklist()).hit
+
+
+def test_few_off_roadster_lamborghini_rejected() -> None:
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://example.com/news",
+        title="Lamborghini Few Off Roadster: emotional, limited and open",
+        body="...", source_name="s", source_url="https://example.com/",
+    )
+    assert blacklist_hit(raw, Blacklist()).hit
