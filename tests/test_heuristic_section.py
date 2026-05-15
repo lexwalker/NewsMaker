@@ -429,3 +429,61 @@ def test_few_off_roadster_lamborghini_rejected() -> None:
         body="...", source_name="s", source_url="https://example.com/",
     )
     assert blacklist_hit(raw, Blacklist()).hit
+
+
+# ----------- Plan P1-C: stale-archive URL pattern guard -------------------
+
+def test_bydeurope_pre_2026_article_id_rejected() -> None:
+    """Editor flagged rows 313-318: bydeurope.com/article/<460-468> are
+    all 2023-2024 articles served as fresh."""
+    from news_agent.core.heuristic_relevance import looks_like_article
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://bydeurope.com/article/468",
+        title="BYD signs partnership with DLL Europe",
+        body="some body text " * 100,
+        source_name="s", source_url="https://bydeurope.com/",
+        html="<html>...</html>",
+    )
+    v = looks_like_article(raw)
+    assert not v.is_article
+    assert "stale-archive-url" in v.reasons
+
+
+def test_bydeurope_fresh_article_id_passes() -> None:
+    """bydeurope.com IDs ≥500 are post-2026 — should NOT trigger stale guard."""
+    from news_agent.core.heuristic_relevance import _is_known_stale_archive_url
+    assert not _is_known_stale_archive_url("https://bydeurope.com/article/512")
+    assert not _is_known_stale_archive_url("https://bydeurope.com/article/500")
+
+
+def test_hyundai_ru_pre_feb_2022_press_archive_rejected() -> None:
+    """Editor flagged rows 320-324: hyundai.ru/news/press-<N> for N≤12700
+    are all Jan-Feb 2022 archive articles."""
+    from news_agent.core.heuristic_relevance import looks_like_article
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(
+        url="https://www.hyundai.ru/news/press-12591",
+        title="Hyundai Motor sng results January 2022",
+        body="some body text " * 100,
+        source_name="s", source_url="https://hyundai.ru/news/",
+        html="<html>...</html>",
+    )
+    v = looks_like_article(raw)
+    assert not v.is_article
+    assert "stale-archive-url" in v.reasons
+
+
+def test_hyundai_ru_fresh_press_id_passes() -> None:
+    """hyundai.ru press-13000+ should not trigger the stale guard."""
+    from news_agent.core.heuristic_relevance import _is_known_stale_archive_url
+    assert not _is_known_stale_archive_url("https://www.hyundai.ru/news/press-13050")
+
+
+def test_other_domains_unaffected_by_stale_guard() -> None:
+    """The stale guard MUST be domain-scoped — random URLs with /article/<N>
+    on other domains must not be filtered."""
+    from news_agent.core.heuristic_relevance import _is_known_stale_archive_url
+    assert not _is_known_stale_archive_url("https://carscoops.com/article/100")
+    assert not _is_known_stale_archive_url("https://motor1.com/news/12345/")
+    assert not _is_known_stale_archive_url("")

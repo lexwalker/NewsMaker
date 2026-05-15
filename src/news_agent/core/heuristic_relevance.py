@@ -140,6 +140,61 @@ POSSIBLE_SCORE_THRESHOLD = 0.35  # below this → definitely not
 CERTAIN_MIN_AUTO_HITS = 2        # keyword hits required to call it 'certainly automotive'
 
 
+# Plan P1-C: known sites with sequential article IDs that serve pre-2025
+# archive content under fresh-looking URLs. Editor flagged rows 313-327
+# (may-2026 audit) — articles from 2022-2024 escaped freshness checks
+# because the aggregator/CDN stamped a fresh `published_at` in HTML even
+# though the body referenced events 2-4 years ago.
+#
+# Each pattern is (host, regex, threshold, comment). When the URL host
+# matches AND the regex captures an integer ID < threshold, the article
+# is treated as a stale archive.
+_STALE_ARCHIVE_URL_RULES: tuple[tuple[str, "re.Pattern[str]", int, str], ...] = (
+    # bydeurope.com — IDs ≤470 are 2024-2025 (editor rejected 460, 461,
+    # 464, 466, 468). IDs ≥500 should be 2026+.
+    (
+        "bydeurope.com",
+        re.compile(r"/article/(\d+)"),
+        500,
+        "bydeurope.com pre-2026 article (sequential ID < 500)",
+    ),
+    # hyundai.ru/news/press-<N> — N≤12700 is Jan-Feb 2022 (editor rejected
+    # rows 320-324 all in that range). N≥13000 should be Mar 2022+; we
+    # keep a generous cutoff to avoid swallowing legitimate items.
+    (
+        "hyundai.ru",
+        re.compile(r"/news/press-(\d+)"),
+        12700,
+        "hyundai.ru pre-Feb-2022 press archive",
+    ),
+)
+
+
+def _is_known_stale_archive_url(url: str) -> bool:
+    """Return True for URLs matching the stale-archive guard list."""
+    if not url:
+        return False
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:  # noqa: BLE001
+        return False
+    if host.startswith("www."):
+        host = host[4:]
+    for site, pattern, threshold, _ in _STALE_ARCHIVE_URL_RULES:
+        if host != site:
+            continue
+        m = pattern.search(url)
+        if not m:
+            continue
+        try:
+            article_id = int(m.group(1))
+        except (ValueError, IndexError):
+            continue
+        if article_id < threshold:
+            return True
+    return False
+
+
 def looks_like_article(
     raw: RawArticle, *, whitelist: set[str] | None = None
 ) -> ArticleVerdict:
@@ -167,6 +222,14 @@ def looks_like_article(
     # sentence — single short tokens are placeholders.
     if " " not in title_raw and len(title_raw) < 15:
         reasons.append("single-word-placeholder-title")
+        return ArticleVerdict(is_article=False, score=0.0, reasons=reasons)
+
+    # Plan P1-C (may-2026): URL-pattern guards for known stale archives.
+    # Editor flagged 8+ rows (313-327 in may-2026 audit) where bydeurope.com
+    # and hyundai.ru/news/press-<N> served 2022-2024 articles disguised
+    # as fresh. The sites use sequential IDs — pre-2025 ones are stale.
+    if _is_known_stale_archive_url(raw.url or ""):
+        reasons.append("stale-archive-url")
         return ArticleVerdict(is_article=False, score=0.0, reasons=reasons)
 
     # --- positive structural signals ---
