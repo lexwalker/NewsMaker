@@ -533,6 +533,20 @@ language tag — the system appends "(EN)" / "(АНГЛ)" / "(НЕМ)" / "(ИТ�
    says "X will arrive in Russia in 2027", the RU MUST say "X появится в
    РФ в 2027 г." — NOT "В X поделились характеристиками для РФ".
 
+   1a) **YEAR / QUARTER SYMMETRY (hard).** If a year ("2028"), a quarter
+   ("Q1 2026" / "1 квартал 2026"), or any explicit period appears in
+   EITHER the English OR the Russian headline, it MUST appear in BOTH.
+   You may NOT keep "2028" / "Q1 2026" on one side and drop it (or
+   replace it with a vague "на более поздний срок" / "this summer") on
+   the other. Pick one: include the exact period in BOTH, or — only if
+   the source body truly has no period — omit it from BOTH. Examples of
+   the FORBIDDEN asymmetry (do not produce these):
+     EN "postponed launch beyond 2028" / RU "на более поздний срок"  ✗
+     EN "in Q1 2026" / RU "в первом квартале"  ✗
+     EN "received 2026 update" / RU "обновили" (no year)  ✗
+     EN "this summer" / RU "летом 2026 г."  ✗
+   Correct: EN "postponed beyond 2028" / RU "перенесла за пределы 2028 г."
+
 2) **Don't fabricate dates, years, prices or numbers.** Take them only
    from the source title or body. If the source body says nothing about
    the year, OMIT the year — don't guess "2024" or "2027". When in
