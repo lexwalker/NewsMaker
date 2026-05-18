@@ -73,6 +73,7 @@ from news_agent.core.config_loader import (  # noqa: E402
 )
 from news_agent.core.dedup import recent_model_dup_hint  # noqa: E402
 from news_agent.core.freshness import is_fresh, is_in_window  # noqa: E402
+from news_agent.core.sheets_util import clamp_cells  # noqa: E402
 from news_agent.core.run_state import RunState, RunWindow  # noqa: E402
 from news_agent.core.primary_source import (  # noqa: E402
     CorpusEntry,
@@ -525,7 +526,7 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
         spreadsheetId=SHEET_ID,
         range=f"'{tab}'!A1",
         valueInputOption="USER_ENTERED",
-        body={"values": out},
+        body={"values": clamp_cells(out)},
     ).execute()
 
 
@@ -562,7 +563,7 @@ def write_report(svc, run_ts: str, results: list[SourceResult], tab: str) -> Non
         spreadsheetId=SHEET_ID,
         range=f"'{tab}'!A1",
         valueInputOption="USER_ENTERED",
-        body={"values": rows},
+        body={"values": clamp_cells(rows)},
     ).execute()
 
 
