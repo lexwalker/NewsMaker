@@ -109,12 +109,51 @@ def test_url_model_key_no_brand_returns_empty() -> None:
 
 
 def test_url_model_key_brand_then_long_word_no_model() -> None:
-    """Brand followed only by a long non-model word → no key (avoids
-    gluing unrelated same-brand stories like 'jaguar-announced-...')."""
+    """Brand followed only by non-digit words → no key. A model id is a
+    digit-bearing code; verb/noun phrases (incl. RU translit) are not."""
     bnc._BRANDS_LOWER = ["jaguar"]
     assert bnc._url_model_key(
         "https://kolesa.ru/news/jaguar-nazval-imia-pervoi-modeli"
     ) == ""
+
+
+def test_url_model_key_no_collision_on_pressroom_slugs() -> None:
+    """Audit regression: geely-motors.com/about-geely/news/<slug> used to
+    yield "geely news" for EVERY press release (catastrophic over-merge);
+    cnevpost xpeng-to-<verb> yielded "xpeng to". Both must be ''."""
+    bnc._BRANDS_LOWER = ["geely", "xpeng", "jaguar"]
+    assert bnc._url_model_key(
+        "https://www.geely-motors.com/about-geely/news/"
+        "geely-unveiled-an-innovative-v6-engine-for"
+    ) == ""
+    assert bnc._url_model_key(
+        "https://www.geely-motors.com/about-geely/news/"
+        "geely-reports-record-revenue-and-sales-2025"
+    ) == ""
+    assert bnc._url_model_key(
+        "https://www.geely-motors.com/about-geely/news/"
+        "geely-introduces-new-geely-coolray-in-russia"
+    ) == ""  # Coolray has no digit code → no key (falls back to title)
+    assert bnc._url_model_key(
+        "https://cnevpost.com/2026/05/13/xpeng-to-report-q1-earnings-may-28/"
+    ) == ""
+    assert bnc._url_model_key(
+        "https://cnevpost.com/2026/05/11/xpeng-to-launch-gx-suv-may-20/"
+    ) == ""
+
+
+def test_url_model_key_digit_code_models_extracted() -> None:
+    """Digit-bearing model codes ARE extracted (the real dup signal)."""
+    bnc._BRANDS_LOWER = ["jaguar", "bmw", "kia"]
+    assert bnc._url_model_key(
+        "https://media.jaguar.com/news/2026/05/jaguar-type-01-name-new-era"
+    ) == "jaguar type 01"
+    assert bnc._url_model_key(
+        "https://example.com/news/bmw-ix3-long-wheelbase-revealed"
+    ) == "bmw ix3"
+    assert bnc._url_model_key(
+        "https://example.com/news/new-kia-ev9-gt-breaks-cover"
+    ) == "kia ev9"
 
 
 def test_url_slug_merges_divergent_headlines() -> None:

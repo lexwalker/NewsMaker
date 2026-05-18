@@ -203,6 +203,47 @@ def _proper_noun_overlap(a: str, b: str) -> int:
     return len(_proper_noun_tokens(a) & _proper_noun_tokens(b))
 
 
+# Generic slug words that are NEVER a model name. Without this list the
+# extractor produced "geely news" for EVERY geely-motors.com/about-geely/
+# news/<slug> URL and "xpeng to" for every "xpeng-to-<verb>" — collapsing
+# unrelated press releases. A token in this set can't be a model token
+# and (when it's the FIRST token after the brand) makes that brand
+# position yield nothing; the scan then continues to the next brand
+# occurrence in the slug (handles ".../news/geely-introduces-new-geely-
+# coolray-in-russia" → "geely coolray").
+_SLUG_STOPWORDS = frozenset({
+    # path / structural
+    "news", "about", "press", "media", "article", "articles", "story",
+    "blog", "post", "posts", "category", "tag", "tags", "index", "page",
+    "en", "ru", "int", "global", "company", "corporate", "newsroom",
+    # articles / prepositions / conjunctions
+    "the", "a", "an", "to", "of", "for", "in", "on", "at", "by", "and",
+    "or", "with", "from", "as", "its", "it", "is", "are", "was", "were",
+    "this", "that", "new", "all", "more", "into", "out", "up", "via",
+    # common slug verbs / nouns (not model-distinctive)
+    "will", "has", "have", "had", "gets", "get", "got", "make", "makes",
+    "report", "reports", "reported", "reporting", "results",
+    "reveal", "reveals", "revealed", "revealing",
+    "launch", "launches", "launched", "launching",
+    "unveil", "unveils", "unveiled", "unveiling",
+    "introduce", "introduces", "introduced", "introducing",
+    "present", "presents", "presented", "presenting",
+    "announce", "announces", "announced", "announcement",
+    "start", "starts", "started", "starting", "begins", "began",
+    "sales", "sale", "selling", "sell", "sells", "sold",
+    "revenue", "profit", "loss", "earnings", "financial",
+    "recall", "recalls", "recalled", "campaign",
+    "update", "updates", "updated", "updating", "current",
+    "record", "took", "take", "takes", "leading", "position", "rating",
+    "plant", "plants", "factory", "production", "produce", "produced",
+    "deliveries", "delivery", "shipments", "market", "version",
+    "model", "models", "lineup", "range", "first", "next", "second",
+    "show", "showed", "shows", "showing", "debut", "debuts", "premiere",
+    "concept", "prototype", "spotted", "teased", "review", "test",
+    "russia", "russian", "china", "chinese", "europe", "european",
+})
+
+
 def _url_model_key(url: str) -> str:
     """Derive a "<brand> <model-token(s)>" key from a URL slug.
 
@@ -214,11 +255,21 @@ def _url_model_key(url: str) -> str:
       motor1.com/news/796122/jaguar-type-01-new-images
     The slug is the most reliable cross-source signal here.
 
-    Returns brand + up to 2 following "model-ish" tokens (a token with a
-    digit, or ≤4 chars — model codes like ``type 01``, ``ix3``, ``ev9``).
-    Empty string when no brand token is found in the path. Conservative
-    by design: a non-match just falls back to the existing title logic,
-    so this can only ADD correct merges, never break existing ones.
+    Returns ``<brand> <model-token(s)>`` (≤2 model tokens) and ONLY when
+    at least one model token carries a digit — real model identifiers are
+    digit-bearing codes (``type 01``, ``ix3``, ``ev9``, ``s800``, ``gs4``).
+    This high-precision rule:
+      • keeps the editor's actual dup case (jaguar-type-01 → "jaguar
+        type 01", caught across kolesa/motor1/media.jaguar)
+      • eliminates ALL the false collisions the audit surfaced —
+        "geely news" (every geely-motors press URL), "xpeng to"
+        (every xpeng-to-<verb>), and RU-translit verb slugs like
+        "jaguar nazval imia" — which have no digit token → "".
+    Generic words are still pre-filtered via _SLUG_STOPWORDS and the scan
+    walks EVERY brand occurrence so a structural "about-geely" segment
+    doesn't shadow a real "<brand>-<model>" later in the path. A model
+    without a digit code (Coolray, Emgrand, Tucson) yields "" and the
+    caller falls back to title-fuzz — prior behaviour, never a regression.
     """
     if not url:
         return ""
@@ -228,16 +279,26 @@ def _url_model_key(url: str) -> str:
         return ""
     toks = [t for t in re.split(r"[^a-z0-9]+", path) if t]
     for bi, tok in enumerate(toks):
-        if tok in _BRANDS_LOWER:
-            model_toks: list[str] = []
-            for nxt in toks[bi + 1 : bi + 3]:
-                if any(ch.isdigit() for ch in nxt) or len(nxt) <= 4:
-                    model_toks.append(nxt)
-                else:
-                    break
-            if model_toks:
-                return f"{tok} {' '.join(model_toks)}"
-            return ""
+        if tok not in _BRANDS_LOWER:
+            continue
+        # Collect non-stopword tokens UNTIL AND INCLUDING the first
+        # digit-bearing one, then stop — the digit token is the model
+        # code, anything after it ("long", "wheelbase", "review") is
+        # slug noise that would split the same model across sources.
+        model_toks: list[str] = []
+        has_digit = False
+        for nxt in toks[bi + 1 : bi + 4]:
+            if nxt in _BRANDS_LOWER or nxt in _SLUG_STOPWORDS:
+                break
+            if not (2 <= len(nxt) <= 12 or any(c.isdigit() for c in nxt)):
+                break
+            model_toks.append(nxt)
+            if any(c.isdigit() for c in nxt):
+                has_digit = True
+                break  # model code reached — stop
+        if model_toks and has_digit:
+            return f"{tok} {' '.join(model_toks)}"
+        # otherwise keep scanning for another brand occurrence
     return ""
 
 
