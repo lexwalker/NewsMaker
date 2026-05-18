@@ -30,8 +30,17 @@ from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+# Force UTF-8 console only when run as a script. Doing this at import
+# time corrupts pytest's captured stdout (wraps & later closes its
+# buffer → "I/O operation on closed file"). Guarding keeps the module
+# import-safe for unit tests.
+if __name__ == "__main__":
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer, encoding="utf-8", line_buffering=True
+    )
+    sys.stderr = io.TextIOWrapper(
+        sys.stderr.buffer, encoding="utf-8", line_buffering=True
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -194,6 +203,44 @@ def _proper_noun_overlap(a: str, b: str) -> int:
     return len(_proper_noun_tokens(a) & _proper_noun_tokens(b))
 
 
+def _url_model_key(url: str) -> str:
+    """Derive a "<brand> <model-token(s)>" key from a URL slug.
+
+    Editor dup case (may-2026): the same Jaguar Type 01 spy-shot story
+    had headlines sharing only "Jaguar" ("electric sedan prototype" vs
+    "Type 01") so title-fuzz never merged them — but BOTH URLs carry the
+    slug ``jaguar-type-01``:
+      kolesa.ru/news/jaguar-type-01-pokazalsia-na-novyx-snimkax
+      motor1.com/news/796122/jaguar-type-01-new-images
+    The slug is the most reliable cross-source signal here.
+
+    Returns brand + up to 2 following "model-ish" tokens (a token with a
+    digit, or ≤4 chars — model codes like ``type 01``, ``ix3``, ``ev9``).
+    Empty string when no brand token is found in the path. Conservative
+    by design: a non-match just falls back to the existing title logic,
+    so this can only ADD correct merges, never break existing ones.
+    """
+    if not url:
+        return ""
+    try:
+        path = urlparse(url).path.lower()
+    except Exception:  # noqa: BLE001
+        return ""
+    toks = [t for t in re.split(r"[^a-z0-9]+", path) if t]
+    for bi, tok in enumerate(toks):
+        if tok in _BRANDS_LOWER:
+            model_toks: list[str] = []
+            for nxt in toks[bi + 1 : bi + 3]:
+                if any(ch.isdigit() for ch in nxt) or len(nxt) <= 4:
+                    model_toks.append(nxt)
+                else:
+                    break
+            if model_toks:
+                return f"{tok} {' '.join(model_toks)}"
+            return ""
+    return ""
+
+
 def _parse_dt(s: str) -> datetime | None:
     if not s:
         return None
@@ -235,6 +282,17 @@ def _cluster_priority(
     return (2, pub)
 
 
+def _outside_time_window(a_pub, b_pub) -> bool:
+    """True iff both timestamps exist AND differ by more than TIME_WINDOW.
+
+    Missing timestamps → False (don't block a merge on absent data; the
+    other guards still apply).
+    """
+    if not a_pub or not b_pub:
+        return False
+    return abs((a_pub - b_pub).total_seconds()) > TIME_WINDOW.total_seconds()
+
+
 def cluster_articles(
     articles: list[dict],
     *,
@@ -261,36 +319,84 @@ def cluster_articles(
 
     norms = [a["normalised"] for a in articles]
     primary_urls = [a.get("primary_url", "") for a in articles]
+    # brand+model key per article: prefer the upstream Phase-1 column
+    # (col AD), but it is empty for anything without a launch-stage
+    # keyword (spy shots, "appears in images"). Fall back to the URL-slug
+    # extractor so same-subject stories with divergent headlines still
+    # collapse. Lower-cased; "" when neither yields a pair.
+    brand_models = []
+    for a in articles:
+        bm = (a.get("launch_brand_model") or "").strip().lower()
+        if not bm or " " not in bm:
+            slug_bm = _url_model_key(a.get("url", ""))
+            if slug_bm:
+                bm = slug_bm
+        brand_models.append(bm)
     for i in range(n):
         ti = norms[i]
         ai_pub = articles[i]["pub_dt"]
         pi = primary_urls[i].strip().lower() if primary_urls[i] else ""
+        bmi = brand_models[i]
         for j in range(i + 1, n):
             tj = norms[j]
             pj = primary_urls[j].strip().lower() if primary_urls[j] else ""
+            bmj = brand_models[j]
 
             # Cross-language safety net: same primary URL = same story.
             # Catches cases where RU and EN headlines have <5 token overlap
             # (different verbs/nouns) but cite the same press release.
             primary_match = bool(pi and pj and pi == pj)
 
+            # Same extracted (brand, model) = same subject even when the
+            # two headlines word it completely differently. Real editor
+            # case (may-2026): "Jaguar electric sedan prototype spotted"
+            # (→ Rumors) vs "Jaguar Type 01 appears in new images"
+            # (→ Confirmed) — both extract "jaguar type 01" but share
+            # only the token "jaguar", so title-fuzz never merged them.
+            # Requires a real "<brand> <model>" pair (a space + length),
+            # NOT a bare brand, to avoid gluing every Toyota story. Unlike
+            # primary_match this does NOT override the 36h time window —
+            # the same model written about months apart is a different
+            # story; only same-news-cycle coverage should collapse.
+            # Needs a real "<brand> <model>" pair: a space (rules out a
+            # bare brand) and ≥5 chars total (shortest real pair like
+            # "kia ev9"/"bmw m3" is 6-7; 5 is a safe floor that still
+            # rejects junk like "a b").
+            brand_model_match = bool(
+                bmi and bmi == bmj and " " in bmi and len(bmi) >= 5
+            )
+
             if not ti or not tj:
-                if primary_match:
-                    union(i, j)
+                if primary_match or brand_model_match:
+                    if not (
+                        brand_model_match
+                        and not primary_match
+                        and _outside_time_window(
+                            articles[i]["pub_dt"], articles[j]["pub_dt"]
+                        )
+                    ):
+                        union(i, j)
                 continue
 
             sim = fuzz.token_set_ratio(ti, tj)
-            if sim < threshold and not primary_match:
+            if sim < threshold and not primary_match and not brand_model_match:
                 continue
-            # Brand guard — skip when primary_match already proved equality
-            if not primary_match and not _brand_overlap(ti, tj):
+            # Brand guard — skip when primary_match OR brand_model_match
+            # already proved equality.
+            if (
+                not primary_match
+                and not brand_model_match
+                and not _brand_overlap(ti, tj)
+            ):
                 continue
             # Proper-noun overlap guard — at least 2 shared specific tokens
             # (brand + model OR brand + location, etc). Without this, we
             # collapse "Toyota launched X" + "Toyota launched Y" because
-            # they share fuzz score but differ in model.
+            # they share fuzz score but differ in model. Bypassed when the
+            # extracted (brand, model) is identical (brand_model_match).
             if (
                 not primary_match
+                and not brand_model_match
                 and _proper_noun_overlap(ti, tj) < PROPER_NOUN_OVERLAP_MIN
             ):
                 continue
@@ -301,7 +407,7 @@ def cluster_articles(
             # to prevent gluing different stories like "TOP used luxury
             # cars in Russia" + "Sales of global brand cars increased 2,4x"
             # which share enough generic tokens to cross 65 + 2.
-            if not primary_match:
+            if not primary_match and not brand_model_match:
                 ai_brands = {br for br in _BRANDS_LOWER if br in ti}
                 bj_brands = {br for br in _BRANDS_LOWER if br in tj}
                 if not ai_brands and not bj_brands:
