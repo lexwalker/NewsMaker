@@ -1494,6 +1494,20 @@ _RUMOR_TITLE_HINTS = (
     "spotted ", "leaked",
     "could come to", "could arrive",
     "hints at", "teased",
+    # ---- spy-shot / pre-reveal preview (may-2026 editor dup case) ----
+    # Editor: spy shots & "spotted before debut" are Rumors, NEVER
+    # Confirmed. r11 "Jaguar Type 01 appears in new images ahead of
+    # imminent debut" wrongly went Confirmed because none of these fired.
+    "appears in new images", "appears in fresh images",
+    "appears in spy", "shown in new images", "seen in new images",
+    "ahead of imminent debut", "ahead of debut",
+    "ahead of premiere", "ahead of its debut",
+    "ahead of official debut", "ahead of unveiling",
+    "ahead of reveal", "before its debut", "before official",
+    "without camouflage", "without heavy camouflage",
+    "less camouflage", "drops camouflage", "sheds camouflage",
+    "spy shot", "spy photo", "spied testing", "caught testing",
+    "prototype spotted", "prototype seen", "prototype caught",
     # russian
     "может появиться", "может выйти", "может прийти",
     "может вернуться", "ожидается появление",
@@ -1502,6 +1516,16 @@ _RUMOR_TITLE_HINTS = (
     "замечен", "замечена", "замечено",  # caught testing
     "слухи", "слух о",
     "поговаривают",
+    # spy-shot / pre-reveal — russian
+    "показался на новых снимках", "показался на снимках",
+    "показали на новых снимках", "засветился",
+    "перед премьерой", "перед скорой премьерой",
+    "в преддверии премьеры", "в преддверии дебюта",
+    "перед дебютом", "перед скорым дебютом",
+    "без камуфляжа", "без маскировки",
+    "без тяжёлого камуфляжа", "без тяжелого камуфляжа",
+    "прототип замечен", "прототип засветился",
+    "шпионские снимки", "шпионские фото",
 )
 
 # ---------- Brand voice (body) — when present, it's NOT a rumor ----------

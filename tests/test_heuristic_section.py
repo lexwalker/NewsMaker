@@ -147,6 +147,42 @@ def test_no_rumor_signal_in_factual_title() -> None:
     assert not has_rumor_signal("BYD reported Q1 sales")
 
 
+def test_spy_shot_preview_titles_are_rumor() -> None:
+    """may-2026 editor dup case: spy-shot / pre-reveal previews must be
+    Rumors, never Confirmed."""
+    # the exact r11 title that wrongly went Confirmed
+    assert has_rumor_signal(
+        "Jaguar Type 01 appears in new images ahead of imminent debut"
+    )
+    assert has_rumor_signal(
+        "Jaguar Type 01 показался на новых снимках перед скорой премьерой"
+    )
+    assert has_rumor_signal(
+        "BMW M5 Touring prototype spotted without heavy camouflage"
+    )
+    assert has_rumor_signal("New Audi A6 caught testing ahead of debut")
+    assert has_rumor_signal("Прототип электроседана Jaguar без камуфляжа")
+    assert has_rumor_signal("Volkswagen Golf засветился перед премьерой")
+
+
+def test_legit_launch_not_flagged_as_rumor() -> None:
+    """Guard: real launches must NOT be swept up by the new spy phrases."""
+    assert not has_rumor_signal("Jaguar unveiled the Type 01 electric SUV")
+    assert not has_rumor_signal("BMW launched the new M5 in Europe")
+    assert not has_rumor_signal("Toyota представила новый Camry")
+
+
+def test_r11_jaguar_spy_routes_to_rumors_not_confirmed() -> None:
+    """End-to-end: the editor-reported misclassification. Body has no
+    brand-voice → heuristic_section must return Rumors."""
+    h = heuristic_section(
+        title="Jaguar Type 01 appears in new images ahead of imminent debut",
+        body_excerpt="New spy images surfaced online showing the prototype "
+                      "testing on public roads. No official word yet.",
+    )
+    assert h is not None and h.section == "Rumors"
+
+
 def test_brand_voice_detection() -> None:
     body = "В пресс-службе Toyota сообщили о планах запуска новой модели..."
     assert has_brand_voice(body)
