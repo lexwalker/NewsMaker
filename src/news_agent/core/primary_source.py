@@ -56,6 +56,9 @@ _REDISTRIBUTION_HOSTS: frozenset[str] = frozenset({
     "interfax.ru", "finmarket.ru",
     "autonews.ru", "motorpage.ru",
     "quto.ru", "kolesa.ru",
+    # may-2026 editor note: «спидми очень редко используем как
+    # первоисточник — обычно это перепост англ новостей».
+    "speedme.ru",
 })
 _PREFERRED_PRIMARY_HOSTS: frozenset[str] = frozenset({
     # journalistic primaries the editor named explicitly

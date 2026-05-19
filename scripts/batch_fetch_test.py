@@ -25,7 +25,7 @@ import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 
 import feedparser
 import httpx
@@ -1187,7 +1187,9 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     (currently: articles older than FRESHNESS_HOURS — they never go to LLM
     and clutter the report with no value).
     """
-    row.article_url = article.url
+    # Defrag chokepoint: never let a #fragment (autoreview.ru #comments)
+    # reach the sheet / dedup, regardless of which fetch path produced it.
+    row.article_url = urldefrag(article.url)[0]
     row.title = article.title
     row.body_len = len(article.body)
     row.body_excerpt = article.body[:1000]  # ≤1000 chars → ~40% token saving on LLM input
@@ -1449,6 +1451,12 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
         if not href or href.startswith(("#", "mailto:", "javascript:")):
             continue
         absolute = urljoin(index_url, href)
+        # Strip the #fragment — index pages on some portals (autoreview.ru)
+        # link straight to the comments anchor (".../slug#comments"), which
+        # then gets written to the sheet verbatim and also splits dedup
+        # (same article with vs without #comments). The fragment never
+        # matters for article identity.
+        absolute = urldefrag(absolute)[0]
         p = urlparse(absolute)
         if p.netloc != host:
             continue
