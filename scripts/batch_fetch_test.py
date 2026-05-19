@@ -71,7 +71,10 @@ from news_agent.core.config_loader import (  # noqa: E402
     load_source_quality,
     load_whitelist_domains,
 )
-from news_agent.core.dedup import recent_model_dup_hint  # noqa: E402
+from news_agent.core.dedup import (  # noqa: E402
+    recent_event_dup_hint,
+    recent_model_dup_hint,
+)
 from news_agent.core.freshness import is_fresh, is_in_window  # noqa: E402
 from news_agent.core.sheets_util import clamp_cells  # noqa: E402
 from news_agent.core.run_state import RunState, RunWindow  # noqa: E402
@@ -899,6 +902,20 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         print(f"  P3-D: recent-model lookup skipped ({type(_e).__name__})")
         recent_bm = {}
 
+    # Hybrid Stage 2a (advisory): semantic event-key map from last 30d.
+    # Stronger than the lexical brand_model — catches divergent-headline
+    # / cross-language repeats. Same read-only, never-abort contract.
+    recent_ev: dict[str, tuple[str, str, str]] = {}
+    try:
+        if DEDUP_STORE is not None:
+            recent_ev = DEDUP_STORE.recent_event_keys(DEDUP_PORTAL, days=30)
+            if recent_ev:
+                print(f"  Stage2a: {len(recent_ev)} event-keys seen in "
+                      f"last 30d (semantic dup hints enabled)")
+    except Exception as _e:  # noqa: BLE001
+        print(f"  Stage2a: event-key lookup skipped ({type(_e).__name__})")
+        recent_ev = {}
+
     for i, r in enumerate(candidates, start=1):
         # ============================================================
         # Stage 1+2: editorial review (NEW path — consolidated call)
@@ -975,22 +992,28 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                     "требует ручной проверки — Test-drive"
 
-            # Plan P3-D (advisory) — accepted row only. If we classified
-            # the same brand+model within the last 30 days, append a hint
-            # to the editor-facing reason. Never changes verdict/section.
-            if r.launch_brand_model and recent_bm:
-                try:
-                    hint = recent_model_dup_hint(
-                        r.launch_brand_model,
-                        recent_bm,
-                        canonicalise(r.article_url),
+            # Advisory dup hint — accepted row only, never changes
+            # verdict/section. Prefer the Stage-2a SEMANTIC event-key
+            # (catches divergent-headline / cross-language repeats);
+            # fall back to the lexical P3-D brand_model. Append only ONE.
+            try:
+                canon_u = canonicalise(r.article_url)
+                hint = None
+                if r.event_model and recent_ev:
+                    hint = recent_event_dup_hint(
+                        r.event_brand, r.event_model, r.event_type,
+                        recent_ev, canon_u,
                     )
-                    if hint:
-                        r.llm_reason = ((r.llm_reason + " ") if r.llm_reason
-                                        else "") + hint
-                        r.llm_reason = r.llm_reason[:300]
-                except Exception:  # noqa: BLE001
-                    pass  # advisory only — never break the pass
+                if not hint and r.launch_brand_model and recent_bm:
+                    hint = recent_model_dup_hint(
+                        r.launch_brand_model, recent_bm, canon_u,
+                    )
+                if hint:
+                    r.llm_reason = ((r.llm_reason + " ") if r.llm_reason
+                                    else "") + hint
+                    r.llm_reason = r.llm_reason[:300]
+            except Exception:  # noqa: BLE001
+                pass  # advisory only — never break the pass
         else:
             # LEGACY PATH: 2 separate LLM calls (relevance + classify)
             try:

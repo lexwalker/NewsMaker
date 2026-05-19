@@ -114,3 +114,83 @@ def test_dedup_store_recent_brand_models(tmp_path) -> None:
     assert len(out) == 1
     # Different portal → nothing
     assert store.recent_brand_models("KZ", days=30) == {}
+
+
+# ----------- Hybrid Stage 2a: semantic event-key dup hint -----------------
+
+from news_agent.core.dedup import recent_event_dup_hint  # noqa: E402
+
+
+def test_event_hint_fires_on_same_signature() -> None:
+    recent = {
+        "jaguar|type 01|spy_shot": (
+            "2026-05-10T09:00:00+00:00",  # 4 days before _NOW (05-14)
+            "https://old.example/jag-spy",
+            "jaguar type 01 (spy_shot)",
+        )
+    }
+    h = recent_event_dup_hint(
+        "Jaguar", "Type 01", "spy_shot", recent,
+        "https://new.example/jag-new", now=_NOW,
+    )
+    assert h is not None
+    assert "jaguar type 01 (spy_shot)" in h
+    assert "4 дн" in h  # _NOW 2026-05-14 − 2026-05-10 = ~4 дн. назад
+
+
+def test_event_hint_none_when_type_generic() -> None:
+    recent = {"x|y|other": ("2026-05-10T00:00:00+00:00", "u", "x y (other)")}
+    assert recent_event_dup_hint("x", "y", "other", recent, "u2",
+                                  now=_NOW) is None
+
+
+def test_event_hint_none_when_model_empty() -> None:
+    recent = {"geely||launch": ("2026-05-10T00:00:00+00:00", "u", "g")}
+    assert recent_event_dup_hint("geely", "", "launch", recent, "u2",
+                                  now=_NOW) is None
+
+
+def test_event_hint_none_same_url_rerun() -> None:
+    same = "https://same.example/a"
+    recent = {"byd|seal|recall": ("2026-05-13T00:00:00+00:00", same,
+                                  "byd seal (recall)")}
+    assert recent_event_dup_hint("byd", "seal", "recall", recent, same,
+                                 now=_NOW) is None
+
+
+def test_event_hint_not_seen_returns_none() -> None:
+    assert recent_event_dup_hint("toyota", "camry", "launch", {},
+                                 "u", now=_NOW) is None
+
+
+def test_event_hint_bad_timestamp_degrades() -> None:
+    recent = {"vw|golf|facelift": ("not-a-date", "https://a.ex/x",
+                                   "vw golf (facelift)")}
+    h = recent_event_dup_hint("vw", "golf", "facelift", recent,
+                              "https://b.ex/y", now=_NOW)
+    assert h is not None and "недавно" in h
+
+
+def test_dedup_store_recent_event_keys(tmp_path) -> None:
+    import json
+
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "ev.sqlite")
+    good = json.dumps({"verdict": "Точно новость", "event_brand": "jaguar",
+                       "event_model": "type 01", "event_type": "spy_shot"})
+    vague = json.dumps({"event_brand": "geely", "event_model": "",
+                        "event_type": "launch"})
+    other = json.dumps({"event_brand": "kia", "event_model": "ev9",
+                        "event_type": "other"})
+    pre = json.dumps({"verdict": "Точно новость"})  # pre-Stage-1
+    store.mark_many_with_cache([
+        ("h1", "https://a.ex/1", "t", None, "a.ex", "RU", good),
+        ("h2", "https://a.ex/2", "t", None, "a.ex", "RU", vague),
+        ("h3", "https://a.ex/3", "t", None, "a.ex", "RU", other),
+        ("h4", "https://a.ex/4", "t", None, "a.ex", "RU", pre),
+    ])
+    out = store.recent_event_keys("RU", days=30)
+    assert list(out.keys()) == ["jaguar|type 01|spy_shot"]
+    assert out["jaguar|type 01|spy_shot"][2] == "jaguar type 01 (spy_shot)"
+    assert store.recent_event_keys("KZ", days=30) == {}

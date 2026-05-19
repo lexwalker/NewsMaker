@@ -151,6 +151,54 @@ class DedupStore:
                 out[bm] = (r["last_seen_at"], r["canonical_url"])
         return out
 
+    def recent_event_keys(
+        self, portal: str, *, days: int = 30
+    ) -> dict[str, tuple[str, str, str]]:
+        """Hybrid dedup Stage 2a (advisory): {event_key → (last_seen_at,
+        canonical_url, display)} from the LLM semantic event-signature
+        persisted by Stage 1.
+
+        event_key = "brand|model|event_type", built ONLY when model is
+        non-empty and event_type is specific (not ""/"other") — same
+        rule the in-run clusterer uses, so a bare ("geely","","launch")
+        never glues unrelated launches. ``display`` = "brand model
+        (event_type)" for the human-readable hint.
+
+        Read-only, advisory: never changes publish/section. Pre-Stage-1
+        cache rows lack event_* → silently skipped.
+        """
+        from datetime import timedelta
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat()
+        out: dict[str, tuple[str, str, str]] = {}
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT canonical_url, last_seen_at, cached_row_json "
+                "FROM seen_articles "
+                "WHERE portal = ? AND last_seen_at IS NOT NULL "
+                "AND last_seen_at >= ? "
+                "AND cached_row_json IS NOT NULL AND cached_row_json != ''",
+                (portal, cutoff),
+            ).fetchall()
+        for r in rows:
+            try:
+                blob = json.loads(r["cached_row_json"])
+            except (ValueError, TypeError):
+                continue
+            eb = (blob.get("event_brand") or "").strip().lower()
+            em = (blob.get("event_model") or "").strip().lower()
+            et = (blob.get("event_type") or "").strip().lower()
+            if not (eb and em and et and et != "other"):
+                continue
+            key = f"{eb}|{em}|{et}"
+            display = f"{eb} {em} ({et})"
+            prev = out.get(key)
+            if prev is None or r["last_seen_at"] > prev[0]:
+                out[key] = (r["last_seen_at"], r["canonical_url"], display)
+        return out
+
     # ----------------------------------------------------- write
     def mark_many(
         self,

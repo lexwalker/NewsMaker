@@ -65,3 +65,49 @@ def recent_model_dup_hint(
     except (ValueError, TypeError):
         when = "недавно"
     return f"(возможно дубль: о «{brand_model}» уже писали {when} — проверьте)"
+
+
+def recent_event_dup_hint(
+    event_brand: str,
+    event_model: str,
+    event_type: str,
+    recent: dict[str, tuple[str, str, str]],
+    current_url: str,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Hybrid Stage 2a — ADVISORY only. Semantic upgrade of
+    recent_model_dup_hint: keyed on the LLM event-signature
+    (brand|model|event_type), so it catches the SAME happening across
+    divergent headlines / languages that the lexical brand_model misses.
+
+    ``recent`` is the map from ``DedupStore.recent_event_keys``:
+    {event_key → (last_seen_at_iso, canonical_url, display)}.
+
+    Returns None when: any signature part empty / event_type generic /
+    not seen / only prior sighting is THIS same URL / unparseable
+    timestamp (degrade silently — advisory must never break the run).
+    """
+    eb = (event_brand or "").strip().lower()
+    em = (event_model or "").strip().lower()
+    et = (event_type or "").strip().lower()
+    if not (eb and em and et and et != "other"):
+        return None
+    hit = recent.get(f"{eb}|{em}|{et}")
+    if hit is None:
+        return None
+    last_seen_iso, prev_url, display = hit
+    if prev_url and current_url and prev_url == current_url:
+        return None
+    try:
+        last_seen = datetime.fromisoformat(last_seen_iso)
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        ref = now or datetime.now(timezone.utc)
+        days = max(0, (ref - last_seen).days)
+        when = "сегодня" if days == 0 else f"~{days} дн. назад"
+    except (ValueError, TypeError):
+        when = "недавно"
+    return (
+        f"(возможно дубль: «{display}» уже было {when} — проверьте)"
+    )
