@@ -1051,7 +1051,22 @@ WHAT WE PUBLISH (use the listed section names exactly)
       • "Geely Galaxy M7 EM-i certified in China"
       • "Volkswagen Unyx 08 debut at Beijing Motor Show"
     ALSO: patents/trademarks for specific models, model line refreshes
-    with details, price-list publication for new model in target market.
+    with details, price-list publication for new model in target market,
+    type-approval / certification of a model (incl. RU assembly).
+
+    >>> NOT a "debut", so NOT Confirmed even when a model + specs are
+    present (eval-harness false-accepts, may-2026):
+      • A LAP / TRACK RECORD or performance run — even announced BY the
+        brand ("YU7 GT breaks Nürburgring SUV record 7:34") → "Other
+        news" (it is performance PR, not a market debut). Only the
+        actual launch article ("YU7 GT to launch May 21") is Confirmed.
+      • A THIRD PARTY / independent engineer / tuner refining or
+        reworking a car ("Former Ferrari engineer refines Chinese
+        SUV") → "Other news" / "Rumors" — it is not an official brand
+        action. Confirmed requires the BRAND/OEM (or its regulator)
+        acting on ITS model: launch / reveal / pricing / refresh /
+        certification. A record, a journalist test, a 3rd-party build
+        is NOT that, regardless of horsepower figures in the headline.
 
 (2) "Local specifics" — ANY auto news about Russia / RF specifically:
       • Russian sales statistics (Avtostat, AEB, ROAD)

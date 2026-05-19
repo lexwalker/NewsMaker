@@ -69,6 +69,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Heuristic layer only — no LLM, instant, $0")
     p.add_argument("--sample", type=int, default=0,
                    help="Cap LLM-evaluated rows (0 = all)")
+    p.add_argument("--eval-file", default="",
+                   help="Alternate jsonl (e.g. a fixed strat subset)")
     p.add_argument("--diff", type=int, default=25,
                    help="How many disagreements to print")
     p.add_argument("--tag", default="",
@@ -87,12 +89,13 @@ def _load_cache() -> dict:
 
 def main() -> int:
     args = _parse_args()
-    if not EVAL_SET.exists():
-        print("eval_set.jsonl missing — run build_eval_set.py first")
+    eval_path = Path(args.eval_file) if args.eval_file else EVAL_SET
+    if not eval_path.exists():
+        print(f"{eval_path.name} missing — run build_eval_set.py first")
         return 2
     rows = [
         json.loads(ln) for ln in
-        EVAL_SET.read_text(encoding="utf-8").splitlines() if ln.strip()
+        eval_path.read_text(encoding="utf-8").splitlines() if ln.strip()
     ]
     # strict set excludes hedged ("soft") verdicts
     strict = [r for r in rows if not r.get("soft")]
