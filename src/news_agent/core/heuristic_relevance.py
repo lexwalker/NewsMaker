@@ -1078,6 +1078,40 @@ _FORCE_REJECT_PHRASES = (
     "shipbuilding sector",
     "steelmaking sector",
     "сталелитейн", "судостроительн",
+
+    # ====================================================================
+    # may-2026 ROUND 2 — 110-comment audit (P1-2 / P2-4 / P3-1 / P3-2)
+    # ====================================================================
+
+    # ---------- P1-2: deliveries / shipments to dealers (row 4) ----------
+    # Editor: «мы не пишем про отгрузки дилерам». Narrow — must not catch
+    # "sales started" / "launched in" (those are debut → Confirmed).
+    "started deliveries of", "begins deliveries to",
+    "deliveries to dealers", "shipments to dealers",
+    "shipped to dealers",
+    "отгрузки дилерам", "отгрузил дилерам", "отгрузка дилерам",
+    "началась отгрузка", "поставки дилерам", "отгрузил партию дилерам",
+
+    # ---------- P2-4: disaster-relief / ЧС-consequence funding (row 25) --
+    # Editor: «финансирование на последствия ЧС не постим». Keep narrow —
+    # plant modernization / road-program funding stays publishable.
+    "after the emergency", "after the flood", "after flooding",
+    "for flood recovery", "emergency consequences", "disaster relief",
+    "последствий чс", "последствия чс", "ликвидаци последствий",
+    "после паводка", "после наводнения", "пострадавш от чс",
+
+    # ---------- P3-1: share-price moves (row 37) — reject unless brand
+    # refinancing/stake press (LLM rescues those at editorial stage) -----
+    "shares plunge", "shares plunged", "shares jump", "shares jumped",
+    "shares hit", "share price plunge", "stock plunge", "stock falls to",
+    "to 2-month low", "to 3-month low", "to month low",
+    "акции упали", "акции обвалились", "акции рухнули", "котировки упали",
+
+    # ---------- P3-2: third-party off-road tests (row 418) --------------
+    # Extends category K. Only manufacturer's OWN test → Test-drive.
+    "tested off-road", "tested off road", "off-road tested",
+    "we took it off-road", "put through off-road",
+    "испытали на бездорожье", "протестировали на бездорожье",
 )
 
 
@@ -1431,6 +1465,72 @@ _RU_LOCAL_FORCE_PHRASES: tuple[str, ...] = (
 )
 
 
+# ---------- ROUND 2 P1-1 / P2-2: specific-model debut → Confirmed ---------
+# Editor universal rule (rows 4,6,10,15,60,69,103,104): a SPECIFIC named
+# model debut / launch / pricing / refresh / RU-premiere — and also a
+# launch-DELAY / postponement (P2-2 rows 30,49,143) — ALWAYS goes to
+# Confirmed (Facts), even for the RU market. Only brand-level PERIOD
+# statistics stay Local. LCV body-types still win (Tier 1 runs first).
+_MODEL_DEBUT_PHRASES: tuple[str, ...] = (
+    # english — debut / launch / pricing / refresh
+    "started deliveries of",  # NOTE: also a reject phrase; reject wins
+    "started sales of", "sales started", "sales of the",
+    "launched in russia", "returns to russia", "launch in russia",
+    "announced pricing for", "pricing announced", "announced prices",
+    "received new version", "received a new version",
+    "to launch in russia", "premiere of", "russian premiere",
+    "unveiled the", "revealed the", "presented the", "introduced the",
+    "debut", "debuts", "refresh launched", "brand details revealed",
+    "entered second generation", "second generation",
+    # english — launch-timing change (P2-2). Must be launch-specific —
+    # NOT bare "postponed/delayed" (those also match "postponed the
+    # press call"; RU "перенесут завод" = relocate, not a launch delay).
+    "delayed launch", "delays launch", "launch delayed",
+    "postponed launch", "launch postponed", "launch beyond",
+    "no earlier than", "timing and details", "update timing",
+    # russian
+    "запустил продажи", "стартовали продажи", "начал продажи",
+    "начались продажи", "объявил цены", "объявлены цены",
+    "представил", "представлен", "представили",
+    "получил новую версию", "дебют", "дебютир", "премьер",
+    "вернулся на росси", "вернётся на росси", "адаптир",
+    "раскрыл", "рассекречен", "второе поколение",
+    # launch-timing change — must reference запуск/старт, not bare
+    # "перенёс" ("перенесут завод" = relocate plant, not delay launch).
+    "перенёс запуск", "перенесла запуск", "перенос запуска",
+    "перенесён запуск", "отложил запуск", "отложен запуск",
+    "отложили запуск", "сроки запуска", "сроки обновления",
+    "сроки и детали", "не ранее",
+)
+# Aggregate-statistics phrases that KEEP the article Local (win over the
+# debut signal — "Renault sales in April" is Local, not Facts).
+_BRAND_PERIOD_STATS_PHRASES: tuple[str, ...] = (
+    "sales in april", "sales in may", "sales in march",
+    "sales in q1", "sales in q2", "sales in 2025", "sales in 2026",
+    "monthly sales", "quarterly sales", "sales record", "sales hit",
+    "sales declined", "sales grew", "market share", "sales forecast",
+    "продажи в апреле", "продажи в мае", "продажи в марте",
+    "продажи за", "статистик", "доля рынка", "рекорд продаж",
+    "прогноз продаж", "продаж",  # broad guard — ambiguous "продажи X"
+)
+
+
+def _is_specific_model_debut(title: str) -> bool:
+    """Plan R2-P1-1: True for a specific-model debut/launch/pricing/
+    refresh/timing-change. Suppressed by:
+      • brand-level period statistics (stay Local, not Facts), and
+      • a rumor / spy-shot signal — "ahead of imminent debut",
+        "appears in new images" are PRE-reveal → Rumors (Tier 5),
+        NOT a confirmed debut (editor: spy shots are never Confirmed).
+    """
+    t = (title or "").lower()
+    if any(p in t for p in _BRAND_PERIOD_STATS_PHRASES):
+        return False
+    if has_rumor_signal(t):
+        return False
+    return any(p in t for p in _MODEL_DEBUT_PHRASES)
+
+
 # ---------- Plan P1-A: RU TG aggregators reporting global-brand sales -----
 # When the URL points to one of these Russian Telegram aggregators AND
 # the title is about a SINGLE global brand's recent sales / market share,
@@ -1777,9 +1877,32 @@ def heuristic_section(
                 reason=f"body-type:{kw}",
             )
 
-    # ----- Tier 2: Financial-results — always Other news --------------------
+    # ----- Tier 1.5 (R2-P1-1): specific-model debut → Confirmed -------------
+    # Editor universal rule: model debut/launch/pricing/refresh/timing-
+    # change ALWAYS Facts, even RU-market. Pre-empts Tier 4 (RU-portal
+    # Local) and Tier 4b (RU-market-data Local). LCV body-types already
+    # handled by Tier 1 above (a 7-seat SKM M7 has no LCV body-word →
+    # reaches here → Confirmed, exactly per editor row 4).
+    if _is_specific_model_debut(t):
+        return HeuristicSection(
+            section=SECTION_CONFIRMED,
+            region="Local" if _is_ru_auto_subject(t) else "Global",
+            confidence=0.80,
+            reason="model-debut-confirmed",
+        )
+
+    # ----- Tier 2: Financial-results — Other news (RU-subject → Local) ------
+    # R2-P2-1 carve-out: a Russian company's financials (Delimobil,
+    # AvtoVAZ…) go to Local specifics, NOT Other (editor row 54).
     for kw in _FINANCIAL_RESULT_HINTS:
         if kw in t:
+            if _is_ru_auto_subject(t):
+                return HeuristicSection(
+                    section=SECTION_LOCAL,
+                    region="Local",
+                    confidence=0.85,
+                    reason=f"ru-financial-local:{kw}",
+                )
             return HeuristicSection(
                 section=SECTION_OTHER,
                 region="Global",

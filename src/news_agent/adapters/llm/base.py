@@ -1035,8 +1035,20 @@ WHAT WE PUBLISH (use the listed section names exactly)
       • Russian auto-loan / leasing market data
       • Carsharing fleet expansion in RF (Yandex Drive et al.)
       • Russian dealer / parts / spares news
+      • Russian-company financial results (Delimobil, AvtoVAZ
+        Q-results) — Local, NOT Other news (editor row 54).
     Editor: «Все что касается ТС в РФ — всегда в Местные».
     NEVER classify Russian auto-market data as "Economics".
+
+    >>> PRECEDENCE (round-2, editor universal rule, rows 4/10/60/69/
+    103/104): a SPECIFIC NAMED MODEL debut / launch / pricing /
+    refresh / RU-premiere / launch-timing-change ALWAYS goes to
+    "Confirmed" — even for the RF market (region="Local",
+    section="Confirmed"). Only brand-level PERIOD statistics
+    (month/quarter/year sales totals) stay "Local specifics".
+    Editor: «всё что касается дебюта/продаж конкретных моделей —
+    Факты; в Местные только статистика по бренду за период».
+    Commercial body-type (8+ seats) still wins → LCV.
 
 (3) "Rumors" — Speculation NOT directly attributed to the brand:
       • "may launch", "может появиться", "spotted", "spied"
@@ -1092,6 +1104,11 @@ WHAT WE PUBLISH (use the listed section names exactly)
     Body-type wins over brand for the clear cases above. For "minivan"
     or "MPV" without explicit seat count, default to Confirmed unless
     body explicitly mentions 8+/9-seater configuration.
+    (P3-1) HEAVY trucks: heavy/commercial-truck MARKET statistics
+    (sales/segments of trucks) → REJECT (not our topic). But truck
+    TECHNOLOGY — autonomous trucks, hydrogen trucks, ADAS — IS
+    publishable (LCV news or Other). Editor row 58: «грузовые
+    (тяжёлые) — не наша тема; технологии в грузовиках — постим».
 
 (7) "Motorshow" — Multi-model OEM line-up release at a motorshow.
     Single-model debut at a motorshow → "Confirmed", NOT Motorshow.
@@ -1153,6 +1170,16 @@ D. Personnel: appointed as CEO/CTO, executive compensation, hires,
 E. Forecasts / прогнозы: "projected to reach", "expected to grow",
    "may rise", "Wall Street expects", "analysts predict",
    "прогнозирует". (Real announced sales data — OK.)
+
+E2. (P3-1) Share-price MOVEMENTS ("shares plunge/jump/hit X-month
+   low", "акции упали/обвалились") → REJECT, UNLESS it is the brand's
+   OWN press about refinancing / stake acquisition / capital raise.
+   Editor row 37: «постим только продажу акций от брендов в рамках
+   рефинансирования/приобретения долей — их пресс-релизы».
+
+E3. (P3-4) Vague-demand pieces with NO concrete numbers ("RF demand
+   for Audi surges") and bare event-open announcements with no scale
+   ("Exhibition opens May 5") → REJECT. Editor rows 67/473.
 
 F. Restoration / retro / classic / "weekend classic" / "vintage":
    "restored Miura", "как возродить советский ВАЗ"
@@ -1275,6 +1302,16 @@ PRIMARY-SOURCE WARNINGS (don't reject, but mark in reason)
 ============================================================
 - asroad.org articles are 99% reposts. If primary URL is asroad.org,
   add to reason: "проверить оф первоисточник (asroad перепост)".
+- (P2-3) Russia market-WIDE data (total sales, stock mix, "market
+  showed stable performance") originates from Avtostat / Целиков
+  (t.me/sergtselikov). If the primary is a secondary repost, still
+  publish (Local specifics) but add to reason: "первоисточник
+  Автостат/Целиков — проверить дубль". Editor rows 23/56.
+- (P3-3) speedme.ru / spidme / autohome.com.cn / naavtotrasse.ru and
+  RU-language reposts of an English original are NOT acceptable as
+  primary (they lag the English original ~2 weeks). If the primary
+  is one of these, append to reason: "нужен англ/оф первоисточник
+  (RU-перепост запаздывает)". Do NOT change the section.
 
 ============================================================
 WORKED EXAMPLES (real cases from editor review, may-2026)
@@ -1288,9 +1325,29 @@ src: "Прогноз продаж новых легковых автомобил
 → {publish: true, section: "Local specifics", region: "Local",
    confidence: 0.88, reason: "Данные РФ-рынка от Автостата"}
 
+src: "Sales of Renault Koleos started in Russia under new name"
+→ {publish: true, section: "Confirmed", region: "Local",
+   confidence: 0.85, reason: "Дебют конкретной модели в РФ → Факты, не Местные"}
+
+src: "Changan sales in April 2026 in Russia"
+→ {publish: true, section: "Local specifics", region: "Local",
+   confidence: 0.8, reason: "Статистика по бренду за период → Местные"}
+
+src: "BMW completed production of the Z4 roadster"
+→ {publish: true, section: "Confirmed", region: "Global",
+   confidence: 0.82, reason: "Завершение производства модели — это новость"}
+
+src: "Jeep recalls Cherokee in the U.S. over fire risk"
+→ {publish: true, section: "Other news", region: "Global",
+   confidence: 0.85, reason: "Отзыв в США (NHTSA) — постим всегда"}
+
 src: "Nissan reported Q1 financial results for 2026"
 → {publish: true, section: "Other news", region: "Global",
    confidence: 0.9, reason: "Финрезультаты OEM (квартальные)"}
+
+src: "Делимобиль сократил чистый убыток на 18% в Q1 2026"
+→ {publish: true, section: "Local specifics", region: "Local",
+   confidence: 0.85, reason: "Финрезультаты РФ-компании → Местные, не Другие"}
 
 src: "Sales of the Luxeed V9 minivan by Chery and Huawei start in China"
 → {publish: true, section: "Confirmed", region: "Global",

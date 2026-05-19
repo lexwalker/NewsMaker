@@ -78,8 +78,17 @@ def test_revenue_grew_routes_to_other() -> None:
     assert h is not None and h.section == "Other news"
 
 
-def test_russian_finrezultat_routes_to_other() -> None:
+def test_russian_finrezultat_routes_to_local() -> None:
+    # ROUND2 P2-1 (flipped): a RUSSIAN company's financials → Local
+    # specifics, NOT Other (editor row 54 «Delimobil Q1 → Это Local»;
+    # resolves the prior contradiction with rule 1 «АвтоВАЗ → Local»).
     h = heuristic_section(title="АвтоВАЗ опубликовал финрезультаты за 2025 год")
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_foreign_finrezultat_still_other() -> None:
+    # Foreign-subject financials unaffected — still Other news.
+    h = heuristic_section(title="Nissan reported Q1 financial results for 2026")
     assert h is not None and h.section == "Other news"
 
 
@@ -117,10 +126,12 @@ def test_autostat_global_news_NOT_local() -> None:
 
 # ------------------------------------------- Defer cases — LLM still needed
 
-def test_clean_global_model_launch_defers_to_llm() -> None:
-    # Real model reveal — must NOT pre-classify; LLM decides Facts vs Other
+def test_global_model_reveal_routes_to_confirmed() -> None:
+    # ROUND2 P1-1 (flipped): a specific-model debut/reveal is ALWAYS
+    # Facts (editor universal rule). "unveiled the" → Confirmed,
+    # region Global (no RU markers).
     h = heuristic_section(title="Hyundai unveiled the new Grandeur with premium finish")
-    assert h is None
+    assert h is not None and h.section == "Confirmed" and h.region == "Global"
 
 
 def test_partnership_defers_to_llm() -> None:
@@ -523,3 +534,90 @@ def test_other_domains_unaffected_by_stale_guard() -> None:
     assert not _is_known_stale_archive_url("https://carscoops.com/article/100")
     assert not _is_known_stale_archive_url("https://motor1.com/news/12345/")
     assert not _is_known_stale_archive_url("")
+
+
+# =================== ROUND 2 (110-comment audit) ========================
+
+def test_p1_1_ru_model_pricing_routes_confirmed_not_local() -> None:
+    """Editor r6: RU-market model pricing/debut → Confirmed (Facts),
+    region Local — NOT Local specifics."""
+    h = heuristic_section(
+        title="AvtoVAZ announced pricing for SKM M7 minivan in Russia"
+    )
+    assert h is not None and h.section == "Confirmed" and h.region == "Local"
+
+
+def test_p1_1_li_auto_ru_premiere_confirmed() -> None:
+    """Editor r60: «Li Auto L9 Russian premiere → это Факты»."""
+    h = heuristic_section(
+        title="Li Auto announced Russian premiere of L9 Livis"
+    )
+    assert h is not None and h.section == "Confirmed"
+
+
+def test_p2_2_launch_delay_routes_confirmed() -> None:
+    """Editor r49/r143: VW Golf EV launch delay → Facts."""
+    h = heuristic_section(
+        title="Volkswagen postponed launch of electric Golf beyond 2028"
+    )
+    assert h is not None and h.section == "Confirmed"
+
+
+def test_p1_1_brand_period_stats_stay_local_guard() -> None:
+    """Guard: brand period statistics must NOT become Confirmed —
+    they stay Local (Tier 4b)."""
+    h = heuristic_section(title="Changan sales in April 2026 in Russia grew")
+    assert h is None or h.section != "Confirmed"
+
+
+def test_p1_1_spy_shot_still_rumors_not_confirmed() -> None:
+    """Guard: 'ahead of imminent debut' is a spy-shot — rumor signal
+    suppresses the debut→Confirmed path (editor: spy never Confirmed)."""
+    h = heuristic_section(
+        title="Jaguar Type 01 appears in new images ahead of imminent debut",
+        body_excerpt="Spy photos surfaced; no official word.",
+    )
+    assert h is not None and h.section == "Rumors"
+
+
+def test_p1_1_factory_relocation_not_falsely_confirmed() -> None:
+    """Guard: 'перенесут ... завод' (relocate plant) must NOT match the
+    launch-delay phrase — stays Local on a RU portal."""
+    h = heuristic_section(
+        title="Сборку Exeed из Подмосковья перенесут на завод в Шушарах",
+        domain="auto.mail.ru",
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def test_p2_1_ru_company_financial_to_local() -> None:
+    """Editor r54: Delimobil Q1 net loss → Local specifics, not Other."""
+    h = heuristic_section(
+        title="Российский Делимобиль сократил чистый убыток на 18% в Q1"
+    )
+    assert h is not None and h.section == "Local specifics"
+
+
+def _bl(title: str):
+    from news_agent.core.config_loader import Blacklist
+    from news_agent.core.heuristic_relevance import blacklist_hit
+    from news_agent.core.models import RawArticle
+    raw = RawArticle(url="https://example.com/n", title=title, body="...",
+                      source_name="s", source_url="https://example.com/")
+    return blacklist_hit(raw, Blacklist())
+
+
+def test_p1_2_deliveries_to_dealers_rejected() -> None:
+    assert _bl("AvtoVAZ started deliveries of SKM M7 vehicles to dealers").hit
+
+
+def test_p2_4_disaster_relief_funding_rejected() -> None:
+    assert _bl("Government allocated 1,8 bln RUB for road repairs after the flood").hit
+
+
+def test_p3_2_third_party_offroad_test_rejected() -> None:
+    assert _bl("Hyundai IONIQ 5 XRT tested off-road by reviewers").hit
+
+
+def test_p3_1_share_price_plunge_rejected() -> None:
+    assert _bl("Leapmotor shares plunge to 2-month low as Q1 loss widens").hit
