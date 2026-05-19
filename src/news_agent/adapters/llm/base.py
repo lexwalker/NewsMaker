@@ -170,10 +170,15 @@ These rules override generic intuition. Apply them in this exact order:
     (a) NEW physical dealership / showroom OPENING in Russia
         Triggers: "открыли ДЦ", "новый дилерский центр",
         "official dealer launch in Russia", "новый Avatr ДЦ в Новосибирске"
-    (b) Brand DEALER NETWORK EXPANSION across multiple RF cities
-        Examples editor flagged should be Dealer (not Local):
+    (b) Brand DEALER NETWORK EXPANSION / development PLAN across RF —
+        publishable WHEN it has concrete regions OR numbers (round-2
+        editor reversal: «план развития сети вполне постим, если есть
+        хоть какая-то конкретика по регионам/цифрам»). A bare "we plan
+        to grow our network" with NO regions/numbers → confidence ≤ 0.4.
+        Examples editor flagged should be Dealer (not Local, not reject):
           "Moskovich accepting orders in five cities"
           "Top 100 Russian dealers' revenue reached 3,2 trillion RUB"
+          "Voyah to open 12 dealerships across 8 RF regions by Q3"
     (c) Brand-owner PROMO offers / seasonal service / cashback in RF
         Example: "Belgee seasonal service for 4,490 RUB"
 
@@ -388,6 +393,34 @@ ROUND 5 ADDITIONS (may-2026 — review of v30-v33 push to "Новости (но�
      Examples REJECTED:
        "Auto industry interests diverge from Europe's priorities"
        "Hormuz Strait crisis to accelerate EU's phase-out of ICE"
+
+============================================================
+ROUND 6 ADDITIONS (may-2026 — editor reversal of over-rejections)
+============================================================
+
+(31) Model PRODUCTION END / discontinuation IS news → "Confirmed"
+     (Facts), region per market. NEVER reject with "no successor =
+     not news". Editor (round-2): «Завершение производства модели —
+     очень даже новость».
+     Examples NOW PUBLISHED:
+       "BMW completed production of the Z4 roadster"   → Confirmed
+       "Toyota ends GR Supra production in 2026"        → Confirmed
+       "Lada Granta sedan discontinued"                 → Confirmed
+
+(32) RECALLS — ALWAYS publishable, NEVER reject as "regional / no
+     global significance". Editor (round-2): «отзывы по США постим
+     ВСЕГДА (от NHTSA); глобальные — однозначно; по другим странам —
+     крупные от СМИ».
+       • U.S. recall (NHTSA / U.S. market)        → ALWAYS publish
+         (Other news, Global) — even small unit counts.
+       • Global / multi-market recall             → ALWAYS publish.
+       • Other single country (UK, Korea, China)  → publish if a
+         media source and reasonably large; small local-only → conf
+         ≤ 0.5 (editor decides), still NOT a hard reject.
+       • Russia recall (Росстандарт)              → Local specifics.
+     Examples NOW PUBLISHED:
+       "Jeep recalls Cherokee in the U.S. over fire risk" → Other news
+       "GM recalls 66 SUVs over fuel leak"                → Other news
 
 ============================================================
 SECTION ROUTING — explicit edge cases (may-2026)
@@ -1035,9 +1068,16 @@ WHAT WE PUBLISH (use the listed section names exactly)
       • Charging-network expansion (with specific numbers)
     Editor: «финрезы автобрендов — всегда Другие; партнёрства тоже».
 
-(5) "Dealer news / Promo" — RESERVED: ONLY a NEW dealership / showroom
-    OPENING in Russia. Plus seasonal-service promo offers from brand-
-    owner programs (Belgee 4,490 RUB seasonal, etc).
+(5) "Dealer news / Promo":
+    (a) a NEW dealership / showroom OPENING in Russia
+    (b) Brand dealer-NETWORK expansion / development PLAN in RF — DO
+        publish when it carries concrete regions OR numbers (round-2
+        editor reversal: «план развития сети вполне постим, если есть
+        конкретика по регионам/цифрам»; e.g. "Voyah to open 12 dealers
+        across 8 RF regions"). A bare "we plan to grow the network"
+        with no regions/numbers → confidence ≤ 0.4.
+    (c) seasonal-service / cashback promo from brand-owner programs
+        (Belgee 4,490 RUB seasonal, etc).
     NOT for: awards (DSI, "best dealer"), trade-association forums,
     foreign showroom openings, dealer association comments. Those go
     to "Other news" (or "Local specifics" for RU subject).
@@ -1064,6 +1104,27 @@ WHAT WE PUBLISH (use the listed section names exactly)
     Russian auto angle (e.g. global EV charging market trends, fuel
     prices for Europe). If it has any Russian auto angle → "Local
     specifics" instead.
+
+============================================================
+ALWAYS PUBLISH — round-2 editor reversal of over-rejections
+============================================================
+
+(R1) Model PRODUCTION END / discontinuation IS news → "Confirmed".
+     NEVER reject with "no successor = not news". Editor: «завершение
+     производства модели — очень даже новость».
+       "BMW completed production of the Z4 roadster"  → Confirmed
+       "Lada Granta sedan discontinued"               → Confirmed
+
+(R2) RECALLS — ALWAYS publishable. NEVER reject as "regional / no
+     global significance". Editor: «отзывы по США постим ВСЕГДА (от
+     NHTSA); глобальные — однозначно; др. страны — крупные от СМИ».
+       • U.S. recall (NHTSA / U.S. market) → ALWAYS publish, even tiny
+         unit counts → "Other news", Global.
+       • Global / multi-market recall      → ALWAYS publish.
+       • Russia recall (Росстандарт)       → "Local specifics".
+       • Other single country (UK/KR/CN)   → publish if media-sourced
+         & sizeable; tiny local-only → confidence ≤ 0.5, NOT a reject.
+       "Jeep recalls Cherokee in the U.S. over fire risk" → Other news
 
 ============================================================
 NEVER PUBLISH (set should_publish=False with confidence ≥ 0.85)
@@ -1172,16 +1233,16 @@ Y. Niche one-off / curiosity stories: "Tesla employee shows final
 
 Z. NIO/Geely pre-2025 news (unless landmark announcements).
 
-AA. Trivial model facelift / mid-cycle update without new specs:
-    paint-color expansion, positioning piece ("X is game-changer"),
-    minor trim refresh covered by earlier launch.
-    Editor rejected (may-2026 audit):
-      row 167 "Moskvich 3 sedan 2026 update" → no
-      row 78 "Volvo EX60 positioned as game-changer" → no
-      row 123 "Lada Azimut to offer 8 body colors" → no
-      row 162 "Lynk & Co 10 sedan serial production" → no
-    Genuine refresh WITH new engine / price / market entry IS publishable
-    (set confidence 0.7 and let editor decide if borderline).
+AA. (RETIRED — reversed on round-2 editor feedback may-2026.)
+    Do NOT reject a model facelift/refresh/update for "triviality".
+    Editor: «чтобы не убирал по причине "тривиальности"». A refresh /
+    facelift / new generation / serial-production start of a SPECIFIC
+    named model IS news → "Confirmed" (Facts), per the model-debut
+    precedence rule. The ONLY genuinely low-value sub-case is a bare
+    paint-color list with nothing else ("X to offer 8 body colors") —
+    keep that as borderline (confidence ≤ 0.5), not a hard reject.
+    Previously-rejected rows are now Confirmed: Moskvich 3 2026 update,
+    Volvo EX60, Lynk & Co 10 serial production.
 
 BB. Brand "unique / limited / one-of-one / Few Off / Capsule edition /
     Special edition for designer week / tuner-inspired" promotional
