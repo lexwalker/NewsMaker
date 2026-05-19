@@ -178,3 +178,74 @@ def test_url_slug_merges_divergent_headlines() -> None:
     groups = bnc.cluster_articles([a, b])
     assert len(groups) == 1
     assert len(groups[0]) == 2
+
+
+# ============ Hybrid dedup Stage 1: LLM event-signature ================
+
+def _ev(norm, eb, em, et, *, pub=None, purl=""):
+    return {
+        "normalised": norm, "launch_brand_model": "",
+        "pub_dt": pub if pub is not None else _T0,
+        "primary_url": purl, "url": "",
+        "event_brand": eb, "event_model": em, "event_type": et,
+    }
+
+
+def test_event_signature_merges_divergent_headlines() -> None:
+    """The whole point: totally different wording, same LLM event-key →
+    one cluster (the Jaguar spy-shot case, semantically)."""
+    a = _ev("jaguar electric sedan prototype spotted without camouflage",
+            "jaguar", "type 01", "spy_shot")
+    b = _ev("jaguar type 01 appears in new images ahead of debut",
+            "jaguar", "type 01", "spy_shot", pub=_T0 + timedelta(hours=4))
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 1 and len(groups[0]) == 2
+
+
+def test_event_signature_different_event_type_not_merged() -> None:
+    """Same brand+model but launch vs recall = different stories."""
+    a = _ev("byd seal launched in europe", "byd", "seal", "launch")
+    b = _ev("byd recalls seal over brake issue", "byd", "seal", "recall",
+            pub=_T0 + timedelta(hours=3))
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 2
+
+
+def test_event_signature_empty_model_does_not_glue() -> None:
+    """('geely','','launch') must NOT collapse unrelated Geely launches —
+    empty model → no event key."""
+    a = _ev("geely launches new ev in china", "geely", "", "launch")
+    b = _ev("geely starts sales of another model", "geely", "", "launch",
+            pub=_T0 + timedelta(hours=2))
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 2
+
+
+def test_event_signature_other_type_ignored() -> None:
+    """event_type 'other' is too vague → not a dedup key."""
+    a = _ev("toyota something vague", "toyota", "camry", "other")
+    b = _ev("toyota unrelated piece", "toyota", "camry", "other",
+            pub=_T0 + timedelta(hours=1))
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 2
+
+
+def test_event_signature_respects_36h_window() -> None:
+    """Same event-key but >36h apart = different news cycle → split."""
+    a = _ev("vw id era revealed", "volkswagen", "id era", "reveal")
+    b = _ev("volkswagen unveils id era 5s", "volkswagen", "id era",
+            "reveal", pub=_T0 + timedelta(hours=80))
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 2
+
+
+def test_event_signature_absent_keys_backward_compatible() -> None:
+    """Articles without event_* keys (pre-Stage-1) behave exactly as
+    before — no event_match, fall back to title/brand logic."""
+    bnc._BRANDS_LOWER = ["toyota"]
+    a = {"normalised": "toyota camry launched", "launch_brand_model": "",
+         "pub_dt": _T0, "primary_url": "", "url": ""}
+    b = {"normalised": "bmw x5 recalled", "launch_brand_model": "",
+         "pub_dt": _T0, "primary_url": "", "url": ""}
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 2  # unrelated, no event keys → not merged

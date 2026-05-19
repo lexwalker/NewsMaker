@@ -132,6 +132,12 @@ class AnthropicLLMClient:
             data.setdefault("section", "")
             data.setdefault("region", None)
             data.setdefault("confidence", 0.5)
+        # event_signature is schema-required but be defensive: a model
+        # that omits it (or returns null) must not break the call —
+        # dedup degrades to the lexical layers, never errors.
+        es = data.get("event_signature")
+        if not isinstance(es, dict):
+            data["event_signature"] = None
         return EditorialReview.model_validate(data), usage
 
     def translate_title(

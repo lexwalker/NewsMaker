@@ -1003,6 +1003,32 @@ Return ONLY structured JSON. Two-stage decision:
      confidence (0..1).
 Always include a one-sentence "reason" explaining your call.
 
+ALWAYS also fill "event_signature" — a normalised dedup key so the same
+story written with different headlines / in EN vs RU collapses to ONE:
+  • brand: canonical brand, lowercase, English/translit ("jaguar",
+    "avtovaz", "geely"). "" if no single brand.
+  • model: canonical model, lowercase, no brand prefix ("type 01",
+    "skm m7", "coolray"). "" if the news is not about one model.
+  • event_type: EXACTLY one of —
+      launch          first market launch / sales start of a model
+      reveal          official unveil/debut/presentation of a model
+      spy_shot        leaked / spied / pre-reveal images of a prototype
+      recall          safety recall
+      financial       quarterly/annual results, profit/loss, share moves
+      sales_stat      brand/market period sales statistics
+      facelift        refresh / mid-cycle update / new generation
+      production_end  end of production / discontinuation
+      partnership     JV / supply / cooperation / stake deals
+      motorshow       multi-model line-up at a show
+      pricing         price-list / pricing announcement for a model
+      dealer          dealership opening / network expansion / promo
+      tech            engine/platform/battery/software technology
+      regulation      government / EAEU / certification / standards
+      other           none of the above
+Fill it even when should_publish=False. Be consistent: the SAME real
+happening must yield the SAME (brand, model, event_type) regardless of
+how the headline is phrased — that is the whole point.
+
 REASON LANGUAGE: Write the reason in RUSSIAN — the editor reads it directly
 in the sheet column. Examples of acceptable Russian phrasing:
   • "Запуск модели от бренда с конкретными ценами"
@@ -1453,12 +1479,33 @@ def build_editorial_review_system(
 EDITORIAL_REVIEW_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["should_publish", "confidence", "reason"],
+    "required": ["should_publish", "confidence", "reason",
+                 "event_signature"],
     "properties": {
         "should_publish": {"type": "boolean"},
         "section": {"type": "string"},
         "region": {"type": "string", "enum": ["Local", "Global"]},
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "reason": {"type": "string"},
+        # Hybrid dedup Stage 1 — semantic key, emitted every call.
+        "event_signature": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["brand", "model", "event_type"],
+            "properties": {
+                "brand": {"type": "string"},
+                "model": {"type": "string"},
+                "event_type": {
+                    "type": "string",
+                    "enum": [
+                        "launch", "reveal", "spy_shot", "recall",
+                        "financial", "sales_stat", "facelift",
+                        "production_end", "partnership", "motorshow",
+                        "pricing", "dealer", "tech", "regulation",
+                        "other", "",
+                    ],
+                },
+            },
+        },
     },
 }

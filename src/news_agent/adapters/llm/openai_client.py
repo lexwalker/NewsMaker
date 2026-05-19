@@ -118,6 +118,8 @@ class OpenAILLMClient:
             data.setdefault("section", "")
             data.setdefault("region", None)
             data.setdefault("confidence", 0.5)
+        if not isinstance(data.get("event_signature"), dict):
+            data["event_signature"] = None
         return EditorialReview.model_validate(data), usage
 
     def translate_title(

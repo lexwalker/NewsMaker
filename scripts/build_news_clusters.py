@@ -80,6 +80,10 @@ COL_LAUNCH_STAGE = 28  # AC
 COL_LAUNCH_BRAND_MODEL = 29  # AD
 # LLM editorial review reason (added may-2026)
 COL_LLM_REASON = 30  # AE
+# Hybrid dedup Stage 1: semantic event-signature (added may-2026)
+COL_EVENT_BRAND = 31  # AF
+COL_EVENT_MODEL = 32  # AG
+COL_EVENT_TYPE = 33   # AH
 
 SIMILARITY_THRESHOLD = 65  # rapidfuzz token_set_ratio (0-100). Lowered
                             # from 72 after v22: Avtotor JETOUR triple
@@ -393,15 +397,32 @@ def cluster_articles(
             if slug_bm:
                 bm = slug_bm
         brand_models.append(bm)
+    # Hybrid dedup Stage 1: the LLM's semantic event-signature. The
+    # strongest cross-headline / cross-language signal — "Jaguar electric
+    # sedan prototype spotted" and "Jaguar Type 01 appears in new images"
+    # both yield ("jaguar","type 01","spy_shot"). Only trust it when the
+    # model is non-empty AND event_type is specific (NOT "other"/"") —
+    # otherwise ("geely","","launch") would glue every Geely launch.
+    event_keys: list[str] = []
+    for a in articles:
+        eb = (a.get("event_brand") or "").strip().lower()
+        em = (a.get("event_model") or "").strip().lower()
+        et = (a.get("event_type") or "").strip().lower()
+        if eb and em and et and et != "other":
+            event_keys.append(f"{eb}|{em}|{et}")
+        else:
+            event_keys.append("")
     for i in range(n):
         ti = norms[i]
         ai_pub = articles[i]["pub_dt"]
         pi = primary_urls[i].strip().lower() if primary_urls[i] else ""
         bmi = brand_models[i]
+        eki = event_keys[i]
         for j in range(i + 1, n):
             tj = norms[j]
             pj = primary_urls[j].strip().lower() if primary_urls[j] else ""
             bmj = brand_models[j]
+            ekj = event_keys[j]
 
             # Cross-language safety net: same primary URL = same story.
             # Catches cases where RU and EN headlines have <5 token overlap
@@ -426,6 +447,15 @@ def cluster_articles(
             brand_model_match = bool(
                 bmi and bmi == bmj and " " in bmi and len(bmi) >= 5
             )
+
+            # Hybrid Stage 1: identical LLM event-signature = same story
+            # even across totally different headlines / languages. Like
+            # brand_model_match it bypasses the lexical guards but still
+            # respects the 36h window (a model's launch vs its recall
+            # months apart are different stories — different event_type
+            # would already separate those; same key within 36h = dup).
+            event_match = bool(eki and eki == ekj)
+            brand_model_match = brand_model_match or event_match
 
             if not ti or not tj:
                 if primary_match or brand_model_match:
@@ -518,7 +548,7 @@ def main() -> int:
     #   AC = launch stage, AD = brand+model (Phase 1 lifecycle)
     #   AE = LLM reason (may-2026 editorial review)
     resp = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:AE"
+        spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:AH"
     ).execute()
     rows = resp.get("values", []) or []
     print(f"Loaded {len(rows)} rows from '{tab}'.")
@@ -552,6 +582,10 @@ def main() -> int:
                 start = note.find("reason:") + len("reason:")
                 end = note.find(" | ", start)
                 llm_reason = note[start:end if end > 0 else None].strip()
+        # Hybrid dedup Stage 1: semantic event-signature (cols AF-AH).
+        ev_brand = _get(r, COL_EVENT_BRAND).strip().lower()
+        ev_model = _get(r, COL_EVENT_MODEL).strip().lower()
+        ev_type = _get(r, COL_EVENT_TYPE).strip().lower()
         articles.append({
             "sheet_row": sheet_idx,
             "url": url,
@@ -571,6 +605,9 @@ def main() -> int:
             "primary_dom": primary_dom,
             "primary_url": primary_url,
             "primary_conf": primary_conf,
+            "event_brand": ev_brand,
+            "event_model": ev_model,
+            "event_type": ev_type,
         })
     print(f"'Точно новость' rows: {len(articles)}")
 

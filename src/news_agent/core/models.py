@@ -66,6 +66,33 @@ class RelevanceCheck(BaseModel):
     reason: str = ""
 
 
+class EventSignature(BaseModel):
+    """Semantic dedup key the LLM emits alongside the editorial verdict.
+
+    Hybrid dedup Stage 1: the editorial_review call already reads the
+    title+lede, so asking it for a normalised (brand, model, event_type)
+    triple is free and lets us collapse the same story across wildly
+    different headlines / languages — something the lexical layers
+    (title-fuzz / URL-slug) structurally cannot do.
+
+    All fields lowercase & normalised by the model. ``event_type`` is a
+    controlled vocabulary (see EVENT_TYPES) so two write-ups of the same
+    happening land on the same key.
+    """
+
+    brand: str = ""          # canonical brand, e.g. "jaguar", "avtovaz"
+    model: str = ""          # canonical model, e.g. "type 01", "" if none
+    event_type: str = ""     # one of EVENT_TYPES (or "" when unsure)
+
+
+# Controlled vocabulary — keep in sync with EDITORIAL_REVIEW_SCHEMA enum.
+EVENT_TYPES = (
+    "launch", "reveal", "spy_shot", "recall", "financial",
+    "sales_stat", "facelift", "production_end", "partnership",
+    "motorshow", "pricing", "dealer", "tech", "regulation", "other",
+)
+
+
 class EditorialReview(BaseModel):
     """Consolidated LLM editorial decision — replaces is_automotive +
     classify_section in one call.
@@ -76,6 +103,8 @@ class EditorialReview(BaseModel):
       • region: Local | Global (only meaningful if publish=True)
       • confidence: 0..1, used as a soft-flag threshold
       • reason: one short sentence — visible to editor for rejected rows
+      • event_signature: semantic dedup key (optional; absent on cached
+        pre-Stage-1 rows — callers must tolerate None)
     """
 
     should_publish: bool
@@ -83,6 +112,7 @@ class EditorialReview(BaseModel):
     region: Region | None = None
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     reason: str = ""
+    event_signature: EventSignature | None = None
 
 
 class TitlePair(BaseModel):
@@ -206,6 +236,8 @@ __all__ = [
     "Classification",
     "ClassifiedNews",
     "EditorialReview",
+    "EventSignature",
+    "EVENT_TYPES",
     "FewShotExample",
     "HttpUrl",
     "LLMUsage",

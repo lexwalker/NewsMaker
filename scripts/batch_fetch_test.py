@@ -238,6 +238,11 @@ class ArticleRow:
     # LLM editorial review: short reason for accept/reject. Visible to
     # editor in dedicated sheet column so they understand what the bot saw.
     llm_reason: str = ""
+    # Hybrid dedup Stage 1: semantic event-signature from the LLM
+    # (normalised brand/model/event_type). "" when absent.
+    event_brand: str = ""
+    event_model: str = ""
+    event_type: str = ""
 
 
 @dataclass
@@ -396,6 +401,10 @@ ARTICLES_HEADER = [
     "Бренд + модель",                  # AD
     # --- LLM editorial review reason ------------------------------------
     "Обоснование LLM",                 # AE
+    # --- Hybrid dedup Stage 1: semantic event-signature -----------------
+    "event_brand",                     # AF
+    "event_model",                     # AG
+    "event_type",                      # AH
 ]
 
 # Portal → country label (visible in the sheet) + numeric code (kept for
@@ -520,6 +529,10 @@ def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None: 
                 r.launch_brand_model,
                 # LLM editorial reason
                 r.llm_reason,
+                # Hybrid dedup Stage 1: semantic event-signature
+                r.event_brand,
+                r.event_model,
+                r.event_type,
             ]
         )
     svc.spreadsheets().values().update(
@@ -908,6 +921,13 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 continue
 
             r.llm_relevance = "Да" if review.should_publish else "Нет"
+            # Hybrid dedup Stage 1: capture the semantic event-signature
+            # (may be None on a model that omitted it — degrade silently).
+            es = getattr(review, "event_signature", None)
+            if es is not None:
+                r.event_brand = (es.brand or "").strip().lower()[:40]
+                r.event_model = (es.model or "").strip().lower()[:60]
+                r.event_type = (es.event_type or "").strip().lower()[:24]
             # Always capture the editor-facing reason in a dedicated field;
             # this populates the new "Обоснование LLM" sheet column so the
             # editor can see exactly why the bot accepted or rejected.
@@ -1361,6 +1381,11 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             row.primary_domain = cached.get("primary_domain", "")
             row.primary_confidence = cached.get("primary_confidence", "")
             row.primary_method = cached.get("primary_method", "") or "cached"
+            # Hybrid dedup Stage 1: restore semantic event-key (absent on
+            # pre-Stage-1 cache rows → stays "").
+            row.event_brand = cached.get("event_brand", "")
+            row.event_model = cached.get("event_model", "")
+            row.event_type = cached.get("event_type", "")
             row.article_score = cached.get("article_score", row.article_score)
             row.article_reasons = cached.get("article_reasons", "from-cache")
             row.is_article = bool(cached.get("is_article", True))
@@ -1771,6 +1796,12 @@ def main(argv: list[str] | None = None) -> int:
                 # Plan P3-D: persist brand+model so a later run can emit a
                 # "we wrote about this model recently" advisory hint.
                 "launch_brand_model": row.launch_brand_model,
+                # Hybrid dedup Stage 1: persist the semantic event-key
+                # so a later run / portal check can collapse the same
+                # story without re-calling the LLM.
+                "event_brand": row.event_brand,
+                "event_model": row.event_model,
+                "event_type": row.event_type,
             }
             entries.append((
                 uh,
