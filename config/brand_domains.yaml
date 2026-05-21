@@ -12,7 +12,7 @@ brands:
     domains: [lexus.com, lexus.ru, pressroom.lexus.com]
   - brand: Honda
     aliases: [Хонда]
-    domains: [honda.com, honda.co.jp, hondanews.com, honda.ru]
+    domains: [honda.com, honda.co.jp, hondanews.com, honda.ru, global.honda]
   - brand: Nissan
     aliases: [Ниссан]
     domains: [nissan-global.com, nissannews.com, nissan.ru]
@@ -37,7 +37,7 @@ brands:
   - brand: Genesis
     domains: [genesis.com, genesisnewsroom.com]
   - brand: Volkswagen
-    aliases: [Фольксваген]
+    aliases: [VW, Фольксваген]
     domains: [volkswagen.com, volkswagen-newsroom.com, vw.ru]
   - brand: Audi
     aliases: [Ауди]
@@ -210,3 +210,102 @@ brands:
   - brand: Jeland
     aliases: [Джейлэнд]
     domains: [jeland.ru]
+
+  # ── Gap-fill (may-2026 editor audit) ─────────────────────────────────
+  # Brands that appeared in editor «дубль» / «нужен пресс» comments but
+  # were missing from this list, breaking both primary-source detection
+  # and brand-keyed dedup. Aliases include historical names (SsangYong
+  # → KGM rename) and sub-brand groupings the editor treats as one
+  # bucket. Press domains are the ones the editor cited as canonical.
+  - brand: KGM
+    aliases: [SsangYong, Ссангйонг, Cаньенг]
+    domains: [kgm.com, kgmotor.com, smotor.ru, kgmotor.ru]
+  - brand: BMW Alpina
+    aliases: [Alpina, Альпина]
+    domains: [alpina-automobiles.com, press.bmwgroup.com]
+  - brand: Mercedes-AMG
+    aliases: [AMG, АМГ]
+    # Editor treats AMG announcements as Mercedes-Benz primary; we keep
+    # AMG separate so model-level matching works on "AMG GT" specifically,
+    # but mercedes-benz press domains are authoritative.
+    domains: [mercedes-amg.com, mercedes-benz.com, media.mercedes-benz.com]
+  - brand: VinFast
+    aliases: [Винфаст]
+    domains: [vinfastauto.com, vinfastauto.us, vinfast.eu]
+  - brand: Maextro
+    aliases: [Maextro S800]
+    # Maextro is a Huawei + JAC joint sub-brand; press flows via JAC and Huawei.
+    domains: [maextro.com]
+  - brand: Jeep
+    aliases: [Джип]
+    # Stellantis press releases serve Jeep too.
+    domains: [jeep.com, media.stellantis.com, stellantis.com]
+  - brand: Ram
+    aliases: [Ram Trucks, РАМ]
+    domains: [ramtrucks.com, media.stellantis.com, stellantis.com]
+  - brand: Dodge
+    aliases: [Додж]
+    domains: [dodge.com, media.stellantis.com]
+  - brand: Chrysler
+    aliases: [Крайслер]
+    domains: [chrysler.com, media.stellantis.com]
+  - brand: GMC
+    aliases: [Дж-Эм-Си]
+    domains: [gmc.com, media.gm.com]
+  - brand: Buick
+    aliases: [Бьюик, Бюик]
+    domains: [buick.com, media.gm.com]
+  - brand: Lincoln
+    aliases: [Линкольн]
+    domains: [lincoln.com, media.ford.com]
+  - brand: Smart
+    aliases: [Смарт]
+    domains: [smart.com, media.mercedes-benz.com]
+  - brand: Cupra
+    aliases: [Купра]
+    domains: [cupraofficial.com, seat-mediacenter.com]
+  - brand: Seat
+    aliases: [СЕАТ]
+    domains: [seat.com, seat-mediacenter.com]
+  - brand: Bentley
+    aliases: [Бентли]
+    domains: [bentleymotors.com, bentleymedia.com]
+  - brand: Rolls-Royce
+    aliases: [Роллс-Ройс]
+    domains: [rolls-roycemotorcars.com, press.rolls-roycemotorcars.com]
+  - brand: Aston Martin
+    aliases: [Астон Мартин]
+    domains: [astonmartin.com, media.astonmartin.com]
+  - brand: McLaren
+    aliases: [Макларен]
+    domains: [cars.mclaren.com, media.mclaren.com]
+  - brand: Lotus
+    aliases: [Лотус]
+    domains: [lotuscars.com, media.lotuscars.com]
+  - brand: Ineos
+    aliases: [Инеос, Ineos Grenadier]
+    domains: [ineosgrenadier.com, media.ineosgrenadier.com]
+  - brand: Polestar
+    aliases: [Полестар, Поулстар]
+    domains: [polestar.com, media.polestar.com]
+  - brand: Lucid
+    aliases: [Люсид]
+    domains: [lucidmotors.com, media.lucidmotors.com]
+  - brand: MG
+    aliases: [MG Motor, ЭмДжи]
+    domains: [mgmotor.eu, mgmotor.com.cn]
+  - brand: Roewe
+    aliases: [Роуи, Роуив, 荣威]
+    domains: [roewe.com.cn]
+  - brand: Sollers
+    aliases: [Соллерс, Sollers SP7]
+    domains: [sollers-auto.com, sollers.ru]
+  - brand: Aurus
+    aliases: [Аурус]
+    domains: [aurus.ru]
+  - brand: Solaris
+    aliases: [Солярис]
+    domains: [solaris-cars.ru]
+  - brand: Volga
+    aliases: [Волга]
+    domains: [volgacar.ru, gaz-volga.ru]

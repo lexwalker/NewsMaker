@@ -137,18 +137,39 @@ class DedupStore:
                 "AND cached_row_json IS NOT NULL AND cached_row_json != ''",
                 (portal, cutoff),
             ).fetchall()
+        # Canonicalise brand in keys so KGM ↔ SsangYong, BMW Alpina ↔
+        # Alpina, Vw ↔ Volkswagen merge into one bucket. Without this,
+        # v41 audit showed "kgm torres" vs "ssangyong torres" not
+        # matching.
+        from news_agent.core.brand_canonical import (
+            aliases_for,
+            canonicalize_brand,
+        )
+
         for r in rows:
             try:
                 blob = json.loads(r["cached_row_json"])
             except (ValueError, TypeError):
                 continue
-            bm = (blob.get("launch_brand_model") or "").strip().lower()
+            bm = (blob.get("launch_brand_model") or "").strip()
             if not bm:
                 continue
-            prev = out.get(bm)
+            # If we can identify the brand from the string, replace the
+            # brand portion with its canonical form. Otherwise lowercase.
+            canon = canonicalize_brand(bm)
+            if canon:
+                rest = bm.lower()
+                for variant in aliases_for(canon):
+                    if rest.startswith(variant):
+                        rest = rest[len(variant):].lstrip(" -")
+                        break
+                bm_key = f"{canon.lower()} {rest}".strip()
+            else:
+                bm_key = bm.lower()
+            prev = out.get(bm_key)
             # Keep the most recent sighting per model.
             if prev is None or r["last_seen_at"] > prev[0]:
-                out[bm] = (r["last_seen_at"], r["canonical_url"])
+                out[bm_key] = (r["last_seen_at"], r["canonical_url"])
         return out
 
     def recent_event_keys(
@@ -182,16 +203,20 @@ class DedupStore:
                 "AND cached_row_json IS NOT NULL AND cached_row_json != ''",
                 (portal, cutoff),
             ).fetchall()
+        from news_agent.core.brand_canonical import canonicalize_brand
+
         for r in rows:
             try:
                 blob = json.loads(r["cached_row_json"])
             except (ValueError, TypeError):
                 continue
-            eb = (blob.get("event_brand") or "").strip().lower()
+            eb_raw = (blob.get("event_brand") or "").strip()
             em = (blob.get("event_model") or "").strip().lower()
             et = (blob.get("event_type") or "").strip().lower()
-            if not (eb and em and et and et != "other"):
+            if not (eb_raw and em and et and et != "other"):
                 continue
+            # Canonicalise the brand half of the key.
+            eb = (canonicalize_brand(eb_raw) or eb_raw).lower()
             key = f"{eb}|{em}|{et}"
             display = f"{eb} {em} ({et})"
             prev = out.get(key)

@@ -116,6 +116,61 @@ def test_dedup_store_recent_brand_models(tmp_path) -> None:
     assert store.recent_brand_models("KZ", days=30) == {}
 
 
+def test_dedup_brand_canonicalisation_kgm_ssangyong(tmp_path) -> None:
+    """v41 regression: two articles about the SAME car keyed under
+    different brand aliases (KGM vs SsangYong) must collapse to one
+    bucket. Pre-fix the cross-run advisory couldn't fire on this."""
+    import json
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "kgm.sqlite")
+    blob_a = json.dumps({"verdict": "Точно новость",
+                         "launch_brand_model": "KGM Torres"})
+    blob_b = json.dumps({"verdict": "Точно новость",
+                         "launch_brand_model": "SsangYong Torres"})
+    store.mark_many_with_cache([
+        ("h1", "https://a.example/1", "KGM Torres", None,
+         "a.example", "RU", blob_a),
+        ("h2", "https://b.example/2", "SsangYong Torres", None,
+         "b.example", "RU", blob_b),
+    ])
+    out = store.recent_brand_models("RU", days=30)
+    # Both rows must collapse to ONE canonical "kgm torres" key
+    assert "kgm torres" in out
+    assert "ssangyong torres" not in out
+    assert len(out) == 1
+
+
+def test_dedup_event_keys_canonical_brand(tmp_path) -> None:
+    """Event-key match canonicalises the brand half — Mercedes-AMG and
+    bare AMG articles about the SAME event collapse to one event_key."""
+    import json
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "amg.sqlite")
+    blob_a = json.dumps({
+        "verdict": "Точно новость",
+        "event_brand": "mercedes-amg", "event_model": "gt 4-door",
+        "event_type": "reveal",
+    })
+    blob_b = json.dumps({
+        "verdict": "Точно новость",
+        "event_brand": "AMG", "event_model": "gt 4-door",
+        "event_type": "reveal",
+    })
+    store.mark_many_with_cache([
+        ("h1", "https://a.example/1", "t1", None, "a.example",
+         "RU", blob_a),
+        ("h2", "https://b.example/2", "t2", None, "b.example",
+         "RU", blob_b),
+    ])
+    out = store.recent_event_keys("RU", days=30)
+    # Both rows collapse to ONE canonical key
+    assert len(out) == 1
+    key = list(out.keys())[0]
+    assert key.startswith("mercedes-amg|")
+
+
 # ----------- Hybrid Stage 2a: semantic event-key dup hint -----------------
 
 from news_agent.core.dedup import recent_event_dup_hint  # noqa: E402

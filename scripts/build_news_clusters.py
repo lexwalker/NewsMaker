@@ -337,14 +337,46 @@ def _cluster_priority(
     press_release_hosts: set[str],
     whitelist: set[str],
 ) -> tuple[int, datetime]:
-    """Lower number = higher priority for becoming canonical of cluster."""
+    """Lower number = higher priority for becoming canonical of cluster.
+
+    Uses :mod:`news_agent.core.source_priority` 7-tier ladder, calibrated
+    against the may-2026 editor audit (35 «постили пресс / нужен англ»
+    complaints out of 197). Tier 0 (OEM-for-brand) when the article's
+    brand matches the domain's OEM registry; falls through 1 (regulator)
+    → 2 (generic OEM press) → 3 (industry EN) → 4 (whitelist/unknown)
+    → 5 (industry RU) → 6 (RU aggregator) → 7 (mirror/social).
+
+    Legacy ``press_release_hosts`` and ``whitelist`` are folded in as
+    additional signals at tier 0 / 4 respectively — keeping the
+    backward-compatible behaviour where editor-added hosts in those
+    sets stay strong.
+    """
+    from news_agent.core.brand_canonical import canonicalize_brand
+    from news_agent.core.source_priority import domain_tier
+
     dom = article["domain"]
     pub = article["pub_dt"] or datetime.max.replace(tzinfo=timezone.utc)
-    if dom in press_release_hosts or any(dom.endswith("." + h) for h in press_release_hosts):
+
+    # Legacy press_release_hosts override stays as tier 0
+    if dom in press_release_hosts or any(
+        dom.endswith("." + h) for h in press_release_hosts
+    ):
         return (0, pub)
-    if dom in whitelist:
-        return (1, pub)
-    return (2, pub)
+
+    # Brand hint from launch_brand_model (best) or title fallback
+    brand_hint = (article.get("launch_brand_model") or "").strip()
+    if not brand_hint:
+        brand_hint = (article.get("title") or "")[:120]
+    brand = canonicalize_brand(brand_hint)
+
+    tier = domain_tier(dom, brand_canonical=brand)
+
+    # Legacy whitelist promotes an otherwise-unknown domain to tier 4
+    # (sits between EN industry primary and RU industry primary).
+    if tier >= 4 and dom in whitelist:
+        tier = 4
+
+    return (tier, pub)
 
 
 def _outside_time_window(a_pub, b_pub) -> bool:
