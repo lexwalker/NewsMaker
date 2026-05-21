@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS seen_articles (
     last_seen_at    TEXT,
     source_domain   TEXT NOT NULL,
     portal          TEXT NOT NULL,
-    cached_row_json TEXT
+    cached_row_json TEXT,
+    lede_text       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_seen_portal ON seen_articles(portal);
 CREATE INDEX IF NOT EXISTS idx_seen_first_seen ON seen_articles(first_seen_at);
@@ -59,6 +60,14 @@ class DedupStore:
             if "cached_row_json" not in cols:
                 c.execute(
                     "ALTER TABLE seen_articles ADD COLUMN cached_row_json TEXT"
+                )
+            if "lede_text" not in cols:
+                # Lede text — unblocks cross-run dedup quality. Pre-fix
+                # we only had `title` for history lookups, which made
+                # short / generic titles falsely match. See PoC notes
+                # in scripts/_embed_dedup_poc_run.py.
+                c.execute(
+                    "ALTER TABLE seen_articles ADD COLUMN lede_text TEXT"
                 )
 
     @contextmanager
@@ -229,31 +238,50 @@ class DedupStore:
         self,
         entries: list[tuple[str, str, str, str | None, str, str]],
     ) -> None:
-        """Legacy signature (no cached JSON). Kept for the production
-        pipeline/run.py which hasn't been ported yet."""
+        """Legacy signature (no cached JSON, no lede). Kept for the
+        production pipeline/run.py which hasn't been ported yet."""
         if not entries:
             return
         now = datetime.now(timezone.utc).isoformat()
         rows = [
-            (h, url, title, pub, now, now, dom, portal, None)
+            (h, url, title, pub, now, now, dom, portal, None, None)
             for (h, url, title, pub, dom, portal) in entries
         ]
         self._upsert(rows)
 
     def mark_many_with_cache(
         self,
-        entries: list[tuple[str, str, str, str | None, str, str, str]],
+        entries: list[tuple],
     ) -> None:
-        """entries: (url_hash, canonical_url, title, published_at, source_domain,
-        portal, cached_row_json). UPSERT so ``last_seen_at`` and the cache
-        JSON get refreshed on repeat runs."""
+        """Upsert articles with optional cached classification + lede.
+
+        Accepted tuple shapes (backward-compatible):
+          7-tuple: (url_hash, canonical_url, title, published_at,
+                    source_domain, portal, cached_row_json)
+                   — pre-lede signature; lede defaults to None.
+          8-tuple: (..., cached_row_json, lede_text)
+                   — new signature with lede content for cross-run
+                     dedup quality.
+        UPSERT so ``last_seen_at`` and cache fields refresh on repeats.
+        """
         if not entries:
             return
         now = datetime.now(timezone.utc).isoformat()
-        rows = [
-            (h, url, title, pub, now, now, dom, portal, cached)
-            for (h, url, title, pub, dom, portal, cached) in entries
-        ]
+        rows = []
+        for e in entries:
+            if len(e) == 7:
+                h, url, title, pub, dom, portal, cached = e
+                lede = None
+            elif len(e) == 8:
+                h, url, title, pub, dom, portal, cached, lede = e
+            else:
+                raise ValueError(
+                    f"mark_many_with_cache: expected 7-tuple or 8-tuple, "
+                    f"got len={len(e)}"
+                )
+            rows.append(
+                (h, url, title, pub, now, now, dom, portal, cached, lede)
+            )
         self._upsert(rows)
 
     def _upsert(self, rows: list[tuple]) -> None:  # type: ignore[type-arg]
@@ -261,13 +289,82 @@ class DedupStore:
             c.executemany(
                 "INSERT INTO seen_articles ("
                 "url_hash, canonical_url, title, published_at, "
-                "first_seen_at, last_seen_at, source_domain, portal, cached_row_json"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "first_seen_at, last_seen_at, source_domain, portal, "
+                "cached_row_json, lede_text"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(url_hash) DO UPDATE SET "
                 "  last_seen_at    = excluded.last_seen_at, "
-                "  cached_row_json = COALESCE(excluded.cached_row_json, seen_articles.cached_row_json)",
+                "  cached_row_json = COALESCE(excluded.cached_row_json, "
+                "                              seen_articles.cached_row_json), "
+                "  lede_text       = COALESCE(excluded.lede_text, "
+                "                              seen_articles.lede_text)",
                 rows,
             )
+
+    def recent_for_brand(
+        self,
+        portal: str,
+        brand_canonical: str,
+        *,
+        days: int = 14,
+    ) -> list[dict]:
+        """Return recent articles for a canonical brand, with lede text.
+
+        Designed for cluster-level cross-run dedup: LLM-as-editor needs
+        to see ALL recent articles of the same brand to spot "уже было"
+        cases. We canonicalise both sides (stored event_brand vs
+        ``brand_canonical``) so KGM/SsangYong/etc. collapse.
+
+        Each result is a dict with: url, title, lede, ts, domain.
+        Pre-lede rows (cached_row_json without lede column populated)
+        still surface with lede="" — caller can fall back to title.
+        """
+        from datetime import timedelta
+        from news_agent.core.brand_canonical import canonicalize_brand
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat()
+        canon_target = (canonicalize_brand(brand_canonical) or
+                        brand_canonical).strip().lower()
+        if not canon_target:
+            return []
+
+        out: list[dict] = []
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT canonical_url, title, last_seen_at, source_domain, "
+                "       cached_row_json, lede_text "
+                "FROM seen_articles "
+                "WHERE portal = ? AND last_seen_at IS NOT NULL "
+                "AND last_seen_at >= ? "
+                "ORDER BY last_seen_at DESC",
+                (portal, cutoff),
+            ).fetchall()
+        for r in rows:
+            # Try to recover brand from cached_row_json first (most
+            # reliable), fall back to title-extraction.
+            brand_str = ""
+            try:
+                if r["cached_row_json"]:
+                    j = json.loads(r["cached_row_json"])
+                    brand_str = (j.get("event_brand") or
+                                  j.get("launch_brand_model") or "")
+            except (ValueError, TypeError):
+                pass
+            if not brand_str:
+                brand_str = r["title"] or ""
+            canon = (canonicalize_brand(brand_str) or "").strip().lower()
+            if canon != canon_target:
+                continue
+            out.append({
+                "url": r["canonical_url"],
+                "title": r["title"] or "",
+                "lede": r["lede_text"] or "",
+                "ts": r["last_seen_at"],
+                "domain": r["source_domain"] or "",
+            })
+        return out
 
     def log_run(self, portal: str, summary_json: str) -> None:
         now = datetime.now(timezone.utc).isoformat()

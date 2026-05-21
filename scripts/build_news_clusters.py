@@ -558,7 +558,129 @@ def cluster_articles(
     return list(groups.values())
 
 
+def _apply_llm_editor_pass(
+    groups: list[list[dict]],
+    articles: list[dict],
+) -> tuple[list[list[dict]], dict]:
+    """LLM-as-editor post-processor (safe-mode: ADD merges only).
+
+    Takes lexical clusters + flat article list. For each multi-article
+    brand group, asks LLM-as-editor to identify same-event merges.
+    Applies those merges via union-find on lexical groups so the
+    output is always a SUPERSET of the lexical grouping (never splits
+    what lexical merged — guarantees we don't regress).
+
+    Validated on v41: 100% dup-recall + 100% distinct-preservation,
+    $0.047 per push (see scripts/_llm_editor_poc.py).
+
+    Returns (new_groups, stats_dict).
+    """
+    from news_agent.core.llm_editor import (
+        cluster_group,
+        group_articles_by_brand,
+    )
+
+    stats = {
+        "brand_groups_total": 0,
+        "brand_groups_called": 0,
+        "events_returned": 0,
+        "merges_applied": 0,
+        "cross_run_dups": 0,
+        "llm_errors": 0,
+        "cost_usd": 0.0,
+        "elapsed_s": 0.0,
+    }
+
+    # Brand bucket → list of articles. Mercedes-AMG folds into
+    # Mercedes-Benz (editor groups them as one family).
+    brand_buckets = group_articles_by_brand(
+        [
+            {**a, "row": a["sheet_row"]}  # llm_editor expects 'row'
+            for a in articles
+        ],
+        bucket_aliases={"Mercedes-AMG": "Mercedes-Benz"},
+    )
+    # Build sheet_row -> original article dict for fast lookup
+    by_row: dict[int, dict] = {a["sheet_row"]: a for a in articles}
+
+    # Article id() -> group index (for union-find)
+    article_to_group: dict[int, int] = {}
+    for g_idx, grp in enumerate(groups):
+        for art in grp:
+            article_to_group[id(art)] = g_idx
+
+    # Process multi-article brand groups
+    for brand, brand_articles in brand_buckets.items():
+        stats["brand_groups_total"] += 1
+        if brand == "_unknown" or len(brand_articles) < 2:
+            continue
+        stats["brand_groups_called"] += 1
+
+        # Hand brand_articles back as the llm_editor-shaped dicts
+        ed_articles = [
+            {
+                "row": a["sheet_row"],
+                "title": a["title"],
+                "lede": a["lede"],
+                "section": a["section"],
+                "url": a["url"],
+            }
+            for a in brand_articles
+        ]
+        result = cluster_group(brand=brand, articles=ed_articles)
+        stats["cost_usd"] += result.cost_usd
+        stats["elapsed_s"] += result.elapsed_s
+        if result.error:
+            stats["llm_errors"] += 1
+            print(f"  [llm-editor] {brand}: ERROR {result.error}")
+            continue
+        stats["events_returned"] += len(result.events)
+
+        for ev in result.events:
+            # LOWCONF events stay split — same as lexical.
+            if ev.event_id.startswith("LOWCONF__"):
+                continue
+            if ev.is_cross_run_dup:
+                stats["cross_run_dups"] += 1
+            if len(ev.member_rows) < 2:
+                continue
+            # Map event rows back to article dicts via sheet_row
+            target_articles = [by_row[r] for r in ev.member_rows
+                                if r in by_row]
+            if len(target_articles) < 2:
+                continue
+            # Union their lexical groups
+            idxs = sorted({article_to_group[id(a)]
+                           for a in target_articles})
+            if len(idxs) <= 1:
+                continue  # already in same lexical cluster
+            target = idxs[0]
+            for src in idxs[1:]:
+                for art_id, g in list(article_to_group.items()):
+                    if g == src:
+                        article_to_group[art_id] = target
+            stats["merges_applied"] += 1
+
+            # Stash LLM verdict on member articles so the output stage
+            # can prefer LLM-chosen primary_row + section.
+            for a in target_articles:
+                a["_llm_event_summary"] = ev.summary
+                a["_llm_event_section"] = ev.section
+                a["_llm_event_primary_row"] = ev.primary_row
+
+    # Rebuild groups from union-find result
+    by_new_group: dict[int, list[dict]] = {}
+    for art in articles:
+        g = article_to_group[id(art)]
+        by_new_group.setdefault(g, []).append(art)
+    new_groups = list(by_new_group.values())
+    return new_groups, stats
+
+
 def main() -> int:
+    use_llm_editor = "--use-llm-editor" in sys.argv
+    if use_llm_editor:
+        sys.argv = [a for a in sys.argv if a != "--use-llm-editor"]
     tab = sys.argv[1] if len(sys.argv) > 1 else "ТЕСТ статьи v18"
 
     brands = load_brand_domains()
@@ -644,21 +766,51 @@ def main() -> int:
     print(f"'Точно новость' rows: {len(articles)}")
 
     groups = cluster_articles(articles)
-    print(f"Clusters found: {len(groups)}")
+    print(f"Lexical clusters: {len(groups)}")
+
+    if use_llm_editor:
+        print("LLM-as-editor pass: ON (--use-llm-editor)")
+        groups, ed_stats = _apply_llm_editor_pass(groups, articles)
+        print(f"  brand groups called: {ed_stats['brand_groups_called']}"
+              f"/{ed_stats['brand_groups_total']}")
+        print(f"  events returned:     {ed_stats['events_returned']}")
+        print(f"  merges applied:      {ed_stats['merges_applied']}")
+        print(f"  cross-run dups:      {ed_stats['cross_run_dups']}")
+        print(f"  llm errors:          {ed_stats['llm_errors']}")
+        print(f"  cost: ${ed_stats['cost_usd']:.4f}  "
+              f"time: {ed_stats['elapsed_s']:.0f}s")
+        print(f"Clusters after LLM-editor: {len(groups)}")
 
     # Pack output
     out_clusters: list[dict] = []
     singletons = 0
     for grp in groups:
-        # Sort by priority — first is canonical
-        grp_sorted = sorted(
-            grp,
-            key=lambda a: _cluster_priority(
-                a,
-                press_release_hosts=press_release_hosts,
-                whitelist=whitelist,
-            ),
+        # Sort by priority — first is canonical. If LLM-editor assigned
+        # an explicit primary_row in this group, honour it.
+        llm_primary = next(
+            (a["_llm_event_primary_row"] for a in grp
+             if a.get("_llm_event_primary_row")),
+            None,
         )
+        if llm_primary is not None:
+            grp_sorted = sorted(
+                grp,
+                key=lambda a: (0 if a["sheet_row"] == llm_primary else 1,
+                                _cluster_priority(
+                                    a,
+                                    press_release_hosts=press_release_hosts,
+                                    whitelist=whitelist,
+                                )),
+            )
+        else:
+            grp_sorted = sorted(
+                grp,
+                key=lambda a: _cluster_priority(
+                    a,
+                    press_release_hosts=press_release_hosts,
+                    whitelist=whitelist,
+                ),
+            )
         canonical = grp_sorted[0]
         if len(grp) == 1:
             singletons += 1
@@ -679,13 +831,23 @@ def main() -> int:
             if launch_stage and launch_brand_model and llm_reason:
                 break
 
+        # If LLM-as-editor assigned a section to this event, prefer it.
+        # Validated: editor's manual section corrections (96 in v2 sync)
+        # were 93% concordant with LLM-as-editor PoC on v41.
+        llm_section = next(
+            (a.get("_llm_event_section") for a in grp_sorted
+             if a.get("_llm_event_section")),
+            None,
+        )
+        section_final = llm_section or canonical["section"]
+
         cluster = {
             "size": len(grp),
             "canonical_title": canonical["title"],
             "canonical_url": canonical["url"],
             "canonical_domain": canonical["domain"],
             "canonical_lede": canonical["lede"],
-            "section": canonical["section"],
+            "section": section_final,
             "region": canonical["region"],
             "country": canonical["country"],
             "published": canonical["published"],

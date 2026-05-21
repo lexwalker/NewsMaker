@@ -141,6 +141,58 @@ def test_dedup_brand_canonicalisation_kgm_ssangyong(tmp_path) -> None:
     assert len(out) == 1
 
 
+def test_dedup_store_lede_column_persistence(tmp_path) -> None:
+    """Lede text is persisted on the 8-tuple write signature and
+    survives round-trip. Pre-fix history rows lacked lede entirely
+    (cross-run dedup PoC discovered 0/5798 had it)."""
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "lede.sqlite")
+    store.mark_many_with_cache([
+        ("h1", "https://a.example/1", "KGM Torres launched in Russia",
+         None, "a.example", "RU", None,
+         "Кроссовер KGM Torres вышел на российский рынок..."),
+    ])
+    out = store.recent_for_brand("RU", "KGM", days=30)
+    assert len(out) == 1
+    assert out[0]["lede"].startswith("Кроссовер KGM Torres")
+    assert out[0]["url"] == "https://a.example/1"
+
+
+def test_dedup_store_lede_column_backward_compat(tmp_path) -> None:
+    """7-tuple writes (pre-lede signature) still work, lede stays empty."""
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "compat.sqlite")
+    store.mark_many_with_cache([
+        ("h1", "https://a.example/1", "Old title", None,
+         "a.example", "RU", '{"event_brand": "Audi"}'),
+    ])
+    out = store.recent_for_brand("RU", "Audi", days=30)
+    assert len(out) == 1
+    assert out[0]["lede"] == ""  # no lede stored → empty, not error
+
+
+def test_dedup_recent_for_brand_canonicalises(tmp_path) -> None:
+    """Querying for 'SsangYong' returns rows stored as 'KGM Torres'."""
+    import json as _json
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "kgm2.sqlite")
+    blob = _json.dumps({"event_brand": "KGM", "event_model": "Torres"})
+    store.mark_many_with_cache([
+        ("h1", "https://a.example/1", "KGM Torres", None,
+         "a.example", "RU", blob,
+         "KGM Torres updated for 2027 model year"),
+    ])
+    # Querying via the historical brand name must still hit
+    out_via_old_name = store.recent_for_brand("RU", "SsangYong", days=30)
+    out_via_new_name = store.recent_for_brand("RU", "KGM", days=30)
+    assert len(out_via_old_name) == 1
+    assert len(out_via_new_name) == 1
+    assert out_via_old_name[0]["url"] == out_via_new_name[0]["url"]
+
+
 def test_dedup_event_keys_canonical_brand(tmp_path) -> None:
     """Event-key match canonicalises the brand half — Mercedes-AMG and
     bare AMG articles about the SAME event collapse to one event_key."""
