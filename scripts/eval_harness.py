@@ -53,7 +53,8 @@ from news_agent.core.models import RawArticle  # noqa: E402
 from news_agent.settings import get_settings  # noqa: E402
 
 DATA = ROOT / "data"
-EVAL_SET = DATA / "eval_set.jsonl"
+EVAL_SET = DATA / "eval_set.jsonl"      # v1 — legacy schema (build_eval_set.py)
+EVAL_SET_V2 = DATA / "eval_set_v2.jsonl"  # v2 — rich-label schema (sync_editor_feedback.py)
 LLM_CACHE = DATA / "eval_llm_cache.json"
 HISTORY = DATA / "eval_history.jsonl"
 
@@ -87,16 +88,58 @@ def _load_cache() -> dict:
     return {}
 
 
+def _load_jsonl(p: Path) -> list[dict]:
+    """Safe-load a jsonl file, skip malformed lines."""
+    if not p.exists():
+        return []
+    out: list[dict] = []
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            out.append(json.loads(ln))
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return out
+
+
+def _merge_eval_sets(v1: list[dict], v2: list[dict]) -> list[dict]:
+    """Combine v1 + v2 eval sets, preferring v2 when same content key.
+
+    v2 has richer labels (label_dup_*, label_wrong_primary, ...);
+    v1 has section_at_push + body content for older entries.
+    De-dup by title+url so we don't double-count when sync re-captures
+    a comment that build_eval_set already saw.
+    """
+    def key(r: dict) -> str:
+        return (
+            (r.get("title", "")[:120].lower().strip() + "|" +
+             r.get("url", "")[:120])
+        )
+    v2_keys = {key(r) for r in v2}
+    merged = list(v2)  # v2 wins on collision
+    for r in v1:
+        if key(r) not in v2_keys:
+            merged.append(r)
+    return merged
+
+
 def main() -> int:
     args = _parse_args()
-    eval_path = Path(args.eval_file) if args.eval_file else EVAL_SET
-    if not eval_path.exists():
-        print(f"{eval_path.name} missing — run build_eval_set.py first")
-        return 2
-    rows = [
-        json.loads(ln) for ln in
-        eval_path.read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
+    if args.eval_file:
+        rows = _load_jsonl(Path(args.eval_file))
+        if not rows:
+            print(f"{args.eval_file} missing or empty")
+            return 2
+    else:
+        v1 = _load_jsonl(EVAL_SET)
+        v2 = _load_jsonl(EVAL_SET_V2)
+        rows = _merge_eval_sets(v1, v2)
+        if not rows:
+            print("no eval data — run build_eval_set.py + "
+                  "sync_editor_feedback.py")
+            return 2
+        print(f"eval data: v1={len(v1)} + v2={len(v2)} → merged={len(rows)}")
     # strict set excludes hedged ("soft") verdicts
     strict = [r for r in rows if not r.get("soft")]
     bl = Blacklist()
