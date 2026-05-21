@@ -105,16 +105,23 @@ _BOUNDED_RX: dict[str, re.Pattern[str]] = {
 
 @lru_cache(maxsize=4096)
 def canonicalize_brand(text: str) -> str:
-    """Return canonical brand name, or empty string if no match.
+    """Return canonical brand name of the SUBJECT, or empty string.
 
     Accepts EITHER a bare brand label ("ssangyong") OR free text where
     the brand may be embedded ("KGM Torres SUV launched in Russia").
 
     For bare labels: exact (lowercase) alias lookup.
-    For free text: word-bounded regex scan, longest alias wins.
 
-    >>> canonicalize_brand("ssangyong")
-    'KGM'
+    For free text — earliest-mention wins (the article SUBJECT is
+    normally the first brand named), with length as tie-breaker so
+    "BMW Alpina" beats bare "BMW" when both start at position 0.
+
+    Pre-fix this preferred the alphabetically-first long alias, so
+    "Ram Rumble Bee faster than BMW M3" was tagged BMW (last mention)
+    instead of Ram (the actual subject) — a v41 audit regression.
+
+    >>> canonicalize_brand("Ram Rumble Bee faster than BMW M3")
+    'Ram'
     >>> canonicalize_brand("BMW Alpina Vision concept revealed")
     'BMW Alpina'
     >>> canonicalize_brand("Mercedes-AMG GT 4-Door")
@@ -122,8 +129,6 @@ def canonicalize_brand(text: str) -> str:
     >>> canonicalize_brand("Vw Tukan pickup")
     'Volkswagen'
     >>> canonicalize_brand("")
-    ''
-    >>> canonicalize_brand("ChatGPT story")
     ''
     """
     if not text:
@@ -135,13 +140,24 @@ def canonicalize_brand(text: str) -> str:
     if direct is not None:
         return direct
 
-    # Free-text scan: longest alias first (so "bmw alpina" beats "bmw")
+    # Free-text scan: find ALL alias matches with position, pick the
+    # earliest (subject of the headline) with length as tiebreaker
+    # (so "bmw alpina" beats "bmw" when both start at 0).
+    best_pos: int | None = None
+    best_alias: str = ""
     for alias in _ALIASES_SORTED:
         if alias not in t:
             continue  # cheap prefilter before regex
-        if _BOUNDED_RX[alias].search(text):
-            return _ALIAS_MAP[alias]
-    return ""
+        m = _BOUNDED_RX[alias].search(text)
+        if not m:
+            continue
+        pos = m.start()
+        if best_pos is None or pos < best_pos or (
+            pos == best_pos and len(alias) > len(best_alias)
+        ):
+            best_pos = pos
+            best_alias = alias
+    return _ALIAS_MAP[best_alias] if best_alias else ""
 
 
 def all_canonical_brands() -> set[str]:

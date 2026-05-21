@@ -113,6 +113,33 @@ def test_longest_alias_wins() -> None:
     assert canonicalize_brand("Great Wall Motor SUV") == "Great Wall"
 
 
+# ── SUBJECT extraction (earliest mention wins) ───────────────────────
+
+def test_subject_brand_when_multiple_mentioned() -> None:
+    """v41 regression: «Ram Rumble Bee faster than BMW M3» — subject
+    is Ram (earliest mention), not BMW. Pre-fix this was tagged BMW
+    and the Ram pair fell into the wrong cluster bucket."""
+    assert canonicalize_brand(
+        "Ram Rumble Bee faster than BMW M3"
+    ) == "Ram"
+
+
+def test_subject_brand_lotus_first_then_nissan() -> None:
+    """v41 r7: «Rimac, Lotus shelve electric hypercar plans amid weak
+    demand»  + Nissan mentioned later in body. Subject = Lotus."""
+    assert canonicalize_brand(
+        "Rimac, Lotus shelve electric hypercar plans amid weak demand "
+        "(Nissan GT-R hybrid confirmed)"
+    ) == "Lotus"
+
+
+def test_subject_first_brand_in_long_headline() -> None:
+    """When two real subjects could be claimed, prefer earliest."""
+    assert canonicalize_brand(
+        "Toyota beats Honda in Japan domestic sales for May 2026"
+    ) == "Toyota"
+
+
 # ── NEGATIVE / safety ────────────────────────────────────────────────
 
 def test_empty_input() -> None:
