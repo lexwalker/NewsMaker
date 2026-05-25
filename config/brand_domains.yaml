@@ -1,311 +1,643 @@
-# Seed list of automotive brands → their known official / press domains.
-# Used for primary-source detection: if an article links to one of these,
-# we treat that link as the likely primary source.
-# Tune this list as the editor discovers new brands / regional domains.
-
 brands:
-  - brand: Toyota
-    aliases: [Тойота]
-    domains: [toyota.com, toyota.ru, toyota.co.jp, pressroom.toyota.com, toyota-global.com]
-  - brand: Lexus
-    aliases: [Лексус]
-    domains: [lexus.com, lexus.ru, pressroom.lexus.com]
-  - brand: Honda
-    aliases: [Хонда]
-    domains: [honda.com, honda.co.jp, hondanews.com, honda.ru, global.honda]
-  - brand: Nissan
-    aliases: [Ниссан]
-    domains: [nissan-global.com, nissannews.com, nissan.ru]
-  - brand: Mazda
-    aliases: [Мазда]
-    domains: [mazda.com, insidemazda.mazdausa.com, mazda.ru]
-  - brand: Subaru
-    aliases: [Субару]
-    domains: [subaru.com, subaru-global.com, subaru.ru]
-  - brand: Mitsubishi
-    aliases: [Мицубиси, Митсубиши]
-    domains: [mitsubishi-motors.com, mitsubishi-motors.ru]
-  - brand: Suzuki
-    aliases: [Сузуки]
-    domains: [globalsuzuki.com, suzuki.ru]
-  - brand: Hyundai
-    aliases: [Хендай, Хёндэ]
-    domains: [hyundai.com, hyundai.news, hyundai.ru]
-  - brand: Kia
-    aliases: [Киа, КИА]
-    domains: [kia.com, press.kia.com, kia.ru]
-  - brand: Genesis
-    domains: [genesis.com, genesisnewsroom.com]
-  - brand: Volkswagen
-    aliases: [VW, Фольксваген]
-    domains: [volkswagen.com, volkswagen-newsroom.com, vw.ru]
-  - brand: Audi
-    aliases: [Ауди]
-    domains: [audi.com, audi-mediacenter.com, audi.ru]
-  - brand: Porsche
-    aliases: [Порше]
-    domains: [porsche.com, newsroom.porsche.com]
-  - brand: Skoda
-    aliases: [Шкода]
-    domains: [skoda-auto.com, skoda-storyboard.com, skoda-auto.ru]
-  - brand: BMW
-    aliases: [БМВ]
-    domains: [bmw.com, press.bmwgroup.com, bmw.ru]
-  - brand: Mini
-    domains: [mini.com, press.mini.com]
-  - brand: Mercedes-Benz
-    aliases: [Мерседес, Мерседес-Бенц]
-    domains: [mercedes-benz.com, media.mercedes-benz.com, mercedes-benz.ru]
-  - brand: Ford
-    aliases: [Форд]
-    domains: [ford.com, media.ford.com]
-  - brand: Chevrolet
-    aliases: [Шевроле]
-    domains: [chevrolet.com, media.chevrolet.com, chevrolet.ru]
-  - brand: Cadillac
-    domains: [cadillac.com, media.cadillac.com]
-  - brand: Tesla
-    aliases: [Тесла]
-    domains: [tesla.com]
-  - brand: Rivian
-    domains: [rivian.com, media.rivian.com]
-  - brand: Volvo
-    aliases: [Вольво]
-    domains: [volvocars.com, media.volvocars.com]
-  - brand: Jaguar
-    domains: [jaguar.com, media.jaguar.com]
-  - brand: Land Rover
-    aliases: [Ленд Ровер]
-    domains: [landrover.com, media.landrover.com]
-  - brand: Renault
-    aliases: [Рено]
-    domains: [renault.com, media.renaultgroup.com, renault.ru]
-  - brand: Peugeot
-    aliases: [Пежо]
-    domains: [peugeot.com, media.peugeot.com]
-  - brand: Citroen
-    aliases: [Ситроен]
-    domains: [citroen.com, media.citroen.com]
-  - brand: Fiat
-    domains: [fiat.com, media.stellantis.com]
-  - brand: Alfa Romeo
-    domains: [alfaromeo.com]
-  - brand: Stellantis
-    domains: [stellantis.com, media.stellantis.com]
-  - brand: Lada
-    aliases: [Лада, АвтоВАЗ]
-    domains: [lada.ru, avtovaz.ru]
-  - brand: GAZ
-    aliases: [ГАЗ, Группа ГАЗ]
-    domains: [gazgroup.ru, azgaz.ru]
-  - brand: UAZ
-    aliases: [УАЗ]
-    domains: [uaz.ru]
-  - brand: Moskvich
-    aliases: [Москвич]
-    domains: [moskvich-auto.ru]
-  - brand: Chery
-    aliases: [Чери]
-    domains: [chery.com, cheryinternational.com, chery.ru]
-  - brand: Haval
-    aliases: [Хавейл]
-    domains: [haval-global.com, haval.ru]
-  - brand: Geely
-    aliases: [Джили]
-    domains: [geely.com, global.geely.com, geely-motors.com, geely-russia.ru]
-  - brand: Exeed
-    domains: [exeedauto.com, exeed.ru]
-  - brand: Omoda
-    domains: [omoda.com, omoda-auto.ru]
-  - brand: Jaecoo
-    domains: [jaecoo.com, jaecoo.ru]
-  - brand: BYD
-    domains: [byd.com, bydauto.com.cn]
-  - brand: Xpeng
-    domains: [xpeng.com, heyxpeng.com]
-  - brand: Nio
-    domains: [nio.com]
-  - brand: Li Auto
-    domains: [lixiang.com]
-  - brand: Great Wall
-    aliases: [Great Wall Motor, GWM]
-    domains: [gwm-global.com, gwm.com.cn]
-  - brand: Changan
-    domains: [changan.com.cn, globalchangan.com]
-  - brand: Dongfeng
-    domains: [dongfeng-global.com, dfmc.com.cn]
-  # --- Additional Chinese brands (editor asked to monitor these too)
-  - brand: Zeekr
-    aliases: [Зикр]
-    domains: [zeekrlife.com, zeekrglobal.com, zeekr.com]
-  - brand: Lynk & Co
-    aliases: [Линк Ко, Lynk&Co, Lynkco]
-    domains: [lynkco.com, press.lynkco.com]
-  - brand: Denza
-    aliases: [Денза]
-    domains: [denzaauto.com]
-  - brand: IM Motors
-    aliases: [IM, IM智己,智己]
-    domains: [immotors.com, immotors.com.cn]
-  - brand: Seres
-    aliases: [Серес, Thalys]
-    domains: [seres.com, serescars.com]
-  - brand: Aito
-    aliases: [Huawei Aito, AITO问界, 问界]
-    domains: [aitomotors.com]
-  - brand: Avatr
-    aliases: [Аватр]
-    domains: [avatr.com]
-  - brand: Neta
-    aliases: [Hozon, Нета]
-    domains: [nautomobile.com, nauto.cn]
-  - brand: HiPhi
-    aliases: [Хайфай]
-    domains: [hiphi.com]
-  - brand: Voyah
-    aliases: [Вояш, Вояж]
-    domains: [voyah.su, voyahauto.com]
-  - brand: Jetta
-    aliases: [Джетта, Jetta VS, Jetta X, FAW-Jetta]
-    domains: [jetta.com.cn]
-  - brand: Maxus
-    aliases: [Максус, SAIC Maxus]
-    domains: [saicmaxus.com, maxusmotors.com]
-  - brand: Wuling
-    aliases: [Вулинг]
-    domains: [sgmw.com.cn, wuling.com]
-  - brand: Baojun
-    aliases: [Баоджун]
-    domains: [baojunauto.com]
-  - brand: Rising Auto
-    aliases: [Rising, Rising R, 飞凡]
-    domains: [risingauto.com]
-  - brand: Xiaomi Auto
-    aliases: [Xiaomi EV, Сяоми, Xiaomi SU7]
-    domains: [xiaomi-auto.com, mi.com]
-  - brand: Leapmotor
-    aliases: [Липмотор, Липмоторс, 零跑]
-    domains: [leapmotor.com, leapmotorinternational.com]
-  - brand: Belgee
-    aliases: [Белджи, Белгее]
-    domains: [belgee.com, belgee.by]
-  - brand: JAC
-    aliases: [Джак, ДжиАЙСи, JAC Motors]
-    domains: [jac-motors.com, jac.com.cn]
-  - brand: GAC
-    aliases: [GAC Motor, GAC Aion, Аион, Трумчи, Trumpchi]
-    domains: [gacmotor.com, gac-aion.com]
-  - brand: Foton
-    aliases: [Фотон]
-    domains: [foton.com.cn, fotoninter.com]
-  - brand: Soueast
-    aliases: [Соуист]
-    domains: [soueast-motor.com, soueast.ru]
-  - brand: Tank
-    aliases: [Танк, GWM Tank]
-    domains: [tank.auto, tank-auto.com]
-  - brand: UMO
-    aliases: [УМО]
-    domains: [umoauto.ru]
-  - brand: Jeland
-    aliases: [Джейлэнд]
-    domains: [jeland.ru]
-
-  # ── Gap-fill (may-2026 editor audit) ─────────────────────────────────
-  # Brands that appeared in editor «дубль» / «нужен пресс» comments but
-  # were missing from this list, breaking both primary-source detection
-  # and brand-keyed dedup. Aliases include historical names (SsangYong
-  # → KGM rename) and sub-brand groupings the editor treats as one
-  # bucket. Press domains are the ones the editor cited as canonical.
-  - brand: KGM
-    aliases: [SsangYong, Ссангйонг, Cаньенг]
-    domains: [kgm.com, kgmotor.com, smotor.ru, kgmotor.ru]
-  - brand: BMW Alpina
-    aliases: [Alpina, Альпина]
-    domains: [alpina-automobiles.com, press.bmwgroup.com]
-  - brand: Mercedes-AMG
-    aliases: [AMG, АМГ]
-    # Editor treats AMG announcements as Mercedes-Benz primary; we keep
-    # AMG separate so model-level matching works on "AMG GT" specifically,
-    # but mercedes-benz press domains are authoritative.
-    domains: [mercedes-amg.com, mercedes-benz.com, media.mercedes-benz.com]
-  - brand: VinFast
-    aliases: [Винфаст]
-    domains: [vinfastauto.com, vinfastauto.us, vinfast.eu]
-  - brand: Maextro
-    aliases: [Maextro S800]
-    # Maextro is a Huawei + JAC joint sub-brand; press flows via JAC and Huawei.
-    domains: [maextro.com]
-  - brand: Jeep
-    aliases: [Джип]
-    # Stellantis press releases serve Jeep too.
-    domains: [jeep.com, media.stellantis.com, stellantis.com]
-  - brand: Ram
-    aliases: [Ram Trucks, РАМ]
-    domains: [ramtrucks.com, media.stellantis.com, stellantis.com]
-  - brand: Dodge
-    aliases: [Додж]
-    domains: [dodge.com, media.stellantis.com]
-  - brand: Chrysler
-    aliases: [Крайслер]
-    domains: [chrysler.com, media.stellantis.com]
-  - brand: GMC
-    aliases: [Дж-Эм-Си]
-    domains: [gmc.com, media.gm.com]
-  - brand: Buick
-    aliases: [Бьюик, Бюик]
-    domains: [buick.com, media.gm.com]
-  - brand: Lincoln
-    aliases: [Линкольн]
-    domains: [lincoln.com, media.ford.com]
-  - brand: Smart
-    aliases: [Смарт]
-    domains: [smart.com, media.mercedes-benz.com]
-  - brand: Cupra
-    aliases: [Купра]
-    domains: [cupraofficial.com, seat-mediacenter.com]
-  - brand: Seat
-    aliases: [СЕАТ]
-    domains: [seat.com, seat-mediacenter.com]
-  - brand: Bentley
-    aliases: [Бентли]
-    domains: [bentleymotors.com, bentleymedia.com]
-  - brand: Rolls-Royce
-    aliases: [Роллс-Ройс]
-    domains: [rolls-roycemotorcars.com, press.rolls-roycemotorcars.com]
-  - brand: Aston Martin
-    aliases: [Астон Мартин]
-    domains: [astonmartin.com, media.astonmartin.com]
-  - brand: McLaren
-    aliases: [Макларен]
-    domains: [cars.mclaren.com, media.mclaren.com]
-  - brand: Lotus
-    aliases: [Лотус]
-    domains: [lotuscars.com, media.lotuscars.com]
-  - brand: Ineos
-    aliases: [Инеос, Ineos Grenadier]
-    domains: [ineosgrenadier.com, media.ineosgrenadier.com]
-  - brand: Polestar
-    aliases: [Полестар, Поулстар]
-    domains: [polestar.com, media.polestar.com]
-  - brand: Lucid
-    aliases: [Люсид]
-    domains: [lucidmotors.com, media.lucidmotors.com]
-  - brand: MG
-    aliases: [MG Motor, ЭмДжи]
-    domains: [mgmotor.eu, mgmotor.com.cn]
-  - brand: Roewe
-    aliases: [Роуи, Роуив, 荣威]
-    domains: [roewe.com.cn]
-  - brand: Sollers
-    aliases: [Соллерс, Sollers SP7]
-    domains: [sollers-auto.com, sollers.ru]
-  - brand: Aurus
-    aliases: [Аурус]
-    domains: [aurus.ru]
-  - brand: Solaris
-    aliases: [Солярис]
-    domains: [solaris-cars.ru]
-  - brand: Volga
-    aliases: [Волга]
-    domains: [volgacar.ru, gaz-volga.ru]
+- brand: Toyota
+  aliases:
+  - Тойота
+  domains:
+  - toyota.com
+  - toyota.ru
+  - toyota.co.jp
+  - pressroom.toyota.com
+  - toyota-global.com
+- brand: Lexus
+  aliases:
+  - Лексус
+  domains:
+  - lexus.com
+  - lexus.ru
+  - pressroom.lexus.com
+- brand: Honda
+  aliases:
+  - Хонда
+  domains:
+  - honda.com
+  - honda.co.jp
+  - hondanews.com
+  - honda.ru
+  - global.honda
+- brand: Nissan
+  aliases:
+  - Ниссан
+  domains:
+  - nissan-global.com
+  - nissannews.com
+  - nissan.ru
+- brand: Mazda
+  aliases:
+  - Мазда
+  domains:
+  - mazda.com
+  - insidemazda.mazdausa.com
+  - mazda.ru
+- brand: Subaru
+  aliases:
+  - Субару
+  domains:
+  - subaru.com
+  - subaru-global.com
+  - subaru.ru
+- brand: Mitsubishi
+  aliases:
+  - Мицубиси
+  - Митсубиши
+  domains:
+  - mitsubishi-motors.com
+  - mitsubishi-motors.ru
+- brand: Suzuki
+  aliases:
+  - Сузуки
+  domains:
+  - globalsuzuki.com
+  - suzuki.ru
+- brand: Hyundai
+  aliases:
+  - Хендай
+  - Хёндэ
+  domains:
+  - hyundai.com
+  - hyundai.news
+  - hyundai.ru
+- brand: Kia
+  aliases:
+  - Киа
+  - КИА
+  domains:
+  - kia.com
+  - press.kia.com
+  - kia.ru
+- brand: Genesis
+  domains:
+  - genesis.com
+  - genesisnewsroom.com
+- brand: Volkswagen
+  aliases:
+  - VW
+  - Фольксваген
+  domains:
+  - volkswagen.com
+  - volkswagen-newsroom.com
+  - vw.ru
+- brand: Audi
+  aliases:
+  - Ауди
+  domains:
+  - audi.com
+  - audi-mediacenter.com
+  - audi.ru
+- brand: Porsche
+  aliases:
+  - Порше
+  domains:
+  - porsche.com
+  - newsroom.porsche.com
+- brand: Skoda
+  aliases:
+  - Шкода
+  domains:
+  - skoda-auto.com
+  - skoda-storyboard.com
+  - skoda-auto.ru
+- brand: BMW
+  aliases:
+  - БМВ
+  domains:
+  - bmw.com
+  - press.bmwgroup.com
+  - bmw.ru
+- brand: Mini
+  domains:
+  - mini.com
+  - press.mini.com
+- brand: Mercedes-Benz
+  aliases:
+  - Мерседес
+  - Мерседес-Бенц
+  domains:
+  - mercedes-benz.com
+  - media.mercedes-benz.com
+  - mercedes-benz.ru
+- brand: Ford
+  aliases:
+  - Форд
+  domains:
+  - ford.com
+  - media.ford.com
+- brand: Chevrolet
+  aliases:
+  - Шевроле
+  domains:
+  - chevrolet.com
+  - media.chevrolet.com
+  - chevrolet.ru
+- brand: Cadillac
+  domains:
+  - cadillac.com
+  - media.cadillac.com
+- brand: Tesla
+  aliases:
+  - Тесла
+  domains:
+  - tesla.com
+- brand: Rivian
+  domains:
+  - rivian.com
+  - media.rivian.com
+- brand: Volvo
+  aliases:
+  - Вольво
+  domains:
+  - volvocars.com
+  - media.volvocars.com
+- brand: Jaguar
+  domains:
+  - jaguar.com
+  - media.jaguar.com
+- brand: Land Rover
+  aliases:
+  - Ленд Ровер
+  domains:
+  - landrover.com
+  - media.landrover.com
+- brand: Renault
+  aliases:
+  - Рено
+  domains:
+  - renault.com
+  - media.renaultgroup.com
+  - renault.ru
+- brand: Peugeot
+  aliases:
+  - Пежо
+  domains:
+  - peugeot.com
+  - media.peugeot.com
+- brand: Citroen
+  aliases:
+  - Ситроен
+  domains:
+  - citroen.com
+  - media.citroen.com
+- brand: Fiat
+  domains:
+  - fiat.com
+  - media.stellantis.com
+- brand: Alfa Romeo
+  domains:
+  - alfaromeo.com
+- brand: Stellantis
+  domains:
+  - stellantis.com
+  - media.stellantis.com
+- brand: Lada
+  aliases:
+  - Лада
+  - АвтоВАЗ
+  domains:
+  - lada.ru
+  - avtovaz.ru
+- brand: GAZ
+  aliases:
+  - ГАЗ
+  - Группа ГАЗ
+  domains:
+  - gazgroup.ru
+  - azgaz.ru
+- brand: UAZ
+  aliases:
+  - УАЗ
+  domains:
+  - uaz.ru
+- brand: Moskvich
+  aliases:
+  - Москвич
+  domains:
+  - moskvich-auto.ru
+- brand: Chery
+  aliases:
+  - Чери
+  domains:
+  - chery.com
+  - cheryinternational.com
+  - chery.ru
+- brand: Haval
+  aliases:
+  - Хавейл
+  domains:
+  - haval-global.com
+  - haval.ru
+- brand: Geely
+  aliases:
+  - Джили
+  domains:
+  - geely.com
+  - global.geely.com
+  - geely-motors.com
+  - geely-russia.ru
+- brand: Exeed
+  domains:
+  - exeedauto.com
+  - exeed.ru
+- brand: Omoda
+  domains:
+  - omoda.com
+  - omoda-auto.ru
+- brand: Jaecoo
+  domains:
+  - jaecoo.com
+  - jaecoo.ru
+- brand: BYD
+  domains:
+  - byd.com
+  - bydauto.com.cn
+- brand: Xpeng
+  domains:
+  - xpeng.com
+  - heyxpeng.com
+- brand: Nio
+  domains:
+  - nio.com
+- brand: Li Auto
+  domains:
+  - lixiang.com
+- brand: Great Wall
+  aliases:
+  - Great Wall Motor
+  - GWM
+  domains:
+  - gwm-global.com
+  - gwm.com.cn
+- brand: Changan
+  domains:
+  - changan.com.cn
+  - globalchangan.com
+- brand: Dongfeng
+  domains:
+  - dongfeng-global.com
+  - dfmc.com.cn
+- brand: Zeekr
+  aliases:
+  - Зикр
+  domains:
+  - zeekrlife.com
+  - zeekrglobal.com
+  - zeekr.com
+- brand: Lynk & Co
+  aliases:
+  - Линк Ко
+  - Lynk&Co
+  - Lynkco
+  domains:
+  - lynkco.com
+  - press.lynkco.com
+- brand: Denza
+  aliases:
+  - Денза
+  domains:
+  - denzaauto.com
+- brand: IM Motors
+  aliases:
+  - IM
+  - IM智己
+  - 智己
+  domains:
+  - immotors.com
+  - immotors.com.cn
+- brand: Seres
+  aliases:
+  - Серес
+  - Thalys
+  domains:
+  - seres.com
+  - serescars.com
+- brand: Aito
+  aliases:
+  - Huawei Aito
+  - AITO问界
+  - 问界
+  domains:
+  - aitomotors.com
+- brand: Avatr
+  aliases:
+  - Аватр
+  domains:
+  - avatr.com
+- brand: Neta
+  aliases:
+  - Hozon
+  - Нета
+  domains:
+  - nautomobile.com
+  - nauto.cn
+- brand: HiPhi
+  aliases:
+  - Хайфай
+  domains:
+  - hiphi.com
+- brand: Voyah
+  aliases:
+  - Вояш
+  - Вояж
+  domains:
+  - voyah.su
+  - voyahauto.com
+- brand: Jetta
+  aliases:
+  - Джетта
+  - Jetta VS
+  - Jetta X
+  - FAW-Jetta
+  domains:
+  - jetta.com.cn
+- brand: Maxus
+  aliases:
+  - Максус
+  - SAIC Maxus
+  domains:
+  - saicmaxus.com
+  - maxusmotors.com
+- brand: Wuling
+  aliases:
+  - Вулинг
+  domains:
+  - sgmw.com.cn
+  - wuling.com
+- brand: Baojun
+  aliases:
+  - Баоджун
+  domains:
+  - baojunauto.com
+- brand: Rising Auto
+  aliases:
+  - Rising
+  - Rising R
+  - 飞凡
+  domains:
+  - risingauto.com
+- brand: Xiaomi Auto
+  aliases:
+  - Xiaomi EV
+  - Сяоми
+  - Xiaomi SU7
+  domains:
+  - xiaomi-auto.com
+  - mi.com
+- brand: Leapmotor
+  aliases:
+  - Липмотор
+  - Липмоторс
+  - 零跑
+  domains:
+  - leapmotor.com
+  - leapmotorinternational.com
+- brand: Belgee
+  aliases:
+  - Белджи
+  - Белгее
+  domains:
+  - belgee.com
+  - belgee.by
+- brand: JAC
+  aliases:
+  - Джак
+  - ДжиАЙСи
+  - JAC Motors
+  domains:
+  - jac-motors.com
+  - jac.com.cn
+- brand: GAC
+  aliases:
+  - GAC Motor
+  - GAC Aion
+  - Аион
+  - Трумчи
+  - Trumpchi
+  domains:
+  - gacmotor.com
+  - gac-aion.com
+- brand: Foton
+  aliases:
+  - Фотон
+  domains:
+  - foton.com.cn
+  - fotoninter.com
+- brand: Soueast
+  aliases:
+  - Соуист
+  domains:
+  - soueast-motor.com
+  - soueast.ru
+- brand: Tank
+  aliases:
+  - Танк
+  - GWM Tank
+  domains:
+  - tank.auto
+  - tank-auto.com
+- brand: UMO
+  aliases:
+  - УМО
+  domains:
+  - umoauto.ru
+- brand: Jeland
+  aliases:
+  - Джейлэнд
+  domains:
+  - jeland.ru
+- brand: KGM
+  aliases:
+  - SsangYong
+  - Ссангйонг
+  - Cаньенг
+  domains:
+  - kgm.com
+  - kgmotor.com
+  - smotor.ru
+  - kgmotor.ru
+- brand: BMW Alpina
+  aliases:
+  - Alpina
+  - Альпина
+  domains:
+  - alpina-automobiles.com
+  - press.bmwgroup.com
+- brand: Mercedes-AMG
+  aliases:
+  - AMG
+  - АМГ
+  domains:
+  - mercedes-amg.com
+  - mercedes-benz.com
+  - media.mercedes-benz.com
+  - group.mercedes-benz.com
+- brand: VinFast
+  aliases:
+  - Винфаст
+  domains:
+  - vinfastauto.com
+  - vinfastauto.us
+  - vinfast.eu
+- brand: Maextro
+  aliases:
+  - Maextro S800
+  domains:
+  - maextro.com
+- brand: Jeep
+  aliases:
+  - Джип
+  domains:
+  - jeep.com
+  - media.stellantis.com
+  - stellantis.com
+- brand: Ram
+  aliases:
+  - Ram Trucks
+  - РАМ
+  domains:
+  - ramtrucks.com
+  - media.stellantis.com
+  - stellantis.com
+- brand: Dodge
+  aliases:
+  - Додж
+  domains:
+  - dodge.com
+  - media.stellantis.com
+- brand: Chrysler
+  aliases:
+  - Крайслер
+  domains:
+  - chrysler.com
+  - media.stellantis.com
+- brand: GMC
+  aliases:
+  - Дж-Эм-Си
+  domains:
+  - gmc.com
+  - media.gm.com
+- brand: Buick
+  aliases:
+  - Бьюик
+  - Бюик
+  domains:
+  - buick.com
+  - media.gm.com
+- brand: Lincoln
+  aliases:
+  - Линкольн
+  domains:
+  - lincoln.com
+  - media.ford.com
+- brand: Smart
+  aliases:
+  - Смарт
+  domains:
+  - smart.com
+  - media.mercedes-benz.com
+- brand: Cupra
+  aliases:
+  - Купра
+  domains:
+  - cupraofficial.com
+  - seat-mediacenter.com
+- brand: Seat
+  aliases:
+  - СЕАТ
+  domains:
+  - seat.com
+  - seat-mediacenter.com
+- brand: Bentley
+  aliases:
+  - Бентли
+  domains:
+  - bentleymotors.com
+  - bentleymedia.com
+- brand: Rolls-Royce
+  aliases:
+  - Роллс-Ройс
+  domains:
+  - rolls-roycemotorcars.com
+  - press.rolls-roycemotorcars.com
+- brand: Aston Martin
+  aliases:
+  - Астон Мартин
+  domains:
+  - astonmartin.com
+  - media.astonmartin.com
+- brand: McLaren
+  aliases:
+  - Макларен
+  domains:
+  - cars.mclaren.com
+  - media.mclaren.com
+- brand: Lotus
+  aliases:
+  - Лотус
+  domains:
+  - lotuscars.com
+  - media.lotuscars.com
+- brand: Ineos
+  aliases:
+  - Инеос
+  - Ineos Grenadier
+  domains:
+  - ineosgrenadier.com
+  - media.ineosgrenadier.com
+- brand: Polestar
+  aliases:
+  - Полестар
+  - Поулстар
+  domains:
+  - polestar.com
+  - media.polestar.com
+- brand: Lucid
+  aliases:
+  - Люсид
+  domains:
+  - lucidmotors.com
+  - media.lucidmotors.com
+- brand: MG
+  aliases:
+  - MG Motor
+  - ЭмДжи
+  domains:
+  - mgmotor.eu
+  - mgmotor.com.cn
+- brand: Roewe
+  aliases:
+  - Роуи
+  - Роуив
+  - 荣威
+  domains:
+  - roewe.com.cn
+- brand: Sollers
+  aliases:
+  - Соллерс
+  - Sollers SP7
+  domains:
+  - sollers-auto.com
+  - sollers.ru
+- brand: Aurus
+  aliases:
+  - Аурус
+  domains:
+  - aurus.ru
+- brand: Solaris
+  aliases:
+  - Солярис
+  domains:
+  - solaris-cars.ru
+- brand: Volga
+  aliases:
+  - Волга
+  domains:
+  - volgacar.ru
+  - gaz-volga.ru
