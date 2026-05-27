@@ -609,14 +609,15 @@ def _apply_llm_editor_pass(
         for art in grp:
             article_to_group[id(art)] = g_idx
 
-    # Process multi-article brand groups
-    for brand, brand_articles in brand_buckets.items():
-        stats["brand_groups_total"] += 1
-        if brand == "_unknown" or len(brand_articles) < 2:
-            continue
+    def _process_one_group(
+        brand_label: str,
+        articles_in_group: list[dict],
+        confidence_threshold: float = 0.70,
+    ) -> None:
+        """Call cluster_group on one brand bucket and apply merge
+        decisions back to article_to_group. Side-effects only —
+        updates stats + article_to_group via closure."""
         stats["brand_groups_called"] += 1
-
-        # Hand brand_articles back as the llm_editor-shaped dicts
         ed_articles = [
             {
                 "row": a["sheet_row"],
@@ -625,35 +626,35 @@ def _apply_llm_editor_pass(
                 "section": a["section"],
                 "url": a["url"],
             }
-            for a in brand_articles
+            for a in articles_in_group
         ]
-        result = cluster_group(brand=brand, articles=ed_articles)
+        result = cluster_group(
+            brand=brand_label, articles=ed_articles,
+            confidence_threshold=confidence_threshold,
+        )
         stats["cost_usd"] += result.cost_usd
         stats["elapsed_s"] += result.elapsed_s
         if result.error:
             stats["llm_errors"] += 1
-            print(f"  [llm-editor] {brand}: ERROR {result.error}")
-            continue
+            print(f"  [llm-editor] {brand_label}: ERROR {result.error}")
+            return
         stats["events_returned"] += len(result.events)
 
         for ev in result.events:
-            # LOWCONF events stay split — same as lexical.
             if ev.event_id.startswith("LOWCONF__"):
                 continue
             if ev.is_cross_run_dup:
                 stats["cross_run_dups"] += 1
             if len(ev.member_rows) < 2:
                 continue
-            # Map event rows back to article dicts via sheet_row
             target_articles = [by_row[r] for r in ev.member_rows
                                 if r in by_row]
             if len(target_articles) < 2:
                 continue
-            # Union their lexical groups
             idxs = sorted({article_to_group[id(a)]
                            for a in target_articles})
             if len(idxs) <= 1:
-                continue  # already in same lexical cluster
+                continue
             target = idxs[0]
             for src in idxs[1:]:
                 for art_id, g in list(article_to_group.items()):
@@ -661,12 +662,45 @@ def _apply_llm_editor_pass(
                         article_to_group[art_id] = target
             stats["merges_applied"] += 1
 
-            # Stash LLM verdict on member articles so the output stage
-            # can prefer LLM-chosen primary_row + section.
             for a in target_articles:
                 a["_llm_event_summary"] = ev.summary
                 a["_llm_event_section"] = ev.section
                 a["_llm_event_primary_row"] = ev.primary_row
+
+    # Process named brand groups (Mercedes-Benz, BMW, etc.)
+    # AND the _unknown bucket (industry / no-brand articles) with
+    # tighter confidence + chunking for large _unknown sets.
+    UNKNOWN_CHUNK_SIZE = 12  # cap LLM tokens per call; LLM splits naturally
+    UNKNOWN_CONFIDENCE = 0.80  # tighter than named brands (default 0.70)
+    for brand, brand_articles in brand_buckets.items():
+        stats["brand_groups_total"] += 1
+        if len(brand_articles) < 2:
+            continue
+
+        if brand == "_unknown":
+            # Process _unknown but in chunks — too-large groups make
+            # the LLM lose focus AND inflate token cost. Tighter
+            # confidence threshold (0.80) so cross-topic false merges
+            # are filtered out (e.g. "LCV market stats" should NOT
+            # merge with "Esteo MX production" just because they're
+            # both Russian industry news).
+            chunks = [
+                brand_articles[i:i + UNKNOWN_CHUNK_SIZE]
+                for i in range(0, len(brand_articles),
+                                UNKNOWN_CHUNK_SIZE)
+            ]
+            for i, chunk in enumerate(chunks):
+                if len(chunk) < 2:
+                    continue
+                label = ("_industry_misc"
+                         if len(chunks) == 1
+                         else f"_industry_misc_chunk{i+1}")
+                _process_one_group(
+                    label, chunk,
+                    confidence_threshold=UNKNOWN_CONFIDENCE,
+                )
+        else:
+            _process_one_group(brand, brand_articles)
 
     # Rebuild groups from union-find result
     by_new_group: dict[int, list[dict]] = {}
