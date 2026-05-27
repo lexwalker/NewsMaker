@@ -40,6 +40,22 @@ CREATE TABLE IF NOT EXISTS run_log (
     portal        TEXT NOT NULL,
     summary_json  TEXT
 );
+
+-- Layer 3 (active press-release retrieval) cache.
+-- Search results AND verification verdicts cached by query hash so
+-- repeat queries hit $0. TTL is 24h by default (press releases are
+-- immutable once published).
+CREATE TABLE IF NOT EXISTS press_search_cache (
+    query_hash      TEXT PRIMARY KEY,
+    query_json      TEXT NOT NULL,
+    results_json    TEXT NOT NULL,
+    verified_url    TEXT,
+    verified_conf   REAL,
+    cached_at       TEXT NOT NULL,
+    ttl_hours       INTEGER NOT NULL DEFAULT 24
+);
+CREATE INDEX IF NOT EXISTS idx_press_cache_cached_at
+    ON press_search_cache(cached_at);
 """
 
 
