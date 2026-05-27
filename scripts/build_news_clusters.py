@@ -785,32 +785,33 @@ def main() -> int:
     out_clusters: list[dict] = []
     singletons = 0
     for grp in groups:
-        # Sort by priority — first is canonical. If LLM-editor assigned
-        # an explicit primary_row in this group, honour it.
+        # Sort by priority — first is canonical.
+        #
+        # Deterministic tier wins ABSOLUTELY. LLM-editor's primary_row
+        # only breaks ties between same-tier candidates. Pre-fix the
+        # LLM choice overrode tier, which caused twitter.com (tier 7)
+        # to be picked as primary over cnevpost.com (tier 3) and even
+        # over stellantis.com (tier 0) — v42 production validation
+        # against editor's 9 wrong-primary complaints showed 0/3 fixed
+        # because of this bug.
         llm_primary = next(
             (a["_llm_event_primary_row"] for a in grp
              if a.get("_llm_event_primary_row")),
             None,
         )
-        if llm_primary is not None:
-            grp_sorted = sorted(
-                grp,
-                key=lambda a: (0 if a["sheet_row"] == llm_primary else 1,
-                                _cluster_priority(
-                                    a,
-                                    press_release_hosts=press_release_hosts,
-                                    whitelist=whitelist,
-                                )),
-            )
-        else:
-            grp_sorted = sorted(
-                grp,
-                key=lambda a: _cluster_priority(
+        grp_sorted = sorted(
+            grp,
+            key=lambda a: (
+                _cluster_priority(
                     a,
                     press_release_hosts=press_release_hosts,
                     whitelist=whitelist,
                 ),
-            )
+                # LLM primary as second-key tie-breaker only
+                0 if (llm_primary is not None
+                       and a["sheet_row"] == llm_primary) else 1,
+            ),
+        )
         canonical = grp_sorted[0]
         if len(grp) == 1:
             singletons += 1
@@ -852,9 +853,24 @@ def main() -> int:
             "country": canonical["country"],
             "published": canonical["published"],
             "image_url": canonical["image_url"],
-            "primary_domain": canonical["primary_dom"],
-            "primary_url": canonical["primary_url"],
-            "primary_conf": canonical["primary_conf"],
+            # primary_url/domain:
+            # • Singleton cluster — use the per-article primary_source
+            #   detection (it may point at a deep press URL the body
+            #   linked to). Article URL is a fallback.
+            # • Multi-source cluster — the CANONICAL member's URL IS
+            #   the primary. The per-article primary_source field was
+            #   set in isolation during editorial_review and can pick
+            #   silly things like twitter.com if the body links to a
+            #   tweet. With siblings to compare against, we know the
+            #   best-tier member (now canonical) is the real primary.
+            "primary_domain": (canonical["domain"] if len(grp_sorted) > 1
+                                else (canonical["primary_dom"]
+                                       or canonical["domain"])),
+            "primary_url": (canonical["url"] if len(grp_sorted) > 1
+                             else (canonical["primary_url"]
+                                    or canonical["url"])),
+            "primary_conf": ("high (cluster canonical)" if len(grp_sorted) > 1
+                              else canonical["primary_conf"]),
             "launch_stage": launch_stage,
             "launch_brand_model": launch_brand_model,
             "llm_reason": llm_reason,
