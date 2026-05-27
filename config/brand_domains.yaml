@@ -384,9 +384,11 @@ brands:
   - risingauto.com
 - brand: Xiaomi Auto
   aliases:
+  - Xiaomi
   - Xiaomi EV
   - Сяоми
   - Xiaomi SU7
+  - Xiaomi YU7
   domains:
   - xiaomi-auto.com
   - mi.com
@@ -641,3 +643,54 @@ brands:
   domains:
   - volgacar.ru
   - gaz-volga.ru
+
+# ── Gap-fill batch 2 (may-2026, v42 _unknown-bucket audit) ──────────
+# Brands surfaced when 31/115 v42 articles fell into _unknown bucket
+# and bypassed LLM-as-editor entirely. Each entry below was either a
+# missing brand outright OR a sub-brand the editor groups with its
+# parent. Validated: adding them collapses 13 articles out of _unknown
+# into named brand groups where LLM-editor can cluster dups.
+- brand: Tata
+  aliases: [Тата]
+  domains: [tatamotors.com, mediahub.tatamotors.com]
+- brand: Deepal
+  aliases: [Дипал, Changan Deepal]
+  # Sub-brand of Changan but the editor treats Deepal coverage
+  # separately from generic Changan stories.
+  domains: [deepal.com.cn, deepalauto.com, changan.com.cn]
+- brand: Esteo
+  aliases: [Эстео, ESTEO MX, Эстео MX]
+  # Russian assembly brand at AGR plant (post-Hyundai facilities).
+  # Editor surfaced 6 (!) v42 articles about its production launch
+  # that all stayed split — pure win for adding it here.
+  domains: [esteo-auto.ru, agr.auto]
+- brand: Ganfeng
+  aliases: [Ганфэн, Ganfeng Lithium]
+  # Battery supplier (not OEM) but appears in EV-tech news clusters.
+  # Editor flagged "дубль 40" on a Ganfeng solid-state article that
+  # never matched because the brand wasn't registered.
+  domains: [ganfenglithium.com]
+- brand: Mahindra
+  aliases: [Махиндра]
+  domains: [mahindra.com, auto.mahindra.com]
+- brand: Hongqi
+  aliases: [Хунци, FAW Hongqi]
+  # FAW sub-brand. Already covered by FAW for some cases but editor
+  # treats Hongqi-flagship coverage as its own bucket.
+  domains: [hongqi.com, hongqi-auto.com]
+- brand: Bestune
+  aliases: [Бестьюн, Бесчун, FAW Bestune]
+  # Another FAW sub-brand. v42 had a Bestune Italy launch story.
+  domains: [bestune.com.cn]
+- brand: Evolute
+  aliases: [Эволют]
+  # Russian EV brand assembled at Motorinvest plant.
+  domains: [evolute.ru]
+- brand: Tenet
+  aliases: [Тенет, TENET]
+  # Russian rebadged Chery brand.
+  domains: [tenet.ru]
+- brand: CATL
+  aliases: [КАТЛ, CATL Battery]
+  # Major battery supplier, similar to Ganfeng case.
+  domains: [catl.com]
