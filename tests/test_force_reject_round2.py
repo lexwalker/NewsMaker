@@ -473,3 +473,49 @@ def test_legit_news_round2_not_rejected() -> None:
     ]
     for t in legit:
         assert not _force_rejects(t), f"False-rejected legit headline: {t!r}"
+
+
+# ── v43 audit additions (may-2026 editor feedback) ─────────────────
+
+def test_avtostat_repackage_rejected() -> None:
+    """Editor's 5 v43 «Автостат не постим» patterns."""
+    rejected = [
+        "По данным Автостат, продажи Audi в РФ выросли на 15%",
+        "Согласно автостат, рынок упал в апреле",
+        "Аналитики Автостат назвали топ-моделей мая",
+        "Autostat reports Russia market drop in April 2026",
+        "According to Autostat data, used-car sales rose 8%",
+        "Автостат назвал бестселлеры мая в России",
+    ]
+    for t in rejected:
+        assert _force_rejects(t), f"Should reject Avtostat repackage: {t!r}"
+
+
+def test_render_rumor_rejected() -> None:
+    """Editor's v43 «рендеры не постим»."""
+    rejected = [
+        "Render shows what next Volvo XC60 could look like in 2027",
+        "Fan render reveals possible Genesis G70 facelift",
+        "Рендеры показали возможный облик нового Mercedes EQS",
+        "Speculative render of 2028 Toyota Crown surfaces",
+    ]
+    for t in rejected:
+        assert _force_rejects(t), f"Should reject render speculation: {t!r}"
+
+
+def test_v43_legit_avtostat_brand_press_not_rejected() -> None:
+    """When the brand's representative is cited (not Avtostat directly),
+    editor accepts. Don't false-reject these."""
+    legit = [
+        # Cited Avtostat once but the lead is brand action — needs LLM
+        # contextual judgement, our phrase-list should NOT auto-reject.
+        # The substring "автостат" alone is OK; only the documented
+        # repackage phrases above trigger.
+        "Lada выпустила миллионный экземпляр Vesta — отметил гендиректор",
+        "Geely открыла новый дилерский центр в Москве",
+        "Renders of Aurora EV released by manufacturer for press kit",
+        # ↑ has 'renders' but NOT in the speculative-pattern templates;
+        # they're official brand renders. Stays legit.
+    ]
+    for t in legit:
+        assert not _force_rejects(t), f"False-rejected legit: {t!r}"

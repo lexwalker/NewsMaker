@@ -141,17 +141,45 @@ cnevpost, koreancarblog, topauto и др.) — берём.
 autoreview) — берём ТОЛЬКО если первых трёх нет.
 
 ВЫБОР СЕКЦИИ:
-  • Confirmed — официальный запуск/reveal модели от бренда.
-  • Local specifics — про российский авторынок (продажи, локализация, \
-дилеры в РФ).
-  • LCV news — коммерческий транспорт (пикапы, фургоны, грузовики).
-  • Other news — глобальные не-российские новости, не подходящие \
-под Confirmed.
-  • Rumors — слухи, шпионские фото, утечки, спекуляции.
+  • Confirmed — официальный запуск/reveal модели от бренда. Сюда же \
+ВСЕ модельные дебюты от российских OEM (AvtoVAZ, Sollers, UAZ, \
+Moskvich, Lada, Aurus, Volga, Esteo, Tenet, Evolute и т.д.) — даже \
+если событие на территории РФ. Решает СУБЪЕКТ статьи (модель + бренд \
++ дебют/reveal/сертификация), не география события.
+  • Local specifics — про российский АВТОРЫНОК (общие тренды продаж, \
+объёмы локализации, дилерская активность в целом, аналитика рынка). \
+НЕ про конкретную модель — а про РЫНОК. Если статья называет одну \
+модель и её запуск/обновление/сертификацию — это Confirmed, не Local.
+  • LCV news — коммерческий транспорт (пикапы, фургоны, минивэны \
+8+ мест, грузовики). Российские LCV-launches (SKM, Sollers SF5 \
+фургон, Sollers SP7 минивэн) идут СЮДА, не в Confirmed.
+  • Other news — глобальные не-российские новости про конкретную \
+модель/бренд, не подходящие под Confirmed (sales stats иностранного \
+рынка, patents без конкретной модели, корпоративные новости).
+  • Rumors — слухи, шпионские фото, утечки, спекуляции, рендеры.
   • Economics — финансы брендов (квартальные отчёты, IPO, \
 рефинансирование).
   • Dealer news / Promo — дилерские новости, акции.
-  • Motorshow — motor-шоу события.
+  • Motorshow — motor-шоу события (анонс участия в шоу, презентация \
+ОТДЕЛЬНО от запуска модели). Если статья про модельный дебют, \
+заявленный на motor-show — это Confirmed, не Motorshow.
+
+WORKED EXAMPLES (калибровка на v43 редакторских коррекциях):
+  • «Sollers SP7 minivan to get four-seat version» → Confirmed
+    (модельный дебют российского OEM)
+  • «Deepal S05 SUV certified in Russia» → Confirmed
+    (сертификация = официальный шаг бренда к запуску модели)
+  • «UAZ Patriot refreshed model sent for certification» → Confirmed
+  • «AvtoVAZ to showcase refreshed Niva at SPIEF» → Confirmed
+    (модельный refresh, площадка вторична)
+  • «Moskovich 3 crossover: evolution» → Confirmed
+  • «Skoda new car sales tripled in Russia» → Local specifics
+    (статистика рынка, не конкретная модель)
+  • «Spring market trends in Russia» → Local specifics (тренд)
+  • «AvtoVAZ to present new SKM model at Moscow motor show» → LCV news
+    (SKM = commercial vehicle бренд → раздел LCV)
+  • «Sollers SF5 van features revealed» → LCV news
+    (фургон → LCV, даже если модельный дебют)
 
 ПРАВИЛО НЕВРЕДЕНИЯ: если уверенность что два события на самом деле \
 одно < 0.7 — оставь их раздельно. Лучше пропустить дубль, чем склеить \

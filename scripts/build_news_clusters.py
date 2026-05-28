@@ -586,6 +586,7 @@ def _apply_llm_editor_pass(
         "events_returned": 0,
         "merges_applied": 0,
         "cross_run_dups": 0,
+        "history_used_groups": 0,
         "llm_errors": 0,
         "cost_usd": 0.0,
         "elapsed_s": 0.0,
@@ -609,6 +610,50 @@ def _apply_llm_editor_pass(
         for art in grp:
             article_to_group[id(art)] = g_idx
 
+    # Cross-run history fetch — open DedupStore once, cache per-brand
+    # lookups. Used to feed LLM-editor 14d brand-filtered history so
+    # it can flag "постили вчера" cases (v43 audit: 8/39 push rows
+    # were cross-run dups → LLM couldn't see them without this).
+    # Bridges to Layer 3 without requiring the search API — uses
+    # whatever's already in our DedupStore.
+    history_cache: dict[str, list[dict]] = {}
+    history_store = None
+    history_portal = ""
+    try:
+        from news_agent.adapters.storage import DedupStore
+        sqlite_path = Path(
+            os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite")
+        )
+        if sqlite_path.exists():
+            history_store = DedupStore(sqlite_path)
+            history_portal = os.environ.get("DEDUP_PORTAL", "RU") or "RU"
+        else:
+            print(f"  [llm-editor] history disabled: "
+                  f"sqlite missing at {sqlite_path}")
+    except Exception as _e:  # noqa: BLE001
+        print(f"  [llm-editor] history disabled: {type(_e).__name__}: {_e}")
+
+    def _history_for_brand(brand: str) -> list[dict]:
+        if brand in history_cache:
+            return history_cache[brand]
+        if history_store is None or brand in {"_unknown",
+                                                "_industry_misc"} or \
+                brand.startswith("_industry_misc_chunk"):
+            history_cache[brand] = []
+            return []
+        try:
+            hist = history_store.recent_for_brand(
+                history_portal, brand, days=14,
+            )
+        except Exception:  # noqa: BLE001
+            hist = []
+        # Drop any URL that's IN current batch (those aren't history)
+        current_urls = {a["url"] for a in articles}
+        hist = [h for h in hist if h.get("url") not in current_urls]
+        # Cap to most-recent 25 to keep prompt tokens bounded.
+        history_cache[brand] = hist[:25]
+        return history_cache[brand]
+
     def _process_one_group(
         brand_label: str,
         articles_in_group: list[dict],
@@ -628,8 +673,12 @@ def _apply_llm_editor_pass(
             }
             for a in articles_in_group
         ]
+        history = _history_for_brand(brand_label)
+        if history:
+            stats["history_used_groups"] += 1
         result = cluster_group(
             brand=brand_label, articles=ed_articles,
+            history=history if history else None,
             confidence_threshold=confidence_threshold,
         )
         stats["cost_usd"] += result.cost_usd
@@ -810,6 +859,7 @@ def main() -> int:
         print(f"  events returned:     {ed_stats['events_returned']}")
         print(f"  merges applied:      {ed_stats['merges_applied']}")
         print(f"  cross-run dups:      {ed_stats['cross_run_dups']}")
+        print(f"  history-fed groups:  {ed_stats['history_used_groups']}")
         print(f"  llm errors:          {ed_stats['llm_errors']}")
         print(f"  cost: ${ed_stats['cost_usd']:.4f}  "
               f"time: {ed_stats['elapsed_s']:.0f}s")

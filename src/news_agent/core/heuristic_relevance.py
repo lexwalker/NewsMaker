@@ -1112,6 +1112,26 @@ _FORCE_REJECT_PHRASES = (
     "tested off-road", "tested off road", "off-road tested",
     "we took it off-road", "put through off-road",
     "испытали на бездорожье", "протестировали на бездорожье",
+
+    # ---------- v43 audit: Avtostat-derived market statistics ----------
+    # Editor flagged 5 separate v43 rows with «не постим Автостат» /
+    # «все что касается Автостат Инфо НЕ постим». Pattern: aggregator
+    # repackages Avtostat sales/market data without naming a specific
+    # brand initiative. The editor only accepts sales stats when they
+    # come from the brand's own press representative.
+    "по данным автостат", "по данным «автостат»",
+    "согласно данным автостат", "согласно автостату",
+    "согласно автостат", "автостат назвал", "автостат сообщ",
+    "autostat reports", "autostat data", "according to autostat",
+    "аналитики автостат", "автостат назвал бестселлер",
+    "по итогам автостат",
+
+    # ---------- v43 audit: renders / fan illustrations -------------
+    # Editor flagged "рендеры не постим" on r37 (Volvo XC60 2027 render).
+    # Renders are speculative artist impressions, not brand reveals.
+    "рендеры показ", "рендеры опубликов", "рендер показ", "рендер опублик",
+    "render shows", "rendering shows", "fan render", "artist render",
+    "speculative render", "concept render shows",
 )
 
 
