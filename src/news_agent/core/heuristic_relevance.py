@@ -1132,6 +1132,34 @@ _FORCE_REJECT_PHRASES = (
     "рендеры показ", "рендеры опубликов", "рендер показ", "рендер опублик",
     "render shows", "rendering shows", "fan render", "artist render",
     "speculative render", "concept render shows",
+
+    # ---------- v44 self-audit: regional-economy filler ------------
+    # r14 «Доля автопрома в экономике Тульской области растёт» — это
+    # региональная экономическая сводка, не новость про авто-продукт.
+    "доля автопрома в экономике", "автопрома в экономике",
+    "share in regional economy", "automotive sector's share",
+
+    # ---------- v44 self-audit: driver-changes digest listicles ----
+    # r21 «Какие изменения ждут водителей в июне» — обзорный дайджест
+    # нововведений, не конкретное событие. Same family as the rejected
+    # "N new models introduced" listicle.
+    "какие изменения ждут водител", "что изменится для водител",
+    "изменения ждут автомобилист", "что ждет автомобилистов",
+    "нововведения для водител", "changes await drivers",
+    "what changes await",
+)
+
+
+# Phrases checked against TITLE + first 400 chars of LEDE (not just
+# title). Reserved for market-research-agency attribution where the
+# agency name reliably appears in the lede while the title is a generic
+# "market capacity" / "sales analysis" phrase. Keep this list SHORT —
+# every entry is body-scanned, so over-broad phrases risk false rejects.
+_FORCE_REJECT_BODY_PHRASES = (
+    # НАПИ market-research analytics (r16, v44). Same family as Avtostat.
+    "напи проанализир", "агентство напи",
+    "финансовую емкость рынка", "финансовая емкость рынка",
+    "емкость рынка lcv", "емкость рынка новых lcv",
 )
 
 
@@ -1165,6 +1193,17 @@ def blacklist_hit(
     for phrase in _FORCE_REJECT_PHRASES:
         if phrase in title:
             return BlacklistVerdict(True, f"clickbait/yellow-press: {phrase!r}")
+    # Tier 1a — agency-analytics phrases checked against TITLE + LEDE.
+    # Market-research agencies (НАПИ, Автостат) are usually named in the
+    # lede, not the title (the title is a generic "market capacity"
+    # phrase). Scanning the lede ONLY for this narrow set avoids the
+    # false-reject risk of body-scanning the full clickbait list.
+    title_and_lede = (title + " " + (raw.body or "")[:400].lower())
+    for phrase in _FORCE_REJECT_BODY_PHRASES:
+        if phrase in title_and_lede:
+            return BlacklistVerdict(
+                True, f"agency-analytics (title+lede): {phrase!r}"
+            )
     # Tier 1b — Plan P1-A: RU TG aggregator + single-brand sales (may-2026).
     # Source-aware: needs URL not just title. Editor rejects these even
     # when title looks "newsy" because the data has no official backing.

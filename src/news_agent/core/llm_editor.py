@@ -180,6 +180,14 @@ WORKED EXAMPLES (калибровка на v43 редакторских корр
     (SKM = commercial vehicle бренд → раздел LCV)
   • «Sollers SF5 van features revealed» → LCV news
     (фургон → LCV, даже если модельный дебют)
+  • «Ford developed feature to prevent leaving items behind» → Other news
+    (патент на общую функцию без модели, не Confirmed)
+  • «Lexus scrapped plans for flagship EV» → Other news
+    (ОТМЕНА модели — не дебют, поэтому Другие, не Confirmed)
+  • «Why Volvo speeds up EV plans» → Other news
+    (стратегия-рассуждение, не запуск модели)
+  • «Exlantix appear on Esteo website» → Rumors
+    (наблюдение телеграма о ребрендинге — догадка, не факт)
 
 ПРАВИЛО НЕВРЕДЕНИЯ: если уверенность что два события на самом деле \
 одно < 0.7 — оставь их раздельно. Лучше пропустить дубль, чем склеить \

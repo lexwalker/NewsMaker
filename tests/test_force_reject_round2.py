@@ -503,6 +503,81 @@ def test_render_rumor_rejected() -> None:
         assert _force_rejects(t), f"Should reject render speculation: {t!r}"
 
 
+def _force_rejects_with_lede(title: str, lede: str) -> bool:
+    raw = RawArticle(
+        url="https://example.com/news", title=title, body=lede,
+        source_name="s", source_url="https://example.com/",
+    )
+    return blacklist_hit(raw, EMPTY_BL, brands=BRANDS).hit
+
+
+def test_v44_napi_analytics_rejected() -> None:
+    """r16: НАПИ market-research analytics — editor rejects agency
+    analysis same as Avtostat. Signal lives in the LEDE (Russian) while
+    the title is a generic English 'market capacity' phrase."""
+    # title-level catches
+    rejected = [
+        "Агентство НАПИ проанализировало финансовую емкость рынка LCV",
+        "НАПИ проанализировал ёмкость рынка новых автомобилей",
+    ]
+    for t in rejected:
+        assert _force_rejects(t), f"Should reject NAPI analytics: {t!r}"
+    # the real r16 case: agency in lede, generic English title
+    assert _force_rejects_with_lede(
+        "LCV market capacity: corporate and private customers",
+        "Маркетинговое агентство НАПИ проанализировало финансовую "
+        "емкость рынка новых LCV в январе-апреле 2026",
+    ), "r16: NAPI in lede should be caught via body scan"
+
+
+def test_v44_body_scan_doesnt_overreject() -> None:
+    """The body-phrase scan is narrow — a legit LCV launch with a
+    Russian lede must NOT be rejected."""
+    assert not _force_rejects_with_lede(
+        "Sollers launched new SF5 van in Russia",
+        "Группа Соллерс представила новый фургон SF5 на рынке РФ "
+        "с улучшенной грузоподъёмностью",
+    )
+
+
+def test_v44_regional_economy_rejected() -> None:
+    """r14: regional auto-industry economic share — not product news."""
+    rejected = [
+        "Доля автопрома в экономике Тульской области растёт",
+        "Automotive sector's share in Tula region economy grows",
+    ]
+    for t in rejected:
+        assert _force_rejects(t), f"Should reject regional economy: {t!r}"
+
+
+def test_v44_driver_digest_rejected() -> None:
+    """r21: driver-changes digest listicle."""
+    rejected = [
+        "Какие изменения ждут водителей в июне 2026",
+        "What changes await drivers in Russia from June 2026",
+        "Что изменится для водителей с 1 июня",
+    ]
+    for t in rejected:
+        assert _force_rejects(t), f"Should reject driver digest: {t!r}"
+
+
+def test_v44_legit_market_news_not_rejected() -> None:
+    """Don't over-reject legit market / regional / driver news that
+    names a concrete brand action."""
+    legit = [
+        # Real market sales WITH brand subject — keep
+        "Lada Vesta became best-selling car in Russia in May",
+        # Regional FACTORY news (not economic-share filler) — keep
+        "AvtoVAZ opened new plant in Tula region",
+        # Concrete regulation (not digest) — keep
+        "Russia approved new safety system requirement for new cars",
+        # Brand market entry — keep
+        "BYD entered the Russian market with three models",
+    ]
+    for t in legit:
+        assert not _force_rejects(t), f"False-rejected legit: {t!r}"
+
+
 def test_v43_legit_avtostat_brand_press_not_rejected() -> None:
     """When the brand's representative is cited (not Avtostat directly),
     editor accepts. Don't false-reject these."""

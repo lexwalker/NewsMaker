@@ -1458,6 +1458,33 @@ src: "Suzuki and Capcom expand cooperation"
    confidence: 0.7,
    reason: "Расширение бренд-партнёрства с event-спонсором"}
 
+# ---- v44 audit additions (jun-2026 self-review) ----
+
+src: "Ford developed feature to prevent drivers from leaving items behind"
+→ {publish: true, section: "Other news", region: "Global",
+   confidence: 0.6,
+   reason: "Патент на общую функцию без конкретной модели → Другие, "
+           "не Confirmed (как Hyundai battery platform выше)"}
+
+src: "Lexus scrapped plans for a future flagship EV"
+→ {publish: true, section: "Other news", region: "Global",
+   confidence: 0.7,
+   reason: "ОТМЕНА модели — это не дебют/запуск, поэтому Другие, "
+           "не Confirmed. Confirmed только для НОВЫХ моделей/reveal"}
+
+src: "Why Volvo is speeding up EV plans while everyone else slows down"
+→ {publish: true, section: "Other news", region: "Global",
+   confidence: 0.55,
+   reason: "Аналитическое рассуждение о стратегии бренда, не запуск "
+           "конкретной модели → Другие, не Confirmed"}
+
+src: "Exlantix cars now appear on Esteo website, Exeed info removed"
+→ {publish: true, section: "Rumors", region: "Local",
+   confidence: 0.5,
+   reason: "Наблюдение телеграм-канала об изменении сайта — это "
+           "догадка/слух о ребрендинге, не официальное событие → "
+           "Слухи, не Confirmed"}
+
 ============================================================
 DECISION RULE
 ============================================================
