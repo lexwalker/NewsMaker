@@ -1156,10 +1156,16 @@ _FORCE_REJECT_PHRASES = (
 # "market capacity" / "sales analysis" phrase. Keep this list SHORT —
 # every entry is body-scanned, so over-broad phrases risk false rejects.
 _FORCE_REJECT_BODY_PHRASES = (
-    # НАПИ market-research analytics (r16, v44). Same family as Avtostat.
-    "напи проанализир", "агентство напи",
-    "финансовую емкость рынка", "финансовая емкость рынка",
-    "емкость рынка lcv", "емкость рынка новых lcv",
+    # НАПИ MARKET-CAPACITY analytics specifically (r16, v44). NARROW on
+    # purpose: editor REJECTED «НАПИ финансовая емкость рынка LCV» but
+    # PUBLISHED «NAPI: taxi fleet structure» (factual structure data) in
+    # Local specifics. So we match the market-capacity/analysis phrasing
+    # ONLY — NOT the bare agency name «агентство напи» (that would also
+    # kill the taxi-fleet news the editor wants). Confirmed against
+    # "Опубликованные 3" feed jun-2026.
+    "емкость рынка", "ёмкость рынка",  # «market capacity» analysis (both ё/е)
+    "проанализировало финансовую емкость",
+    "проанализировал финансовую ёмкость",
 )
 
 

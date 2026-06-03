@@ -515,19 +515,31 @@ def test_v44_napi_analytics_rejected() -> None:
     """r16: НАПИ market-research analytics — editor rejects agency
     analysis same as Avtostat. Signal lives in the LEDE (Russian) while
     the title is a generic English 'market capacity' phrase."""
-    # title-level catches
+    # market-capacity phrasing catches (both ё/е spellings)
     rejected = [
         "Агентство НАПИ проанализировало финансовую емкость рынка LCV",
-        "НАПИ проанализировал ёмкость рынка новых автомобилей",
+        "Ёмкость рынка новых LCV выросла в апреле",
     ]
     for t in rejected:
-        assert _force_rejects(t), f"Should reject NAPI analytics: {t!r}"
+        assert _force_rejects(t), f"Should reject market-capacity: {t!r}"
     # the real r16 case: agency in lede, generic English title
     assert _force_rejects_with_lede(
         "LCV market capacity: corporate and private customers",
         "Маркетинговое агентство НАПИ проанализировало финансовую "
         "емкость рынка новых LCV в январе-апреле 2026",
-    ), "r16: NAPI in lede should be caught via body scan"
+    ), "r16: market-capacity analysis in lede caught via body scan"
+
+
+def test_v44_napi_taxi_fleet_NOT_rejected() -> None:
+    """CRITICAL: editor PUBLISHED «NAPI: taxi fleet structure» in Local
+    specifics (Опубликованные 3 feed). The NAPI reject must NOT be the
+    bare agency name — only the market-capacity analysis phrasing.
+    Factual structure data stays publishable."""
+    assert not _force_rejects_with_lede(
+        "NAPI: taxi fleet structure in Russia as of April 1, 2026",
+        "Агентство НАПИ опубликовало структуру таксопарка России "
+        "на 1 апреля 2026 года по маркам и сегментам",
+    ), "NAPI taxi-fleet structure should stay publishable"
 
 
 def test_v44_body_scan_doesnt_overreject() -> None:
