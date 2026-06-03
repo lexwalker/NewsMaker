@@ -91,6 +91,7 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     is_auto_or_economy,
     is_dzen_listicle,
     is_multi_news_title,
+    is_ru_transport_civic,
     is_supplier_abstract_showcase,
     looks_like_article,
 )
@@ -951,15 +952,41 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             r.llm_reason = review.reason[:300] if review.reason else ""
 
             if not review.should_publish:
-                # LLM rejected. Mark verdict + reason for editor.
-                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                    f"LLM: {review.reason[:120]}"
-                r.verdict = "Отклонено LLM"
-                print(
-                    f"  [{i}/{len(candidates)}] REJECT  conf={review.confidence:.2f}  "
-                    f"{review.reason[:60]}  |  {r.title[:50]}"
-                )
-                continue
+                # RU transport-civic rescue (jun-2026 "Опубликованные 3"
+                # recall audit). The LLM rejects Russian transport-CIVIC
+                # news (traffic law, roads, taxi/carsharing, ОСАГО,
+                # утильсбор, car surveys) as non-product noise — but the
+                # editor publishes ~40% of Local specifics from exactly
+                # this category. Force-accept the genuine category to
+                # Local specifics; the editor still reviews Local and can
+                # drop edge cases. Gated against military/banking noise
+                # inside is_ru_transport_civic.
+                if is_ru_transport_civic(r.title, r.body_excerpt):
+                    r.llm_relevance = "Да"
+                    r.llm_section = "Local specifics"
+                    r.llm_region = "Local"
+                    r.llm_confidence = 0.55
+                    r.llm_note = (
+                        (r.llm_note + " | " if r.llm_note else "")
+                        + "RU-транспорт-civic rescue (LLM отклонил: "
+                        + f"{review.reason[:60]}) — проверьте"
+                    )
+                    r.verdict = "Точно новость"
+                    print(
+                        f"  [{i}/{len(candidates)}] RESCUE→Local  "
+                        f"(LLM rejected)  |  {r.title[:50]}"
+                    )
+                    # fall through to the accept path below
+                else:
+                    # LLM rejected. Mark verdict + reason for editor.
+                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                        f"LLM: {review.reason[:120]}"
+                    r.verdict = "Отклонено LLM"
+                    print(
+                        f"  [{i}/{len(candidates)}] REJECT  conf={review.confidence:.2f}  "
+                        f"{review.reason[:60]}  |  {r.title[:50]}"
+                    )
+                    continue
 
             # Accepted — populate section/region. Apply heuristic pre-classifier
             # to override LLM if heuristic is confident (e.g. body-type pickup

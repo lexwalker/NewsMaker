@@ -1500,6 +1500,101 @@ SECTION_RUMORS = "Rumors"
 SECTION_CONFIRMED = "Confirmed"
 
 
+# ====================================================================
+# RU transport-civic recognizer (jun-2026, "Опубликованные 3" recall
+# audit). The editor's "Local specifics" section is ~40% Russian
+# transport-CIVIC news — traffic law, road infrastructure, taxi /
+# carsharing industry, vehicle-ownership civics (ОСАГО, утильсбор),
+# driver surveys about cars. Our LLM rejected this whole category as
+# "non-product noise" (242 rejected vs 5 taken in cache). This
+# recognizer force-accepts the genuine category to Local specifics
+# while gating out military / banking / consumer-finance noise.
+#
+# Validated on cache: rescues 89 genuinely-transport articles with 0
+# banking/military leak. Tuned on data/transport_civic_labeled.json.
+# ====================================================================
+
+# TIER 1 — strong standalone transport-civic terms (unambiguous).
+# Single word-STEMS (no multi-word phrases — Russian inflection inserts
+# letters between words, e.g. «водительск-ого удостоверен-ия», so a
+# "водительск удостоверен" phrase would never match).
+_TRANSPORT_CORE = (
+    # traffic law / penalties / licensing
+    # NOTE: bare "штраф" deliberately EXCLUDED — it leaks non-transport
+    # fines (overbooking, hotels, fishing). Legit traffic-fine stories
+    # always carry another CORE term (пдд / самокат / парковк / превышен
+    # скорост), so they're still rescued.
+    "пдд", "осаго", "каско", "техосмотр", "водительск", "опьянени",
+    "дорожн знак", "лишени прав", "превышени скорост",
+    "intoxication", "driving license", "traffic violation",
+    "traffic fine",
+    # road infrastructure
+    "автодор", "росавтодор", "цодд", "эвакуатор", "парковк",
+    "магистрал", "трасс", "мкад", "крымск мост",
+    # taxi / sharing / micromobility
+    "таксопарк", "таксист", "каршеринг", "carsharing", "кикшеринг",
+    "kicksharing", "самокат", "электросамокат",
+    # vehicle-ownership civics
+    "утильсбор", "scrappage", "техосмотр", "транспортн налог",
+    # consumables anchors
+    "антифриз", "engine oil",
+    # test-drive (editor's separate section, also force-publish)
+    "тест-драйв", "test-drive", "test drive",
+)
+
+# TIER 2 — survey / "россияне" framing. Counts ONLY with an auto-object
+# (bare "россияне выбрали роутеры" must NOT match). Single stems.
+_TRANSPORT_SURVEY = (
+    "опрос", "россияне выбрал", "россияне назвал", "россияне готов",
+    "россияне стали", "доля водител", "владельц", "ev owners", "survey",
+    "лизинг",  # "рынок лизинга легковых" — needs auto-object too
+)
+_TRANSPORT_AUTO_OBJ = (
+    "авто", "машин", "автомоб", "vehicle", "антифриз", "масл", "шин ",
+    "покрышк", "аккумулятор", "электромоб", "кроссовер", "седан",
+    "утиль", "такси", "каршер", "топлив", "бензин", "дизел", "пробег",
+    "водител", "driver", "осаго", "страхов",
+)
+
+# NEGATIVE gates — if any present, NOT transport-civic (reject the
+# rescue even when a positive term matched). Covers military, banking /
+# consumer-finance, utility networks, pure politics.
+_TRANSPORT_NEG_GATES = (
+    # military / political
+    "всу", "пво", "минобороны", "севастопол", "губернатор", " атак",
+    "удар по", "сбили", "уничтож", "санкци", "война", "фронт",
+    "боеприпас", "ракет", "мишустин", "путин",
+    # banking / consumer-finance (non-transport)
+    "уставн капитал", "по инн", "массов регистрац", "сбп для",
+    "зарплатн", "юридическ лиц", "адрес массов", "акциз", "инн бесплат",
+    "банки.ру", "роутер", "подписк", "пособи", "похуд", "пирамид",
+    "кешбэк", "центробанк", "банк оштраф", "депозит", "вклад", "ипотек",
+    "kuka", "общепит", "бронир отел", "застройк", "психологическ",
+    # utility networks (not roads)
+    "теплов сет", "электросет", "теплосет", "энергосет", "теплоснабж",
+)
+
+
+def is_ru_transport_civic(title: str, body_excerpt: str = "") -> bool:
+    """True if the article is Russian transport-CIVIC news the editor
+    routes to Local specifics (traffic law, roads, taxi/carsharing,
+    vehicle-ownership civics, car-related driver surveys).
+
+    Two-tier: strong CORE terms accept standalone; survey framing needs
+    an auto-object. Negative gates (military / banking / utilities)
+    veto. See module-level block above for provenance + validation.
+    """
+    t = (title or "").lower() + " " + (body_excerpt or "")[:200].lower()
+    if any(g in t for g in _TRANSPORT_NEG_GATES):
+        return False
+    if any(m in t for m in _TRANSPORT_CORE):
+        return True
+    if any(s in t for s in _TRANSPORT_SURVEY) and \
+            any(o in t for o in _TRANSPORT_AUTO_OBJ):
+        return True
+    return False
+
+
 # ---------- Plan P2-B: RU market data → force Local -----------------------
 # When the title carries _is_ru_auto_subject markers AND one of these
 # phrases, route to Local even without a RU-portal domain. The editor
