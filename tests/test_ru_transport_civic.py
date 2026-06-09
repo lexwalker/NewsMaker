@@ -143,6 +143,28 @@ def test_survey_with_auto_object_passes() -> None:
     )
 
 
+def test_v47_military_personnel_rejected() -> None:
+    """v47 audit: «проверки военных на опьянение» matched опьянени but
+    is about servicemen, not drivers — must be gated out."""
+    cases = [
+        "Порядок проверки военных на опьянение изменят",
+        "Призывников проверят на опьянение перед службой",
+        "Военнослужащих обяжут проходить медосмотр",
+    ]
+    for t in cases:
+        assert not is_ru_transport_civic(t), f"military: {t!r}"
+
+
+def test_v47_license_category_accepted() -> None:
+    """Driver-license category news matches on title alone now."""
+    cases = [
+        "Права категории С: как получить, инструкция",
+        "Что обозначает категория D в водительских правах",
+    ]
+    for t in cases:
+        assert is_ru_transport_civic(t), f"license category: {t!r}"
+
+
 def test_empty_safe() -> None:
     assert not is_ru_transport_civic("")
     assert not is_ru_transport_civic("   ")

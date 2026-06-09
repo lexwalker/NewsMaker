@@ -1442,6 +1442,23 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             row.auto_topic = bool(cached.get("auto_topic", True))
             row.auto_hits = cached.get("auto_hits", "")
             row.from_cache = True
+            # RU transport-civic rescue ALSO at cache-restore time.
+            # Today's heuristic fixes (rescue, blacklist) must apply even
+            # to articles cached BEFORE the fix — otherwise a recently
+            # cached run short-circuits the whole change. Only flips
+            # LLM-rejections (not heuristic hard-rejects, which are
+            # correct); is_ru_transport_civic gates out military/banking.
+            if (row.verdict == "Отклонено LLM"
+                    and is_ru_transport_civic(row.title, row.body_excerpt)):
+                row.verdict = "Точно новость"
+                row.llm_relevance = "Да"
+                row.llm_section = "Local specifics"
+                row.llm_region = "Local"
+                row.llm_confidence = 0.55
+                row.llm_note = (
+                    "RU-транспорт-civic rescue (из кэша) — проверьте"
+                    + (f" | {row.llm_note}" if row.llm_note else "")
+                )
             return True
         # Else: cache exists but is incomplete (fetch-only run). Fall through
         # so the normal heuristic + LLM pipeline picks this row up fresh.
@@ -1573,6 +1590,14 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--runs-log", type=Path, default=RUNS_LOG_PATH,
         help=f"Path to the per-run summary log (default {RUNS_LOG_PATH}).",
+    )
+    p.add_argument(
+        "--no-playwright", action="store_true",
+        help="Disable the Playwright JS-fallback entirely. Use when a "
+             "JS-gated source hangs the run (a single bad site's "
+             "navigation can stall the whole prog). httpx still fetches "
+             "the vast majority of sources; only a few Cloudflare/SPA "
+             "sites are skipped.",
     )
     p.add_argument(
         "--no-llm", action="store_true",
@@ -1709,7 +1734,15 @@ def main(argv: list[str] | None = None) -> int:
     # library is importable. The fetch path gracefully degrades to httpx if
     # Playwright crashes mid-run (see `_http_get`).
     quirks = load_http_quirks()
-    PW_ALLOWLIST = PlaywrightAllowlist(quirks.playwright_domains)
+    # --no-playwright: empty the allowlist so the JS fallback is a no-op
+    # and Playwright is never spun up (a single hung JS site can stall
+    # the whole 337-source run — see jun-2026 media.jaguar.com hang).
+    if getattr(args, "no_playwright", False):
+        PW_ALLOWLIST = PlaywrightAllowlist([])
+        print("Playwright DISABLED (--no-playwright): httpx-only fetch.")
+        quirks.playwright_domains = []
+    else:
+        PW_ALLOWLIST = PlaywrightAllowlist(quirks.playwright_domains)
     pw_cm = None
     if PLAYWRIGHT_AVAILABLE and quirks.playwright_domains:
         try:
