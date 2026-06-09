@@ -1581,6 +1581,15 @@ _TRANSPORT_NEG_GATES = (
 )
 
 
+# Test-drive markers (jun-2026 v47 audit — editor's Test-drive section
+# was 0% in our output vs 4% in theirs; the 1 we had got mis-routed).
+_TEST_DRIVE_MARKERS = (
+    "тест-драйв", "тест драйв", "test-drive", "test drive",
+    "comparative test", "сравнительный тест", "опыт владения",
+    "длительный тест", "long-term test", "первый тест",
+)
+
+
 def is_ru_transport_civic(title: str, body_excerpt: str = "") -> bool:
     """True if the article is Russian transport-CIVIC news the editor
     routes to Local specifics (traffic law, roads, taxi/carsharing,
@@ -2043,6 +2052,20 @@ def heuristic_section(
                 reason=f"body-type:{kw}",
             )
 
+    # ----- Tier 1.2: Test-drive (jun-2026 v47 audit) -----------------------
+    # "тест-драйв" / "test drive" / "comparative test" / "опыт владения"
+    # are unambiguous Test-drive markers. Must come BEFORE transport-civic
+    # (which also matches "тест-драйв") and model-debut so a Voyah
+    # test-drive lands in Test-drive, not Local/Other (v47 dumped these
+    # into Other news — the section-loss bug).
+    if any(m in t for m in _TEST_DRIVE_MARKERS):
+        return HeuristicSection(
+            section="Test-drive",
+            region="Local" if _is_ru_auto_subject(t) else "Global",
+            confidence=0.85,
+            reason="test-drive",
+        )
+
     # ----- Tier 1.5 (R2-P1-1): specific-model debut → Confirmed -------------
     # Editor universal rule: model debut/launch/pricing/refresh/timing-
     # change ALWAYS Facts, even RU-market. Pre-empts Tier 4 (RU-portal
@@ -2055,6 +2078,19 @@ def heuristic_section(
             region="Local" if _is_ru_auto_subject(t) else "Global",
             confidence=0.80,
             reason="model-debut-confirmed",
+        )
+
+    # ----- Tier 1.7: RU transport-civic → Local (jun-2026 v47 audit) -------
+    # ПДД / дороги / такси / ОСАГО / утильсбор etc. After model-debut so
+    # a genuine launch wins Confirmed first. Makes the accept-path agree
+    # with the rescue's intent (rescue sets Local, but the old accept
+    # path re-ran heuristic_section and clobbered it back to Other).
+    if is_ru_transport_civic(title, body_excerpt):
+        return HeuristicSection(
+            section=SECTION_LOCAL,
+            region="Local",
+            confidence=0.70,
+            reason="ru-transport-civic",
         )
 
     # ----- Tier 2: Financial-results — Other news (RU-subject → Local) ------

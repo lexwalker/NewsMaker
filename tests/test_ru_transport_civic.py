@@ -165,6 +165,26 @@ def test_v47_license_category_accepted() -> None:
         assert is_ru_transport_civic(t), f"license category: {t!r}"
 
 
+def test_v47_section_routing() -> None:
+    """v47 section-loss bug: rescued transport-civic was dumped into
+    Other news. heuristic_section must now route test-drives→Test-drive
+    and transport-civic→Local so the accept-path agrees with rescue."""
+    from news_agent.core.heuristic_relevance import heuristic_section
+
+    def sec(title: str) -> str:
+        r = heuristic_section(title=title, body_excerpt="")
+        return r.section if r else "None"
+
+    assert sec("Тест-драйв Voyah Free Sport+") == "Test-drive"
+    assert sec("Опыт владения EVOLUTE") == "Test-drive"
+    assert sec("Что обозначает категория D в водительских правах") \
+        == "Local specifics"
+    assert sec("Водителей могут освободить от платы парковки") \
+        == "Local specifics"
+    # launches/LCV still win their sections (must not be clobbered)
+    assert sec("Volkswagen представил пикап Tukan") == "LCV news"
+
+
 def test_empty_safe() -> None:
     assert not is_ru_transport_civic("")
     assert not is_ru_transport_civic("   ")
