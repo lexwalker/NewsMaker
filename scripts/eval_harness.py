@@ -76,6 +76,8 @@ def _parse_args() -> argparse.Namespace:
                    help="How many disagreements to print")
     p.add_argument("--tag", default="",
                    help="Label this run in eval_history.jsonl")
+    p.add_argument("--predictions", default="",
+                   help="Dump per-row predictions to PATH (for eval_diff.py)")
     return p.parse_args()
 
 
@@ -162,6 +164,7 @@ def main() -> int:
     false_rejects: list[dict] = []
     false_accepts: list[dict] = []
     sec_misses: list[dict] = []
+    per_row: list[dict] = []        # for --predictions / eval_diff.py
     skipped_llm = 0
 
     t0 = time.time()
@@ -216,6 +219,19 @@ def main() -> int:
                                       domain="")
                 if h and h.section in section_names:
                     pred_sec = h.section
+
+        # per-row prediction snapshot (stable id so eval_diff can align
+        # the same article across two runs / classifier versions)
+        row_id = r.get("id") or hashlib.sha1(
+            title.encode("utf-8")).hexdigest()[:16]
+        per_row.append({
+            "id": row_id,
+            "title": title[:120],
+            "lab_pub": bool(lab_pub),
+            "pred_pub": bool(pred_pub),
+            "lab_sec": r.get("label_section") or "",
+            "pred_sec": pred_sec or "",
+        })
 
         # tally publish confusion
         if lab_pub and pred_pub:
@@ -283,6 +299,14 @@ def main() -> int:
     with HISTORY.open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     print(f"\nhistory ← {HISTORY.name} (tag={args.tag!r})")
+
+    if args.predictions:
+        Path(args.predictions).write_text(
+            json.dumps({
+                "prompt_fp": _PROMPT_FP, "tag": args.tag, "mode": mode,
+                "metrics": rec, "rows": per_row,
+            }, ensure_ascii=False), encoding="utf-8")
+        print(f"predictions → {args.predictions} ({len(per_row)} rows)")
     return 0
 
 
