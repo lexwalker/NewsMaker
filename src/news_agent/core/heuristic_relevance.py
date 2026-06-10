@@ -1524,10 +1524,12 @@ _TRANSPORT_CORE = (
     # fines (overbooking, hotels, fishing). Legit traffic-fine stories
     # always carry another CORE term (пдд / самокат / парковк / превышен
     # скорост), so they're still rescued.
+    # NOTE: licence-CATEGORY how-to terms REMOVED (jun-2026 editor
+    # feedback) — «категория D как получить» is an instructional guide,
+    # editor rejects it («не нужно ни в один раздел»). Keep only real
+    # regulation/penalty news, not how-to guides.
     "пдд", "осаго", "каско", "техосмотр", "водительск", "опьянени",
     "дорожн знак", "лишени прав", "превышени скорост",
-    "права категори", "категори прав", "категория с", "категория d",
-    "категории с", "категории d",
     "intoxication", "driving license", "traffic violation",
     "traffic fine",
     # road infrastructure
@@ -1578,15 +1580,24 @@ _TRANSPORT_NEG_GATES = (
     "kuka", "общепит", "бронир отел", "застройк", "психологическ",
     # utility networks (not roads)
     "теплов сет", "электросет", "теплосет", "энергосет", "теплоснабж",
+    # how-to / instructional guides (jun-2026 editor: «категория D как
+    # получить» = инструкция, «не нужно ни в один раздел»). These are
+    # guides, not news.
+    "как получить", "как оформить", "как сдать", "как восстанов",
+    "что обозначает", "что означает", "инструкция", "пошагов",
+    "памятка", "гайд", "how to obtain", "how to get",
 )
 
 
 # Test-drive markers (jun-2026 v47 audit — editor's Test-drive section
 # was 0% in our output vs 4% in theirs; the 1 we had got mis-routed).
+# NOTE: "опыт владения" REMOVED (jun-2026 editor feedback on v47) —
+# ownership-experience blogs are NOT test-drives the editor wants
+# («не нужно такое ставить ни в один раздел»). Only real test-drives.
 _TEST_DRIVE_MARKERS = (
     "тест-драйв", "тест драйв", "test-drive", "test drive",
-    "comparative test", "сравнительный тест", "опыт владения",
-    "длительный тест", "long-term test", "первый тест",
+    "comparative test", "сравнительный тест",
+    "длительный тест", "long-term test",
 )
 
 

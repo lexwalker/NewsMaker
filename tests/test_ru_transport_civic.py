@@ -155,14 +155,25 @@ def test_v47_military_personnel_rejected() -> None:
         assert not is_ru_transport_civic(t), f"military: {t!r}"
 
 
-def test_v47_license_category_accepted() -> None:
-    """Driver-license category news matches on title alone now."""
+def test_v47_license_howto_REJECTED() -> None:
+    """CORRECTION (jun-2026 editor feedback on v47): licence how-to
+    guides are JUNK, not Local. Editor: «категория D как получить — не
+    нужно ни в один раздел». My earlier assumption was WRONG."""
     cases = [
         "Права категории С: как получить, инструкция",
         "Что обозначает категория D в водительских правах",
+        "Как восстановить водительское удостоверение: пошаговая инструкция",
     ]
     for t in cases:
-        assert is_ru_transport_civic(t), f"license category: {t!r}"
+        assert not is_ru_transport_civic(t), \
+            f"licence how-to should be REJECTED: {t!r}"
+
+
+def test_v47_ownership_blog_REJECTED() -> None:
+    """Ownership-experience blogs are NOT test-drives (editor: «не
+    нужно»). Real test-drives still pass."""
+    assert not is_ru_transport_civic("Опыт владения Evolute i-Pro")
+    assert is_ru_transport_civic("Тест-драйв Voyah Free Sport+")
 
 
 def test_v47_section_routing() -> None:
@@ -176,9 +187,11 @@ def test_v47_section_routing() -> None:
         return r.section if r else "None"
 
     assert sec("Тест-драйв Voyah Free Sport+") == "Test-drive"
-    assert sec("Опыт владения EVOLUTE") == "Test-drive"
+    # ownership blog + licence how-to are JUNK (editor feedback) — they
+    # must NOT get a section (defer to LLM/reject, not force-publish)
+    assert sec("Опыт владения EVOLUTE") != "Test-drive"
     assert sec("Что обозначает категория D в водительских правах") \
-        == "Local specifics"
+        != "Local specifics"
     assert sec("Водителей могут освободить от платы парковки") \
         == "Local specifics"
     # launches/LCV still win their sections (must not be clobbered)
