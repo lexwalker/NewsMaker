@@ -185,13 +185,23 @@ class ArchiveDedupJudge:
                 pass
 
     def retrieve(
-        self, candidate_title: str, *, exclude_self_cos: float | None = None
+        self, candidate_title: str, *,
+        exclude_self_cos: float | None = None,
+        before_date: str | None = None,
     ) -> list[Neighbor]:
         """Top-k entries by max cosine over the candidate's query lines.
 
         ``exclude_self_cos``: drop the single best entry if its cosine is
-        >= this value (used in offline measurement to remove a candidate's
-        OWN archived copy, simulating "not yet in the archive")."""
+        >= this value — a crude self-removal for offline measurement.
+        Measured flaw: the editor rewrites titles, so a candidate's own
+        archived copy often scores <0.95 and leaks past this. Prefer
+        ``before_date``.
+
+        ``before_date`` ('YYYY-MM-DD'): only archive entries dated
+        STRICTLY BEFORE this are eligible. This is the exact production
+        simulation — we always collect a candidate before the editor can
+        publish it, so its own copy postdates first_seen and is excluded
+        by construction. Undated entries are excluded too (conservative)."""
         import numpy as np
 
         if self._vecs is None:
@@ -212,6 +222,12 @@ class ArchiveDedupJudge:
             if s > best_per_entry.get(ei, -1.0):
                 best_per_entry[ei] = s
         ranked = sorted(best_per_entry.items(), key=lambda x: -x[1])
+        if before_date:
+            ranked = [
+                (ei, s) for ei, s in ranked
+                if (self.entries[ei].date or "")[:10]
+                and (self.entries[ei].date or "")[:10] < before_date
+            ]
         if exclude_self_cos is not None and ranked and \
                 ranked[0][1] >= exclude_self_cos:
             ranked = ranked[1:]
@@ -230,10 +246,12 @@ class ArchiveDedupJudge:
     def is_duplicate(
         self, candidate_title: str, candidate_body: str = "",
         *, exclude_self_cos: float | None = None,
+        before_date: str | None = None,
     ) -> DupVerdict:
         try:
             neighbors = self.retrieve(
-                candidate_title, exclude_self_cos=exclude_self_cos)
+                candidate_title, exclude_self_cos=exclude_self_cos,
+                before_date=before_date)
         except Exception as e:  # noqa: BLE001
             return DupVerdict(False, error=f"retrieve:{type(e).__name__}")
         if not neighbors:

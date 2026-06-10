@@ -96,7 +96,11 @@ def load_truth() -> tuple[list[dict], list[dict]]:
 
 def make_judge_fn(model="claude-haiku-4-5"):
     import anthropic
-    client = anthropic.Anthropic()
+    # Explicit per-call timeout: one hung HTTPS connection froze a whole
+    # measurement run for 5h (same failure class as the Playwright hang).
+    # A timed-out call raises, is_duplicate catches it per-row (error
+    # verdict), and the loop moves on instead of stalling.
+    client = anthropic.Anthropic(timeout=45.0, max_retries=2)
 
     def fn(prompt: str) -> tuple[str, float]:
         resp = client.messages.create(
@@ -108,15 +112,46 @@ def make_judge_fn(model="claude-haiku-4-5"):
     return fn
 
 
-def run_group(judge, rows, self_cos, limit, label):
-    flagged = judged = errors = 0
+def load_date_lookup():
+    """url → first_seen date ('YYYY-MM-DD') from the SQLite cache — when
+    WE collected the candidate. Used as the archive-eligibility cutoff."""
+    import sqlite3
+
+    from news_agent.core.urls import canonicalise
+    con = sqlite3.connect(str(DATA / "news_agent.sqlite"))
+
+    def date_of(r: dict) -> str:
+        u = canonicalise(r.get("url") or "")
+        if not u:
+            return ""
+        row = con.execute(
+            "SELECT first_seen_at FROM seen_articles WHERE canonical_url=?",
+            (u,)).fetchone()
+        return (row[0] or "")[:10] if row and row[0] else ""
+    return date_of
+
+
+def run_group(judge, rows, self_cos, limit, label, date_of=None):
+    """date_of set → date-cutoff mode: judge sees only archive entries
+    STRICTLY BEFORE the candidate's first_seen (production simulation);
+    self_cos is not used. Candidates without a date are skipped."""
+    flagged = judged = errors = n_run = skipped_nodate = 0
     cost = 0.0
     examples = []
     for i, r in enumerate(rows):
-        if limit and i >= limit:
+        if limit and n_run >= limit:
             break
-        v = judge.is_duplicate(r.get("title", ""), r.get("body", "") or "",
-                              exclude_self_cos=self_cos)
+        bd = None
+        if date_of is not None:
+            bd = date_of(r)
+            if not bd:
+                skipped_nodate += 1
+                continue
+        n_run += 1
+        v = judge.is_duplicate(
+            r.get("title", ""), r.get("body", "") or "",
+            exclude_self_cos=(None if date_of is not None else self_cos),
+            before_date=bd)
         cost += v.cost_usd
         if v.error:
             errors += 1
@@ -127,10 +162,11 @@ def run_group(judge, rows, self_cos, limit, label):
             if len(examples) < 5:
                 examples.append((r.get("title", "")[:55],
                                  v.matched_title[:45], v.confidence))
-        if (i + 1) % 20 == 0:
-            print(f"    {label}: {i+1} done, flagged={flagged}, "
+        if n_run % 20 == 0:
+            print(f"    {label}: {n_run} done, flagged={flagged}, "
                   f"${cost:.3f}", flush=True)
     return {"flagged": flagged, "judged": judged, "errors": errors,
+            "n": n_run, "skipped_nodate": skipped_nodate,
             "cost": cost, "examples": examples}
 
 
@@ -141,6 +177,10 @@ def main() -> int:
     ap.add_argument("--min-cos", type=float, default=0.55)
     ap.add_argument("--self-cos", type=float, default=0.95,
                     help="drop the top archive match above this cosine (self)")
+    ap.add_argument("--date-cutoff", action="store_true",
+                    help="eligible archive = entries STRICTLY BEFORE the "
+                         "candidate's first_seen (correct production "
+                         "simulation; replaces --self-cos)")
     ap.add_argument("--k", type=int, default=8)
     args = ap.parse_args()
 
@@ -159,21 +199,26 @@ def main() -> int:
     judge.build_index()
     print(f"  index built ({time.time()-t0:.0f}s)\n")
 
-    print(f"Judging DUPS (should be flagged) — self_cos={args.self_cos}:")
-    dr = run_group(judge, dups, args.self_cos, args.limit, "dups")
+    date_of = load_date_lookup() if args.date_cutoff else None
+    mode = ("date-cutoff (eligible = published BEFORE candidate first_seen)"
+            if args.date_cutoff else f"self_cos={args.self_cos}")
+    print(f"Judging DUPS (should be flagged) — {mode}:")
+    dr = run_group(judge, dups, args.self_cos, args.limit, "dups",
+                   date_of=date_of)
     print(f"\nJudging GENUINE (should NOT be flagged):")
-    gr = run_group(judge, genuine, args.self_cos, args.limit, "genuine")
+    gr = run_group(judge, genuine, args.self_cos, args.limit, "genuine",
+                   date_of=date_of)
 
-    nd = (args.limit or len(dups)) if args.limit else len(dups)
-    nd = min(nd, len(dups))
-    ng = (args.limit or len(genuine)) if args.limit else len(genuine)
-    ng = min(ng, len(genuine))
+    nd, ng = dr["n"], gr["n"]
     catch = dr["flagged"] / nd if nd else 0.0
     fpr = gr["flagged"] / ng if ng else 0.0
     total_cost = dr["cost"] + gr["cost"]
 
     print("\n" + "=" * 60)
-    print("ARCHIVE-DEDUP JUDGE — measured")
+    print(f"ARCHIVE-DEDUP JUDGE — measured ({mode})")
+    if args.date_cutoff:
+        print(f"  skipped (no first_seen date): dups={dr['skipped_nodate']}, "
+              f"genuine={gr['skipped_nodate']}")
     print(f"  dup-catch (recall):   {dr['flagged']}/{nd} = {catch:5.0%}  "
           f"(judged {dr['judged']}, err {dr['errors']})")
     print(f"  false-positive:       {gr['flagged']}/{ng} = {fpr:5.0%}  "

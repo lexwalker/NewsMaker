@@ -122,6 +122,42 @@ def test_exclude_self_keeps_real_prior_duplicate() -> None:
     assert v.is_duplicate is True
 
 
+# ── date cutoff (production simulation) ─────────────────────────────
+
+def test_before_date_excludes_postdated_and_undated() -> None:
+    """Entries published on/after the candidate's first_seen — including
+    the candidate's OWN later-published copy — and undated entries are
+    ineligible. Nothing left → not-dup, no LLM."""
+    judge, j = _judge(
+        [ArchiveEntry("Geely Coolray facelift official", date="2026-06-09 10:00"),
+         ArchiveEntry("Geely Coolray facelift revealed copy")],  # undated
+        '{"duplicate":true,"match":1}')
+    v = judge.is_duplicate(CAND, before_date="2026-06-05")
+    assert v.is_duplicate is False
+    assert j.calls == 0
+
+
+def test_before_date_keeps_real_prior() -> None:
+    judge, j = _judge(
+        [ArchiveEntry("Geely Coolray facelift official", date="2026-06-01 09:00")],
+        '{"duplicate":true,"match":1,"confidence":0.9,"reason":"same"}')
+    v = judge.is_duplicate(CAND, before_date="2026-06-05")
+    assert j.calls == 1
+    assert v.is_duplicate is True
+    assert v.matched_date == "2026-06-01 09:00"
+
+
+def test_before_date_same_day_is_excluded() -> None:
+    """Strict '<': a same-day entry is NOT eligible (date granularity
+    can't order same-day events — conservative)."""
+    judge, j = _judge(
+        [ArchiveEntry("Geely Coolray facelift official", date="2026-06-05 08:00")],
+        '{"duplicate":true,"match":1}')
+    v = judge.is_duplicate(CAND, before_date="2026-06-05")
+    assert v.is_duplicate is False
+    assert j.calls == 0
+
+
 # ── parsing / prompt / helpers ──────────────────────────────────────
 
 def test_json_parse_error_is_safe_notdup() -> None:
