@@ -57,7 +57,7 @@ from news_agent.core.miss_funnel import (  # noqa: E402
     build_funnel,
     summarise,
 )
-from news_agent.core.urls import domain_of  # noqa: E402
+from news_agent.core.urls import domain_of, normalise_source_entry  # noqa: E402
 
 EDITOR = os.environ.get(
     "EDITOR_SPREADSHEET_ID", "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs"
@@ -110,8 +110,14 @@ def load_source_domains(svc) -> set[str]:
     for r in rows[1:]:
         if len(r) < 2:
             continue
-        url = str(r[1]).strip()
-        if not url.startswith("http"):
+        active = str(r[0]).strip() if r[0] is not None else ""
+        if active == "0":
+            continue
+        # Same normalisation as the bot's read_active_sources — the sheet
+        # mixes "https://x.ru/path" and bare "kolesa.ru" forms. Requiring
+        # http here used to mis-file 33 crawled sources into S1.
+        url = normalise_source_entry(str(r[1]))
+        if url is None:
             continue
         d = domain_of(url)
         if d:

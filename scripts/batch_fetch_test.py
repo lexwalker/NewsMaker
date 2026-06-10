@@ -112,7 +112,11 @@ from news_agent.adapters.llm.base import (  # noqa: E402
 from news_agent.adapters.storage import DedupStore  # noqa: E402
 from news_agent.core.budget import BudgetExceeded, BudgetTracker  # noqa: E402
 from news_agent.core.config_loader import load_sections  # noqa: E402
-from news_agent.core.urls import canonicalise, domain_of  # noqa: E402
+from news_agent.core.urls import (  # noqa: E402
+    canonicalise,
+    domain_of,
+    normalise_source_entry,
+)
 from news_agent.settings import get_settings  # noqa: E402
 
 # ----------------------------------------------------------------- config
@@ -318,20 +322,37 @@ def read_active_sources(svc, limit: int) -> list[str]:  # type: ignore[no-untype
     )
     rows = resp.get("values", [])
     out: list[str] = []
+    normalised = 0
+    dropped: list[str] = []
     for row in rows[1:]:  # skip header
         if not row:
             continue
         active = (row[0] if len(row) > 0 else "").strip()
-        url = (row[1] if len(row) > 1 else "").strip()
+        raw = (row[1] if len(row) > 1 else "").strip()
         # Accept anything that is NOT explicitly "0" (flags "1", "2", empty
         # are all considered active). Editor has three flags in the sheet:
         #   1 — daily-monitored automotive sources
         #   2 — OEM pressrooms and IR pages (secondary)
         #   (empty) — unmarked, but URL is valid
-        if active != "0" and url.startswith(("http://", "https://")):
-            out.append(url)
+        if active == "0" or not raw:
+            continue
+        # The editor writes sources in mixed forms ("kolesa.ru",
+        # "vesti.ru/auto"). Requiring an http scheme here used to SILENTLY
+        # skip 33 active sources (drom, motor.ru, zr.ru, lenta, rbc …) —
+        # the biggest single coverage hole the miss-funnel found.
+        url = normalise_source_entry(raw)
+        if url is None:
+            dropped.append(raw[:40])
+            continue
+        if not raw.startswith(("http://", "https://")):
+            normalised += 1
+        out.append(url)
         if len(out) >= limit:
             break
+    if normalised:
+        print(f"sources: {normalised} scheme-less entries normalised to https://")
+    if dropped:
+        print(f"sources: {len(dropped)} non-URL rows dropped: {dropped}")
     return out
 
 

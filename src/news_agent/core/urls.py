@@ -59,6 +59,31 @@ def domain_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def normalise_source_entry(raw: str) -> str | None:
+    """Normalise one row of the editor's source sheet into a fetchable URL.
+
+    The editor writes sources in mixed forms: full URLs, bare domains
+    ("kolesa.ru"), domain+path ("vesti.ru/auto", "t.me/delimobil"). The
+    fetch loop used to require an http(s) scheme and SILENTLY skipped the
+    bare forms — 33 active sources (drom, motor.ru, zr.ru, lenta, rbc,
+    insideevs …) were never crawled, a major hidden coverage hole (found
+    by the jun-2026 miss-funnel). Scheme-less entries now get https://.
+
+    Returns None for rows that are not URLs at all (stray words like
+    "экономика", notes with spaces) so callers can drop them loudly.
+    """
+    s = (raw or "").strip()
+    if not s or " " in s:
+        return None
+    if not s.startswith(("http://", "https://")):
+        s = "https://" + s.lstrip("/")
+    host = urlparse(s).netloc
+    # A real host has at least one dot ("kolesa.ru"); bare words don't.
+    if "." not in host:
+        return None
+    return s
+
+
 # Year segments in URL paths look like:
 #   /2022/05/21/...      → 2022
 #   /2023-04-30-...      → 2023
