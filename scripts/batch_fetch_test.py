@@ -95,12 +95,20 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     is_supplier_abstract_showcase,
     looks_like_article,
 )
+from news_agent.core import heuristic_relevance as _heuristic_mod  # noqa: E402
+from news_agent.core.cache_version import (  # noqa: E402
+    cache_is_authoritative,
+    compute_classifier_version,
+)
 from news_agent.core.launch_stages import (  # noqa: E402
     detect_launch_stages,
     extract_brand_model,
 )
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
-from news_agent.adapters.llm.base import LLMClient  # noqa: E402
+from news_agent.adapters.llm.base import (  # noqa: E402
+    EDITORIAL_REVIEW_SYSTEM,
+    LLMClient,
+)
 from news_agent.adapters.storage import DedupStore  # noqa: E402
 from news_agent.core.budget import BudgetExceeded, BudgetTracker  # noqa: E402
 from news_agent.core.config_loader import load_sections  # noqa: E402
@@ -182,6 +190,32 @@ DEDUP_STORE = None  # type: ignore[assignment]  # DedupStore instance in main()
 # A row whose hash is here doesn't go through the LLM again — instead its
 # cached verdict / section / titles / primary source get copied back.
 PREVIOUSLY_SEEN: dict[str, dict] = {}
+
+
+# ── Classifier versioning (cache invalidation) ──────────────────────
+# The classification cache (PREVIOUSLY_SEEN) used to be keyed by url_hash
+# ALONE. Consequence: a prompt/heuristic edit had ZERO effect on already
+# cached articles — they short-circuited with the stale verdict, so the
+# only way to see a rule change was to wait for genuinely fresh articles
+# (the documented "топчемся" pain; same-day re-runs were degenerate).
+#
+# Fix (peer-review §4): stamp every cache row with a CLASSIFIER_VERSION =
+# sha256(EDITORIAL_REVIEW_SYSTEM + heuristic_relevance.py source)[:8].
+# On restore, a row whose stamp != the current version is NOT honoured
+# for rule-based verdicts → it re-runs through the live heuristics + LLM.
+# Editing the prompt OR any heuristic auto-bumps the version (we hash the
+# module SOURCE, so there's no manual constant to forget), so rule edits
+# apply on the very next prog — even a same-day re-run. Identity verdicts
+# (URL-dups, stale-by-date) stay version-independent: a dup is a dup.
+def _compute_classifier_version() -> str:
+    try:
+        heur_src = Path(_heuristic_mod.__file__).read_bytes()
+    except Exception:
+        heur_src = b""  # missing source → degrade to prompt-only fingerprint
+    return compute_classifier_version(EDITORIAL_REVIEW_SYSTEM, heur_src)
+
+
+CLASSIFIER_VERSION = _compute_classifier_version()
 DEDUP_PORTAL = "RU"  # current batch treats every source as RU portal
 PRIMARY_CUES = None  # type: ignore[assignment]  # PrimarySourceCues from config
 SOURCE_QUALITY: SourceQuality | None = None  # set in main()
@@ -1394,21 +1428,20 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         cached = PREVIOUSLY_SEEN[uh]
         cached_verdict = cached.get("verdict", "")
         has_llm_classification = bool(cached.get("llm_section"))
-        # Verdicts where LLM is never invoked (heuristic-only). These are
-        # safe to restore even without llm_section.
-        _heuristic_only_verdicts = {
-            "Точно не новость (не статья)",
-            "Точно не новость (не авто)",
-            "Точно не новость (старая)",
-            "Точно не новость (чёрный список)",
-            "Отклонить (дубль)",
-            "Отклонить (дубль финального URL)",
-            "Отклонить (обработан ранее)",
-        }
-        cache_is_authoritative = (
-            has_llm_classification or cached_verdict in _heuristic_only_verdicts
+        # Classifier-version gate (peer-review §4). A cached row carries
+        # the version of the prompt+heuristics that produced it. If that
+        # differs from the live version, the RULES changed since — so we
+        # must NOT honour rule-based verdicts; the row re-runs fresh.
+        # Classifier-version gate (peer-review §4): a cached row carries
+        # the version of the prompt+heuristics that produced it. If that
+        # differs from the live version the RULES changed, so rule-based
+        # verdicts are not honoured and the row re-runs fresh. Identity
+        # verdicts (dups/stale) stay valid regardless of version.
+        version_ok = cached.get("cls_ver", "") == CLASSIFIER_VERSION
+        cache_authoritative = cache_is_authoritative(
+            cached_verdict, has_llm_classification, version_ok
         )
-        if cache_is_authoritative:
+        if cache_authoritative:
             row.verdict = cached_verdict or row.verdict
             row.llm_relevance = cached.get("llm_relevance", "")
             row.llm_section = cached.get("llm_section", "")
@@ -1703,10 +1736,20 @@ def main(argv: list[str] | None = None) -> int:
     # --- SQLite dedup + classification cache (persistent across runs) --------
     DEDUP_STORE = DedupStore(SQLITE_PATH)
     PREVIOUSLY_SEEN = DEDUP_STORE.load_cache(DEDUP_PORTAL)
+    _cur_ver = sum(
+        1 for c in PREVIOUSLY_SEEN.values()
+        if c.get("cls_ver") == CLASSIFIER_VERSION
+    )
+    _stale_ver = len(PREVIOUSLY_SEEN) - _cur_ver
     print(
         f"SQLite cache loaded: {len(PREVIOUSLY_SEEN)} classified url_hashes "
-        f"for portal={DEDUP_PORTAL} ({SQLITE_PATH}). "
-        f"These will be reconstructed without LLM calls."
+        f"for portal={DEDUP_PORTAL} ({SQLITE_PATH})."
+    )
+    print(
+        f"  classifier_version={CLASSIFIER_VERSION} | "
+        f"{_cur_ver} cache rows current, {_stale_ver} stale "
+        f"(stale rule-verdicts re-classify if re-fetched; "
+        f"identity-verdicts e.g. dups stay valid)."
     )
 
     svc = sheets_client()
@@ -1858,6 +1901,10 @@ def main(argv: list[str] | None = None) -> int:
             # ends up with the marker on its own saved snapshot.
             note_out = (row.llm_note or "").replace("из кэша", "").strip(" |").strip()
             cached_row = {
+                # Classifier version that produced this classification.
+                # A later run honours the row's rule-based verdict only if
+                # this matches the live version (else it re-classifies).
+                "cls_ver": CLASSIFIER_VERSION,
                 "verdict": row.verdict,
                 "is_article": row.is_article,
                 "article_score": row.article_score,
