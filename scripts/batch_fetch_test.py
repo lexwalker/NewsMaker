@@ -19,6 +19,8 @@ from __future__ import annotations
 import argparse
 import io
 import os
+import socket
+import ssl
 import sys
 import time
 import traceback
@@ -513,6 +515,39 @@ def _lang_tags_for(lang: str) -> tuple[str, str]:
         return _LANG_TAG_MAP[key]
     up = key.upper()
     return (up, up)
+
+
+def _net_retry(fn, *args, what="network-op", tries=5, base_delay=2.0, **kwargs):
+    """Run a network operation, retrying transient failures with backoff.
+
+    A multi-hour prog drops connections — laptop sleep, SSL EOF, a 503
+    from Sheets. A single such blip on the FINAL Sheets write used to kill
+    the whole run and lose the classification (three v48 deaths). The
+    wrapped calls (write_report / write_articles / formatting) are
+    idempotent overwrites of a tab, so a full re-attempt is safe."""
+    last_exc = None
+    for attempt in range(1, tries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            name = type(e).__name__
+            status = getattr(getattr(e, "resp", None), "status", 0)
+            transient = (
+                isinstance(e, (ssl.SSLError, socket.error, OSError,
+                               ConnectionError, TimeoutError))
+                or "SSL" in name or "Timeout" in name
+                or status in (429, 500, 502, 503, 504)
+            )
+            if not transient or attempt == tries:
+                raise
+            wait = base_delay * (2 ** (attempt - 1))
+            print(f"  [{what}] transient {name} (status={status or '-'}): "
+                  f"retry {attempt}/{tries - 1} in {wait:.0f}s",
+                  file=sys.stderr, flush=True)
+            time.sleep(wait)
+            last_exc = e
+    if last_exc:  # pragma: no cover - loop always returns or raises
+        raise last_exc
 
 
 def write_articles(svc, run_ts: str, rows: list[ArticleRow], tab: str) -> None:  # type: ignore[no-untyped-def]
@@ -1895,14 +1930,11 @@ def main(argv: list[str] | None = None) -> int:
     # ------------------------------------ Primary-source level 2 (corpus-based)
     _run_corpus_primary_source_pass(article_rows)
 
-    write_report(svc, run_ts, results, report_tab)
-    write_articles(svc, run_ts, article_rows, articles_tab)
-    print(f"Report written to tabs: {report_tab!r}, {articles_tab!r}")
-    print(f"Detailed article rows: {len(article_rows)}")
-
-    # Persist the URL hashes + full classification into the SQLite cache.
-    # Next run will see the hash and restore these fields without any LLM
-    # call → cost drops to cents on daily delta-runs.
+    # Persist the URL hashes + full classification into the SQLite cache
+    # BEFORE the network writes. The cache store is local (no network, can't
+    # SSL-fail) and is the expensive work's only checkpoint — storing it
+    # first means a transient blip on the Sheets write no longer throws away
+    # the whole classification: a re-run restores it from cache for ~$0.
     if DEDUP_STORE is not None:
         import json as _json
         entries = []
@@ -1969,11 +2001,22 @@ def main(argv: list[str] | None = None) -> int:
             f"(next run will restore these without LLM)."
         )
 
+    # Network writes — retried with backoff so a transient SSL/5xx blip on
+    # the Sheets API doesn't discard the run (the classification is already
+    # checkpointed in SQLite above, so even a hard failure here is cheap to
+    # recover by re-running).
+    _net_retry(write_report, svc, run_ts, results, report_tab,
+               what="write_report")
+    _net_retry(write_articles, svc, run_ts, article_rows, articles_tab,
+               what="write_articles")
+    print(f"Report written to tabs: {report_tab!r}, {articles_tab!r}")
+    print(f"Detailed article rows: {len(article_rows)}")
+
     # Apply conditional formatting (colours + frozen header) to the new articles tab
     try:
         from apply_sheet_formatting import apply_formatting  # type: ignore[import-not-found]
 
-        apply_formatting(svc, articles_tab)
+        _net_retry(apply_formatting, svc, articles_tab, what="formatting")
         print(f"Conditional formatting applied to {articles_tab!r}")
     except Exception as e:  # noqa: BLE001
         print(f"(formatting step skipped: {e})", file=sys.stderr)
