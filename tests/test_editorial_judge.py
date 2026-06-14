@@ -100,6 +100,34 @@ def test_judge_reject(tmp_path):
     assert "Maextro" in v.reason
 
 
+def test_retrieve_excludes_self_title(tmp_path):
+    """Offline-eval guard: a candidate whose exact title is in the
+    precedent base must NOT retrieve itself (else it trivially self-
+    predicts). 16 real eval rows are in the 88-negative base."""
+    llm = _FakeLLM('{"publish": false, "section": "", "confidence": 0.6, '
+                   '"reason": "x"}')
+    j = EditorialJudge(_decisions_file(tmp_path), llm_client=llm,
+                       embed_model=_FakeEmbed(), k_neg=2)
+    self_title = "Maextro outsold Mercedes in sales"  # exact negative precedent
+    v = j.judge(self_title, exclude_title=self_title)
+    surfaced = " | ".join(v.precedents_rejected)
+    assert "Maextro outsold Mercedes" not in surfaced, \
+        "candidate retrieved its own exact-title precedent"
+
+
+def test_retrieve_without_exclude_includes_self(tmp_path):
+    """Without exclude_title the exact match IS retrieved (baseline
+    behaviour preserved)."""
+    llm = _FakeLLM('{"publish": false, "section": "", "confidence": 0.6, '
+                   '"reason": "x"}')
+    j = EditorialJudge(_decisions_file(tmp_path), llm_client=llm,
+                       embed_model=_FakeEmbed(), k_neg=2)
+    self_title = "Maextro outsold Mercedes in sales"
+    v = j.judge(self_title)
+    surfaced = " | ".join(v.precedents_rejected)
+    assert "Maextro outsold Mercedes" in surfaced
+
+
 def test_judge_empty_title(tmp_path):
     j = EditorialJudge(_decisions_file(tmp_path), llm_client=_FakeLLM("{}"),
                        embed_model=_FakeEmbed())

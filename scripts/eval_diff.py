@@ -77,6 +77,12 @@ def main() -> int:
     if base.get("prompt_fp") == after.get("prompt_fp"):
         print("  ⚠ same classifier fingerprint — did the change actually "
               "alter the prompt/heuristics?")
+    bm, am = base.get("mode", ""), after.get("mode", "")
+    if ("FAST" in bm) != ("FAST" in am):
+        print(f"  ⚠ MODE MISMATCH: {bm} vs {am} — FAST vs LLM snapshots are "
+              "not comparable (fast mode can't reject). Re-snapshot matching.")
+    elif bm and am and bm != am:
+        print(f"  (comparing {bm} → {am})")
 
     deltas = metric_deltas(base.get("metrics", {}), after.get("metrics", {}))
     print("\nAGGREGATE METRICS (before → after):")
