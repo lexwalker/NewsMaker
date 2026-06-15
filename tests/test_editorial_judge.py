@@ -128,6 +128,21 @@ def test_retrieve_without_exclude_includes_self(tmp_path):
     assert "Maextro outsold Mercedes" in surfaced
 
 
+def test_retrieve_excludes_held_out_set(tmp_path):
+    """Leave-block-out: a whole set of held-out titles is dropped from
+    retrieval so the test block is never in its own precedent base."""
+    llm = _FakeLLM('{"publish": false, "section": "", "confidence": 0.6, '
+                   '"reason": "x"}')
+    j = EditorialJudge(_decisions_file(tmp_path), llm_client=llm,
+                       embed_model=_FakeEmbed(), k_neg=2)
+    held = {"maextro outsold mercedes in sales",
+            "government funds road repairs after flood"}
+    v = j.judge("some candidate", exclude_titles=held)
+    surfaced = " | ".join(v.precedents_rejected).lower()
+    assert "maextro outsold" not in surfaced
+    assert "government funds road repairs" not in surfaced
+
+
 def test_judge_empty_title(tmp_path):
     j = EditorialJudge(_decisions_file(tmp_path), llm_client=_FakeLLM("{}"),
                        embed_model=_FakeEmbed())

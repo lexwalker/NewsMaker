@@ -162,24 +162,30 @@ class EditorialJudge:
         return " ".join(str(t).lower().split())[:80]
 
     def _retrieve(
-        self, title: str, exclude_title: str = ""
+        self, title: str, exclude_title: str = "",
+        exclude_titles: set | None = None,
     ) -> tuple[list[int], list[int]]:
         import numpy as np
 
         self._ensure_vectors()
         m = self._embed_model()
         qv = m.encode([title], normalize_embeddings=True)[0]
-        # Over-fetch by a couple so dropping a self-match still leaves k.
+        # Over-fetch generously so dropping self/held-out still leaves k.
         ex = self._norm_title(exclude_title) if exclude_title else ""
+        ex_set = exclude_titles or set()
+        margin = 4 + len(ex_set) // 50
 
         def _top(vecs, items, k):
             if not len(vecs):
                 return []
-            order = np.argsort(vecs @ qv)[::-1][: k + 2]
+            order = np.argsort(vecs @ qv)[::-1][: k + margin]
             out = []
             for i in order:
-                if ex and self._norm_title(items[int(i)]["title"]) == ex:
-                    continue  # offline-eval: never retrieve the candidate itself
+                nt = self._norm_title(items[int(i)]["title"])
+                # offline-eval: never retrieve the candidate itself, nor any
+                # held-out title (leave-block-out so the test isn't in its base)
+                if (ex and nt == ex) or nt in ex_set:
+                    continue
                 out.append(int(i))
                 if len(out) >= k:
                     break
@@ -190,12 +196,14 @@ class EditorialJudge:
 
     # -- judge ------------------------------------------------------
     def judge(self, title: str, body: str = "",
-              exclude_title: str = "") -> JudgeVerdict:
+              exclude_title: str = "",
+              exclude_titles: set | None = None) -> JudgeVerdict:
         if not title.strip():
             return JudgeVerdict(advisory_publish=None,
                                 reason="empty title")
         try:
-            pos_idx, neg_idx = self._retrieve(title, exclude_title=exclude_title)
+            pos_idx, neg_idx = self._retrieve(
+                title, exclude_title=exclude_title, exclude_titles=exclude_titles)
         except Exception as e:  # noqa: BLE001
             return JudgeVerdict(advisory_publish=None,
                                 error=f"retrieve: {type(e).__name__}")
