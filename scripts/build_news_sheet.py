@@ -856,8 +856,8 @@ def main() -> int:
     if flagged:
         n_dup = sum(1 for c in flagged if _llm_flag(c) == "dup")
         n_junk = len(flagged) - n_dup
-        print(f"LLM-flagged → diverted to '{REVIEW_TAB}': {len(flagged)} "
-              f"({n_dup} possible-dup, {n_junk} not-news)")
+        print(f"LLM-flagged → diverted to '{review_tab.REVIEW_TAB}': "
+              f"{len(flagged)} ({n_dup} possible-dup, {n_junk} not-news)")
 
     svc = _svc()
     sheet_id, was_created = _ensure_tab(svc, NEWS_TAB)
