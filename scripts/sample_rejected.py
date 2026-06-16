@@ -58,6 +58,7 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     _AUTO_STRONG_MARKERS,
     is_ru_transport_civic,
 )
+import review_tab  # noqa: E402  (shared review-tab helper, scripts/ on path)
 from news_agent.core.labeling import stratified_sample  # noqa: E402
 from news_agent.core.reject_stage import classify_outcome  # noqa: E402
 
@@ -98,16 +99,8 @@ def _auto_signal(title: str) -> bool:
 
 EDITOR = os.environ.get(
     "EDITOR_SPREADSHEET_ID", "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
-TAB = "Разметка отклонённого (ИИ)"
 SQLITE_PATH = DATA / "news_agent.sqlite"
 SENT_LOG = DATA / "labeling_sent.jsonl"
-HEADER = ["#", "Заголовок", "Причина бота", "Стадия",
-          "Нужно? (да/нет)", "Раздел (если да)", "url_hash", "URL"]
-INSTRUCTIONS = (
-    "ИИ ОТКЛОНИЛ эти статьи. Отметьте в колонке E: «да» если новость "
-    "нужна (ИИ ошибся), «нет» если отклонил верно. Если «да» — по "
-    "возможности впишите раздел в F. Это учит ИИ на ваших решениях."
-)
 
 
 def _svc():
@@ -164,15 +157,6 @@ def load_rejects(days: int) -> list[dict]:
     return out
 
 
-def _ensure_tab(svc):
-    meta = svc.spreadsheets().get(spreadsheetId=EDITOR).execute()
-    if any(s["properties"]["title"] == TAB for s in meta["sheets"]):
-        return
-    svc.spreadsheets().batchUpdate(
-        spreadsheetId=EDITOR,
-        body={"requests": [{"addSheet": {"properties": {"title": TAB}}}]},
-    ).execute()
-    print(f"created tab {TAB!r}")
 
 
 def main() -> int:
@@ -203,15 +187,14 @@ def main() -> int:
         print(f"  {n:3}  {c}")
 
     svc = _svc()
-    _ensure_tab(svc)
-    values = [[INSTRUCTIONS, "", "", "", "", "", "", ""], HEADER]
-    for i, r in enumerate(sample, 1):
-        values.append([i, r["title"][:300], r["reason"], r["cause"],
-                       "", "", r["url_hash"], r["url"]])
-    end = len(values)
-    svc.spreadsheets().values().update(
-        spreadsheetId=EDITOR, range=f"'{TAB}'!A1:H{end}",
-        valueInputOption="USER_ENTERED", body={"values": values}).execute()
+    rows = [{
+        "title": r["title"], "context": r["reason"],
+        "type": f"{review_tab.TYPE_REJECTED}:{r['cause']}",
+        "url_hash": r["url_hash"], "url": r["url"],
+    } for r in sample]
+    run_label = ("Отклонённое ИИ на разметку, "
+                 + datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"))
+    added = review_tab.append_batch(svc, EDITOR, rows, run_label)
 
     with SENT_LOG.open("a", encoding="utf-8") as f:
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -221,9 +204,10 @@ def main() -> int:
                                 "cause": r["cause"], "sent_at": ts},
                                ensure_ascii=False) + "\n")
 
-    print(f"\nWrote {len(sample)} rows → tab {TAB!r} (A1:H{end}).")
+    print(f"\nAppended {added} rows → tab {review_tab.REVIEW_TAB!r} "
+          f"(deduped; {len(sample)-added} already present).")
     print(f"Logged sent hashes → {SENT_LOG.name} (won't be re-sampled).")
-    print("Editor fills column E (да/нет) + F (раздел if да); then run "
+    print("Editor fills column D (да/нет) + E (раздел if да); then run "
           "ingest_rejected_labels.py.")
     return 0
 

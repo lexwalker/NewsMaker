@@ -40,6 +40,7 @@ load_dotenv(ROOT / ".env", override=True)
 from google.oauth2 import service_account  # noqa: E402
 from googleapiclient.discovery import build  # noqa: E402
 
+import review_tab  # noqa: E402  (shared review-tab helper, scripts/ on path)
 from news_agent.core.labeling import (  # noqa: E402
     CONFIRMED_NEGATIVE,
     FALSE_REJECT,
@@ -49,9 +50,10 @@ from news_agent.core.labeling import (  # noqa: E402
 
 EDITOR = os.environ.get(
     "EDITOR_SPREADSHEET_ID", "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
-TAB = "Разметка отклонённого (ИИ)"
+TAB = review_tab.REVIEW_TAB
 DECISIONS = DATA / "editor_decisions.json"
 RECALL_MISSES = DATA / "recall_misses.jsonl"
+CONFIRMED_DUPS = DATA / "confirmed_dups.jsonl"
 LABELED = DATA / "labeled_rejects.jsonl"
 
 
@@ -86,36 +88,45 @@ def main() -> int:
 
     svc = _svc()
     rows = svc.spreadsheets().values().get(
-        spreadsheetId=EDITOR, range=f"'{TAB}'!A1:H300",
+        spreadsheetId=EDITOR, range=f"'{TAB}'!A1:G400",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute().get("values", [])
 
     def c(r, i):
         return str(r[i]).strip() if len(r) > i and r[i] is not None else ""
 
+    # Unified schema (A-G): Заголовок|Контекст|Тип|Нужно?|Раздел|url_hash|URL
     ingested = _load_ingested()
     routed: list[tuple[str, dict]] = []
-    fresh_hashes = []
     for r in rows:
-        uh = c(r, 6)
-        if not uh or uh == "url_hash":          # header / instructions / blank
+        uh = c(r, 5)
+        if not uh or uh == "url_hash":          # header / instructions / separator
             continue
-        verdict_cell = c(r, 4)
-        decision = route_reject_label(verdict_cell)
-        row = {"url_hash": uh, "title": c(r, 1), "reason": c(r, 2),
-               "cause": c(r, 3), "section": c(r, 5), "url": c(r, 7)}
-        if decision == "skip":
+        decision = route_reject_label(c(r, 3))
+        if decision == "skip" or uh in ingested:
             continue
-        if uh in ingested:                       # already applied in a prior run
-            continue
+        _typ = c(r, 2)
+        row = {"url_hash": uh, "title": c(r, 0), "reason": c(r, 1),
+               "type": _typ, "section": c(r, 4), "url": c(r, 6),
+               # short cause for the recall-hole breakdown: "отклонил:blacklist"
+               # → "blacklist"; "дубль"/"не новость" → as-is
+               "cause": _typ.split(":", 1)[1] if ":" in _typ else _typ}
+        # A "нет" on a suspected-DUPLICATE (a row the bot would have
+        # published) is a RECENCY confirmation, not a content rejection —
+        # routing it as a negative would teach the classifier to reject
+        # legit launches. Re-tag it so the write step logs it as a dup.
+        if decision == CONFIRMED_NEGATIVE and row["type"].startswith(
+                review_tab.TYPE_DUP):
+            decision = "confirmed_dup"
         routed.append((decision, row))
-        fresh_hashes.append(uh)
 
     s = summarise_labels(routed)
+    n_dup = sum(1 for d, _ in routed if d == "confirmed_dup")
     print(f"=== Ritual ingest — tab {TAB!r} ===")
-    print(f"  new labelled rows: {s['labeled']}  "
+    print(f"  new labelled rows: {s['labeled'] + n_dup}  "
           f"(confirmed-negatives {s['confirmed_negative']}, "
-          f"false-rejects {s['false_reject']})")
+          f"false-rejects/keeps {s['false_reject']}, "
+          f"confirmed-dups {n_dup})")
     if s["false_reject_by_cause"]:
         print("  RECALL HOLES (bot wrongly rejected) by killing heuristic:")
         for cause, n in sorted(s["false_reject_by_cause"].items(),
@@ -143,7 +154,9 @@ def main() -> int:
     added_neg = added_pos = 0
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    added_dup = 0
     with RECALL_MISSES.open("a", encoding="utf-8") as rm, \
+            CONFIRMED_DUPS.open("a", encoding="utf-8") as du, \
             LABELED.open("a", encoding="utf-8") as lab:
         for d, row in routed:
             k = _norm(row["title"])
@@ -155,6 +168,8 @@ def main() -> int:
                                 "decision": "ОТКЛОНИЛ"})
                     added_neg += 1
             elif d == FALSE_REJECT:
+                # editor wants it → recall hole (which heuristic killed /
+                # wrongly diverted it) + a positive precedent
                 rm.write(json.dumps({
                     "ts": ts, "title": row["title"], "cause": row["cause"],
                     "killed_by": row["reason"], "section": row["section"],
@@ -165,6 +180,14 @@ def main() -> int:
                                 "section": row["section"] or "Other news",
                                 "decision": "ОПУБЛИКОВАЛ"})
                     added_pos += 1
+            elif d == "confirmed_dup":
+                # editor confirms a suspected duplicate — a RECENCY fact, not
+                # a content signal; log it (portal/dedup evidence), no base
+                # change so we don't teach the classifier to reject launches
+                du.write(json.dumps({
+                    "ts": ts, "title": row["title"], "reason": row["reason"],
+                    "url": row["url"]}, ensure_ascii=False) + "\n")
+                added_dup += 1
             lab.write(json.dumps({"url_hash": row["url_hash"], "decision": d,
                                   "ts": ts}, ensure_ascii=False) + "\n")
 
@@ -173,6 +196,8 @@ def main() -> int:
                         encoding="utf-8")
     print(f"\n✓ base updated: +{added_neg} negatives, +{added_pos} positives "
           f"(now {len(neg)} neg / {len(pos)} pos; backup written).")
+    print(f"  +{added_dup} confirmed dups → {CONFIRMED_DUPS.name} "
+          f"(recency, NOT content negatives).")
     print(f"  recall holes → {RECALL_MISSES.name}; "
           f"ingested marks → {LABELED.name} (idempotent).")
     print("  vectors re-embed on next judge run.")

@@ -38,7 +38,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
 
+import review_tab  # noqa: E402  (shared review-tab helper, scripts/ on path)
 from news_agent.core.config_loader import load_brand_domains  # noqa: E402
+from news_agent.core.urls import canonicalise, url_hash  # noqa: E402
 
 # Target sheet for the PUSH. The pipeline fetches against SPREADSHEET_ID
 # (curated source list) but publishes clusters into the editor's working
@@ -111,11 +113,6 @@ _LLM_JUNK_RE = re.compile(
     r"форум-вопрос|мнение колумниста|советы по|это реклам",
     re.I,
 )
-REVIEW_TAB = "На проверку (ИИ заподозрил)"
-REVIEW_HEADER = ["Прогон (UTC)", "Заголовок", "Раздел", "Флаг ИИ",
-                 "Обоснование ИИ", "Первоисточник URL", "URL источника"]
-
-
 def _llm_flag(c: dict) -> str:
     """Return 'junk' | 'dup' | '' from the cluster's own llm_reason.
     junk wins over dup (it's the more confident self-rejection)."""
@@ -128,28 +125,26 @@ def _llm_flag(c: dict) -> str:
 
 
 def _divert_to_review(svc, flagged: list[dict], run_human: str) -> None:
-    """Write LLM-flagged clusters to the review tab (newest batch on top,
-    prior batches preserved) so the editor confirms keep/reject instead of
-    finding them in the clean feed. Never touches the main table."""
+    """Send LLM-flagged clusters to the SHARED review tab (the same one
+    sample_rejected uses) so the editor confirms keep/reject in one place,
+    instead of finding them in the clean feed. Never touches the main table."""
     if not flagged:
         return
-    _ensure_tab(svc, REVIEW_TAB)
-    existing = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"'{REVIEW_TAB}'!A2:G3000",
-    ).execute().get("values", [])
-    sep = [f"━━  Прогон от {run_human}: ИИ заподозрил {len(flagged)} сюжетов "
-           f"(проверьте — дубль/не новость)  ━━"] + [""] * 6
-    new_rows = [[
-        run_human, (c.get("canonical_title") or "")[:300],
-        c.get("section", "") or "", _llm_flag(c),
-        (c.get("llm_reason") or "")[:300],
-        c.get("primary_url", "") or "", c.get("canonical_url", "") or "",
-    ] for c in flagged]
-    body = [REVIEW_HEADER, sep] + new_rows + existing
-    svc.spreadsheets().values().update(
-        spreadsheetId=SHEET_ID, range=f"'{REVIEW_TAB}'!A1",
-        valueInputOption="USER_ENTERED", body={"values": body},
-    ).execute()
+    rows = []
+    for c in flagged:
+        f = _llm_flag(c)
+        canon = c.get("canonical_url", "") or ""
+        rows.append({
+            "title": c.get("canonical_title", "") or "",
+            "context": (c.get("llm_reason") or "")[:300],
+            "type": review_tab.TYPE_DUP if f == "dup" else review_tab.TYPE_NOT_NEWS,
+            "url_hash": url_hash(canonicalise(canon)) if canon else "",
+            "url": canon,
+        })
+    label = f"ИИ заподозрил (дубль/не новость), {run_human}"
+    added = review_tab.append_batch(svc, SHEET_ID, rows, label)
+    print(f"  diverted {added} to '{review_tab.REVIEW_TAB}' "
+          f"({len(flagged)-added} already there)")
 
 
 def _is_junk_cluster(c: dict) -> bool:
