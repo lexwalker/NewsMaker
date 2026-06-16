@@ -1839,8 +1839,14 @@ def main(argv: list[str] | None = None) -> int:
     # archive so candidates already published (same source URL / recent
     # exact title) are dropped before they reach the editor's feed.
     if not args.no_published_dedup:
+        # The archive lives ONLY in the editor's spreadsheet (1fQic…), NOT in
+        # this prog's working sheet (SHEET_ID = the 14PTb copy). Reading
+        # SHEET_ID here returned empty (no such tab) → the dedup was silently
+        # dead. Read from EDITOR_SPREADSHEET_ID.
+        _editor_id = os.environ.get(
+            "EDITOR_SPREADSHEET_ID", "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
         PUBLISHED_URLS, PUBLISHED_TITLES = published_archive.load_published_index(
-            svc, SHEET_ID)
+            svc, _editor_id)
         print(f"Published-archive dedup: {len(PUBLISHED_URLS)} source URLs + "
               f"{len(PUBLISHED_TITLES)} recent titles loaded "
               f"(drop candidates already published by the editor).")
