@@ -99,6 +99,59 @@ _STATIC_DOC_URL_HINTS = (
 )
 
 
+# The LLM's own reason sometimes flags a row it nonetheless published —
+# "возможно дубль: X" (a suspected duplicate it still let through) or
+# "…, не новость / это гайд / мнение колумниста / форум-вопрос" (a how-to /
+# opinion it judged isn't news, but a rescue/override published anyway).
+# The editor then sees these in the clean feed → complaints #2 (junk) and
+# #4 (dups). We divert them to a review tab instead of the main table.
+_LLM_DUP_RE = re.compile(r"возможно дуб", re.I)
+_LLM_JUNK_RE = re.compile(
+    r"не новост|не наша тема|это обзор|это гайд|правовой гайд|"
+    r"форум-вопрос|мнение колумниста|советы по|это реклам",
+    re.I,
+)
+REVIEW_TAB = "На проверку (ИИ заподозрил)"
+REVIEW_HEADER = ["Прогон (UTC)", "Заголовок", "Раздел", "Флаг ИИ",
+                 "Обоснование ИИ", "Первоисточник URL", "URL источника"]
+
+
+def _llm_flag(c: dict) -> str:
+    """Return 'junk' | 'dup' | '' from the cluster's own llm_reason.
+    junk wins over dup (it's the more confident self-rejection)."""
+    reason = c.get("llm_reason") or ""
+    if _LLM_JUNK_RE.search(reason):
+        return "junk"
+    if _LLM_DUP_RE.search(reason):
+        return "dup"
+    return ""
+
+
+def _divert_to_review(svc, flagged: list[dict], run_human: str) -> None:
+    """Write LLM-flagged clusters to the review tab (newest batch on top,
+    prior batches preserved) so the editor confirms keep/reject instead of
+    finding them in the clean feed. Never touches the main table."""
+    if not flagged:
+        return
+    _ensure_tab(svc, REVIEW_TAB)
+    existing = svc.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID, range=f"'{REVIEW_TAB}'!A2:G3000",
+    ).execute().get("values", [])
+    sep = [f"━━  Прогон от {run_human}: ИИ заподозрил {len(flagged)} сюжетов "
+           f"(проверьте — дубль/не новость)  ━━"] + [""] * 6
+    new_rows = [[
+        run_human, (c.get("canonical_title") or "")[:300],
+        c.get("section", "") or "", _llm_flag(c),
+        (c.get("llm_reason") or "")[:300],
+        c.get("primary_url", "") or "", c.get("canonical_url", "") or "",
+    ] for c in flagged]
+    body = [REVIEW_HEADER, sep] + new_rows + existing
+    svc.spreadsheets().values().update(
+        spreadsheetId=SHEET_ID, range=f"'{REVIEW_TAB}'!A1",
+        valueInputOption="USER_ENTERED", body={"values": body},
+    ).execute()
+
+
 def _is_junk_cluster(c: dict) -> bool:
     title = c["canonical_title"].strip()
     text = re.sub(r"\s*EN:\s*", "", title)
@@ -800,8 +853,22 @@ def main() -> int:
         clean.append(c)
     print(f"After junk filter: {len(clean)} ({junk} junk dropped)")
 
+    # Divert rows the LLM itself flagged (possible-dup / not-news) AWAY from
+    # the clean feed — they go to the review tab for the editor to confirm,
+    # not into the main table (editor feedback, jun-2026).
+    flagged = [c for c in clean if _llm_flag(c)]
+    clean = [c for c in clean if not _llm_flag(c)]
+    if flagged:
+        n_dup = sum(1 for c in flagged if _llm_flag(c) == "dup")
+        n_junk = len(flagged) - n_dup
+        print(f"LLM-flagged → diverted to '{REVIEW_TAB}': {len(flagged)} "
+              f"({n_dup} possible-dup, {n_junk} not-news)")
+
     svc = _svc()
     sheet_id, was_created = _ensure_tab(svc, NEWS_TAB)
+    _divert_to_review(
+        svc, flagged,
+        datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"))
 
     # First-time setup — write header + apply formatting
     if was_created:
