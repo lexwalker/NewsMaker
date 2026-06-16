@@ -102,6 +102,8 @@ from news_agent.core.cache_version import (  # noqa: E402
     cache_is_authoritative,
     compute_classifier_version,
 )
+from news_agent.core.published_dedup import already_published  # noqa: E402
+import published_archive  # noqa: E402  (scripts/ on path; reads daily archive)
 from news_agent.core.launch_stages import (  # noqa: E402
     detect_launch_stages,
     extract_brand_model,
@@ -189,6 +191,10 @@ ARTICLES_TAB_BASE = "ТЕСТ статьи"
 # final-URL deduplication set.
 WHITELIST: set[str] = set()
 SEEN_FINAL_URLS: set[str] = set()
+# Editor's published archive (loaded fresh each run in main): url_keys of
+# every published source + normalised titles of recently-published items.
+PUBLISHED_URLS: set[str] = set()
+PUBLISHED_TITLES: set[str] = set()
 BLACKLIST = None  # type: ignore[assignment]  # set to a Blacklist instance in main()
 BRANDS: list = []  # type: ignore[type-arg]  # BrandDomainEntry list from config
 DEDUP_STORE = None  # type: ignore[assignment]  # DedupStore instance in main()
@@ -1473,6 +1479,18 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         return True
     SEEN_FINAL_URLS.add(canon)
 
+    # Already published by the editor? Deterministic dedup against the daily
+    # "Опубликованные (все)" archive — exact source URL or exact recent
+    # title. Checked BEFORE the cache so it re-evaluates against the fresh
+    # archive every run (not persisted). Catches the same-source / same-
+    # headline dups; cross-source paraphrases still rely on the LLM flag.
+    pub_reason = already_published(
+        article.url, article.title, PUBLISHED_URLS, PUBLISHED_TITLES)
+    if pub_reason:
+        row.article_reasons = f"published-archive-{pub_reason}"
+        row.verdict = "Отклонить (уже опубликовано редактором)"
+        return True
+
     # SQLite persistent cache — have we already processed this URL?
     # We only honour the cache when it carries a real LLM verdict OR a
     # hard-reject heuristic verdict (no LLM ever needed for those). A
@@ -1689,6 +1707,12 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
              "sites are skipped.",
     )
     p.add_argument(
+        "--no-published-dedup", action="store_true",
+        help="Disable the deterministic dedup against the editor's daily "
+             "'Опубликованные (все)' archive (exact URL / recent exact "
+             "title). On by default.",
+    )
+    p.add_argument(
         "--no-llm", action="store_true",
         help="Skip the LLM pass entirely — heuristic-only prog. Used when "
              "the API balance is exhausted or for offline QA. Articles still "
@@ -1742,6 +1766,7 @@ def _append_run_log(
 # ------------------------------------------------------------- main
 def main(argv: list[str] | None = None) -> int:
     global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
+    global PUBLISHED_URLS, PUBLISHED_TITLES
     global PRIMARY_CUES, PW_FETCHER, PW_ALLOWLIST, IMP_FETCHER, IMP_ALLOWLIST
     global RUN_WINDOW
     args = _parse_cli(argv)
@@ -1809,6 +1834,17 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     svc = sheets_client()
+
+    # Deterministic anti-dup: load the editor's daily-refreshed published
+    # archive so candidates already published (same source URL / recent
+    # exact title) are dropped before they reach the editor's feed.
+    if not args.no_published_dedup:
+        PUBLISHED_URLS, PUBLISHED_TITLES = published_archive.load_published_index(
+            svc, SHEET_ID)
+        print(f"Published-archive dedup: {len(PUBLISHED_URLS)} source URLs + "
+              f"{len(PUBLISHED_TITLES)} recent titles loaded "
+              f"(drop candidates already published by the editor).")
+
     urls = TELEGRAM_SEED_URLS + read_active_sources(svc, NUM_SOURCES)
     if not urls:
         print("No active sources found in the sheet.", file=sys.stderr)
@@ -1942,10 +1978,13 @@ def main(argv: list[str] | None = None) -> int:
             if not row.article_url:
                 continue
             # Don't persist rows that ended in a fetch/extract error — we
-            # want the next run to retry them.
+            # want the next run to retry them. Also don't persist the
+            # published-archive verdict — it must be re-checked against the
+            # FRESH daily archive each run, not frozen in the cache.
             if row.verdict in {
                 "Отклонить (ошибка загрузки)",
                 "Отклонить (не удалось извлечь)",
+                "Отклонить (уже опубликовано редактором)",
             }:
                 continue
             canon_u = canonicalise(row.article_url)

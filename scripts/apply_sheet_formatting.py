@@ -92,6 +92,7 @@ RULES: list[tuple[str, dict]] = [
     (f'=$%s2="Отклонить (не удалось извлечь)"' % VERDICT_COLUMN_LETTER, RED),
     (f'=$%s2="Отклонить (дубль финального URL)"' % VERDICT_COLUMN_LETTER, BLUE),
     (f'=$%s2="Отклонить (обработан ранее)"' % VERDICT_COLUMN_LETTER, BLUE),
+    (f'=$%s2="Отклонить (уже опубликовано редактором)"' % VERDICT_COLUMN_LETTER, BLUE),
     # Back-compat for older v1/v2 tabs:
     (f'=$%s2="Отправить в LLM"' % VERDICT_COLUMN_LETTER, GREEN),
     (f'=$%s2="Отклонить (не статья)"' % VERDICT_COLUMN_LETTER, GREY),
