@@ -9,11 +9,14 @@ decisions. Editor-labelled rejects feed three things — confirmed negatives
 killed live content), and an honest recall number.
 
 What it does:
-  * pulls bot-rejected rows from SQLite within a window (CONTENT rejects
-    only — S3 heuristic + S4 LLM; skips dups/stale/fetch-errors, which are
-    recency/tech, not taste);
-  * stratified sample across reject CAUSES (blacklist / off_topic /
-    not_article / llm) so each is represented, capped per cause;
+  * pulls bot-rejected rows from SQLite within a window, kept ONLY if the
+    title is AUTO-related (brand / auto-marker / transport-civic) AND the
+    reject cause carries editorial signal (llm / blacklist / off_topic).
+    This is the fix for the random-sample problem: it was full of 100%-junk
+    (sport, finance, politics, parts-ads) the editor would never want —
+    labelling those teaches nothing. We want auto-BORDERLINE cases, where
+    false-rejects and harmful blacklist phrases actually hide.
+  * stratified sample across the kept causes, capped per cause;
   * excludes rows already sent in a prior ritual (data/labeling_sent.jsonl);
   * writes them to the "Разметка отклонённого (ИИ)" tab with the bot's
     reason as context and an empty "Нужно?" column for the editor.
@@ -50,12 +53,48 @@ load_dotenv(ROOT / ".env", override=True)
 from google.oauth2 import service_account  # noqa: E402
 from googleapiclient.discovery import build  # noqa: E402
 
-from news_agent.core.labeling import stratified_sample  # noqa: E402
-from news_agent.core.reject_stage import (  # noqa: E402
-    S3_HEURISTIC,
-    S4_LLM,
-    classify_outcome,
+from news_agent.core.brand_canonical import canonicalize_brand  # noqa: E402
+from news_agent.core.heuristic_relevance import (  # noqa: E402
+    _AUTO_STRONG_MARKERS,
+    is_ru_transport_civic,
 )
+from news_agent.core.labeling import stratified_sample  # noqa: E402
+from news_agent.core.reject_stage import classify_outcome  # noqa: E402
+
+# Only these reject CAUSES carry editorial signal worth the editor's time.
+# We DROP not_article (parts ads / navigation: "Купить Колесо литое"),
+# dzen_listicle / multi_news / supplier (format junk) — labelling those
+# teaches nothing.
+_BORDERLINE_CAUSES = {"llm", "blacklist", "off_topic"}
+
+
+# Hard NEG gate: even if a brand/marker spuriously matched (e.g. "Волга"
+# the river, "модельное предприятие"), these categories are never auto
+# news — drop them. Covers exactly what the editor flagged: military,
+# sport, obvious off-topic.
+_NON_AUTO_NEG = (
+    "военн", "мобилиз", "призывник", "дрон", "бпла", " всу", " пво",
+    "abrams", "танк ", "ракет", "снаряд",          # military
+    "футбол", "сборн", "хоккеист", "чемпионат мира по",  # sport (not motorsport)
+    "косметик", "диетолог", "сериал",              # lifestyle junk
+)
+
+
+def _auto_signal(title: str) -> bool:
+    """True if the title is AUTO-related — a brand, an auto-type marker, or
+    transport-civic (ПДД/ОСАГО/каршеринг) — AND not in an obvious non-auto
+    category. The point of the sample is auto-BORDERLINE cases, not the
+    100%-junk (sport/finance/politics/diet/military) the editor flagged."""
+    t = (title or "").lower()
+    if any(neg in t for neg in _NON_AUTO_NEG):
+        return False
+    if canonicalize_brand(title):
+        return True
+    if any(m in t for m in _AUTO_STRONG_MARKERS):
+        return True
+    if is_ru_transport_civic(title):
+        return True
+    return False
 
 EDITOR = os.environ.get(
     "EDITOR_SPREADSHEET_ID", "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
@@ -108,8 +147,13 @@ def load_rejects(days: int) -> list[dict]:
         except Exception:
             continue
         outcome = classify_outcome(d.get("verdict", ""))
-        # CONTENT rejects only — heuristic kills + LLM rejects
-        if outcome.stage not in (S3_HEURISTIC, S4_LLM):
+        # Borderline AUTO rejects only: a cause that carries editorial
+        # signal AND an auto-related title. This is the whole fix — the
+        # random sample was dominated by 100%-junk (sport/finance/politics/
+        # parts-ads) where the editor's label teaches nothing.
+        if outcome.cause not in _BORDERLINE_CAUSES:
+            continue
+        if not _auto_signal(title or ""):
             continue
         reason = d.get("llm_reason") or d.get("article_reasons") or ""
         out.append({
