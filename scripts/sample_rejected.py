@@ -161,7 +161,8 @@ def load_rejects(days: int) -> list[dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--per-cause", type=int, default=8)
+    ap.add_argument("--total", type=int, default=50,
+                    help="target sample size (round-robin across causes)")
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--seed", type=int, default=20260614)
     args = ap.parse_args()
@@ -173,8 +174,9 @@ def main() -> int:
     sent = _load_sent()
     rng = random.Random(args.seed)
     sample = stratified_sample(
-        rejects, key_fn=lambda r: r["cause"], per_bucket=args.per_cause,
-        shuffle=rng.shuffle, exclude=lambda r: r["url_hash"] in sent)
+        rejects, key_fn=lambda r: r["cause"], per_bucket=args.total,
+        shuffle=rng.shuffle, exclude=lambda r: r["url_hash"] in sent,
+        total=args.total)
     if not sample:
         print(f"All {len(rejects)} window-rejects already labelled — nothing new.")
         return 0

@@ -49,22 +49,41 @@ def stratified_sample(
     per_bucket: int,
     shuffle: Callable[[list], None],
     exclude: Callable[[Any], bool] | None = None,
+    total: int | None = None,
 ) -> list[Any]:
     """Sample up to ``per_bucket`` items from each bucket (keyed by
     ``key_fn``), so every reject CAUSE (blacklist / off_topic / not_article
     / llm …) is represented — not just the largest. ``shuffle`` is injected
     (seeded in the script) so the pick is reproducible and tests are
     deterministic. ``exclude`` drops already-labelled rows.
+
+    With ``total`` set, take items round-robin across buckets up to ``total``
+    — small buckets are exhausted first, the rest filled from larger ones,
+    so we hit the target count while keeping cause diversity.
     """
     buckets: dict[str, list] = defaultdict(list)
     for it in items:
         if exclude and exclude(it):
             continue
         buckets[key_fn(it)].append(it)
-    out: list = []
-    for _key, group in sorted(buckets.items()):
+    capped = {}
+    for key, group in buckets.items():
         shuffle(group)
-        out.extend(group[:per_bucket])
+        capped[key] = group[:per_bucket]
+    if total is None:
+        out: list = []
+        for _key in sorted(capped):
+            out.extend(capped[_key])
+        return out
+    # round-robin one per bucket per round until we reach `total`
+    out = []
+    keys = sorted(capped)
+    i = 0
+    while len(out) < total and any(i < len(capped[k]) for k in keys):
+        for k in keys:
+            if i < len(capped[k]) and len(out) < total:
+                out.append(capped[k][i])
+        i += 1
     return out
 
 

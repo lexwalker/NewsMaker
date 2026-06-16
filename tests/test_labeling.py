@@ -46,6 +46,32 @@ def test_stratified_caps_per_bucket() -> None:
     assert len(out) == 11
 
 
+def test_stratified_total_round_robin() -> None:
+    # small buckets exhausted, remainder filled from the big one, capped at total
+    items = (
+        [{"cause": "llm", "id": i} for i in range(40)]
+        + [{"cause": "off_topic", "id": i} for i in range(5)]
+        + [{"cause": "blacklist", "id": i} for i in range(3)]
+    )
+    out = stratified_sample(items, lambda x: x["cause"], per_bucket=50,
+                            shuffle=_no_shuffle, total=20)
+    assert len(out) == 20
+    by = {}
+    for it in out:
+        by[it["cause"]] = by.get(it["cause"], 0) + 1
+    assert by["off_topic"] == 5      # small bucket fully taken
+    assert by["blacklist"] == 3      # small bucket fully taken
+    assert by["llm"] == 12           # remainder from the big bucket
+
+
+def test_stratified_total_caps_when_scarce() -> None:
+    # fewer items than total → return all
+    items = [{"cause": "llm", "id": i} for i in range(7)]
+    out = stratified_sample(items, lambda x: x["cause"], per_bucket=50,
+                            shuffle=_no_shuffle, total=50)
+    assert len(out) == 7
+
+
 def test_stratified_excludes_already_labeled() -> None:
     items = [{"cause": "llm", "id": i} for i in range(5)]
     seen = {1, 3}
