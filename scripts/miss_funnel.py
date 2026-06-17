@@ -2,7 +2,7 @@
 find WHERE it died (peer-review §3, Week1-C).
 
 For every story the editor published in a window, decide its death stage:
-  S1     source not in our 338-source list
+  S1     source not in our source list (~290 active domains)
   S2     source present, we never collected it
   S3     collected, a heuristic killed it   (with sub-cause + phrase)
   S4     collected, the LLM rejected it
@@ -11,7 +11,7 @@ For every story the editor published in a window, decide its death stage:
 Inputs (read-only):
   * editor publications  — 'Опубликованные (все)' tab (title, date, Outer Link)
   * our collected set    — data/news_agent.sqlite (every scored article)
-  * the 338 sources      — 'Источники (для РУ)' tab
+  * the source list      — 'Источники (для РУ)' tab (~290 active domains)
 
 Usage:
   python scripts/miss_funnel.py                 # last 14 days
@@ -46,6 +46,12 @@ import sqlite3  # noqa: E402
 from google.oauth2 import service_account  # noqa: E402
 from googleapiclient.discovery import build  # noqa: E402
 
+import miss_table_tab  # noqa: E402  (scripts/ is on sys.path[0])
+
+from news_agent.core.miss_analysis import (  # noqa: E402
+    build_sheet_rows,
+    domains_to_analyse,
+)
 from news_agent.core.miss_funnel import (  # noqa: E402
     ACCEPTED,
     S1,
@@ -57,6 +63,7 @@ from news_agent.core.miss_funnel import (  # noqa: E402
     build_funnel,
     summarise,
 )
+from news_agent.core.sheet_dates import parse_sheet_date  # noqa: E402
 from news_agent.core.urls import domain_of, normalise_source_entry  # noqa: E402
 
 EDITOR = os.environ.get(
@@ -68,7 +75,7 @@ SQLITE_PATH = DATA / "news_agent.sqlite"
 
 # Order + human labels for the report.
 STAGE_LABELS = [
-    (S1, "source not in our 338 list"),
+    (S1, "source not in our source list"),
     (S2, "source present, never collected"),
     (S3, "collected, killed by a heuristic"),
     (S4, "collected, rejected by the LLM"),
@@ -81,24 +88,6 @@ def _svc():
     creds = service_account.Credentials.from_service_account_file(
         str(sa), scopes=["https://www.googleapis.com/auth/spreadsheets"])
     return build("sheets", "v4", credentials=creds)
-
-
-def _parse_date(s: str) -> datetime | None:
-    """Parse the editor's 'Начало активности' (e.g. '2026-06-04 17:50')."""
-    s = (s or "").strip()
-    if not s:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(s[: len(fmt) + 2].strip(), fmt).replace(
-                tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    # ISO with T
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def load_source_domains(svc) -> set[str]:
@@ -141,15 +130,17 @@ def load_editor_pubs(svc, start: datetime, end: datetime) -> tuple[list[EditorPu
         section = cell(0)
         title_en = cell(3)
         title_ru = cell(4)
-        date_s = cell(5)
+        raw_date = r[5] if len(r) > 5 else None
         url = cell(11)
         if not (title_en or title_ru):
             continue
         scanned += 1
-        dt = _parse_date(date_s)
+        dt = parse_sheet_date(raw_date)
         if dt is None or not (start <= dt <= end):
             continue
-        pubs.append(EditorPub(title_en, title_ru, url, date_s, section))
+        # Store a readable ISO date (the raw cell may be an Excel serial).
+        pubs.append(EditorPub(title_en, title_ru, url,
+                              dt.date().isoformat(), section))
     return pubs, scanned
 
 
@@ -185,6 +176,90 @@ def _pct(n: int, total: int) -> str:
     return f"{100*n/total:4.1f}%" if total else "  0.0%"
 
 
+_AI_TOOL = {
+    "name": "record_recs",
+    "description": "Записать рекомендацию по каждому источнику.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "n": {"type": "integer"},
+                        "recommendation": {"type": "string"},
+                    },
+                    "required": ["n", "recommendation"],
+                },
+            },
+        },
+        "required": ["items"],
+    },
+}
+
+
+def ai_source_recs(groups: list, model: str) -> dict:
+    """One batched LLM call: a short Russian recommendation per S1/S2 source.
+    Returns {(stage, domain): rec}. GRACEFUL — returns {} on any failure, so
+    the table always writes (with deterministic recs as the fallback)."""
+    if not groups:
+        return {}
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        print("  (AI-рекомендации пропущены: нет ANTHROPIC_API_KEY)")
+        return {}
+    lines = []
+    for i, g in enumerate(groups):
+        stage_h = ("источника НЕТ в нашем списке" if g["stage"] == S1
+                   else "источник ЕСТЬ, но статью не собрали")
+        lines.append(f"{i}. [{g['stage']}: {stage_h}] домен={g['domain']} "
+                     f"пропусков={g['count']} примеры: {' | '.join(g['titles'])}")
+    prompt = (
+        "Ты помогаешь команде авто-новостей закрыть пробелы в покрытии. Ниже "
+        "источники, из которых редактор опубликовал новости, а наш бот их НЕ "
+        "показал. Для КАЖДОГО пункта дай короткую (<=140 симв.) рекомендацию "
+        "на русском:\n"
+        "- S1 (источника НЕТ в списке): стоит ли ДОБАВИТЬ домен и почему "
+        "(первоисточник OEM/регулятор/крупный авто-портал → да; "
+        "агрегатор/случайный/не про авто → скорее нет).\n"
+        "- S2 (источник УЖЕ в списке, но статью не собрали): НЕ предлагай "
+        "«добавить» — он уже есть. Назови вероятную ПРИЧИНУ, почему не "
+        "собрали (нет RSS, только пресс-релизы, JS-рендер, пейволл, "
+        "пагинация) и пометь ГИПОТЕЗА. Если домен НЕ про авто "
+        "(биржа/финансы/общие новости) — отметь, что его стоит убрать.\n"
+        "Если не уверен — честно напиши «не уверен». Не выдумывай факты.\n\n"
+        + "\n".join(lines)
+    )
+    try:
+        from anthropic import Anthropic
+        client = Anthropic(api_key=key)
+        # ~80 tokens per item (n + a 140-char Russian line); size the budget
+        # to the group count so the tool output is never truncated.
+        max_tokens = min(8000, 600 + 90 * len(groups))
+        resp = client.messages.create(
+            model=model, max_tokens=max_tokens, tools=[_AI_TOOL],
+            tool_choice={"type": "tool", "name": "record_recs"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        data: dict = {}
+        for block in resp.content:
+            if getattr(block, "type", None) == "tool_use":
+                data = getattr(block, "input", {}) or {}
+                break
+        out: dict = {}
+        for item in data.get("items", []):
+            n = item.get("n")
+            rec = (item.get("recommendation") or "").strip()
+            if isinstance(n, int) and 0 <= n < len(groups) and rec:
+                g = groups[n]
+                out[(g["stage"], g["domain"])] = rec[:200]
+        return out
+    except Exception as e:  # noqa: BLE001 — AI is optional, never fatal
+        print(f"  (AI-рекомендации пропущены: {type(e).__name__})")
+        return {}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Recall miss-funnel (diagnosis)")
     ap.add_argument("--days", type=int, default=14,
@@ -193,6 +268,10 @@ def main() -> int:
                     help="fuzzy title-match cutoff 0-100 (default 85)")
     ap.add_argument("--dump", action="store_true",
                     help="write the classified rows to data/miss_funnel_<end>.jsonl")
+    ap.add_argument("--to-sheet", action="store_true",
+                    help="write the misses to the 'Непокрытые (анализ)' tab")
+    ap.add_argument("--ai", action="store_true",
+                    help="with --to-sheet: add per-source AI recommendations")
     ap.add_argument("--examples", type=int, default=4,
                     help="examples to print per stage (default 4)")
     args = ap.parse_args()
@@ -331,6 +410,26 @@ def main() -> int:
                     "matched_title": r.matched_title[:200],
                 }, ensure_ascii=False) + "\n")
         print(f"\nRows written → {out_path.name}")
+
+    if args.to_sheet:
+        recs: dict = {}
+        if args.ai:
+            # Analyse the highest-miss-count domains (the long tail of
+            # one-off domains gets the deterministic recommendation).
+            AI_TOP = 30
+            all_groups = domains_to_analyse(rows)
+            groups = all_groups[:AI_TOP]
+            print(f"\nAI-анализ источников: топ-{len(groups)} из "
+                  f"{len(all_groups)} доменов S1/S2 (остальные — "
+                  f"детерминированная рекомендация)…")
+            model = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
+            recs = ai_source_recs(groups, model)
+            print(f"  получено рекомендаций: {len(recs)}")
+        data_rows = build_sheet_rows(rows, recs)
+        window_label = f"{start.date()} .. {end.date()} ({args.days}д)"
+        n = miss_table_tab.write_snapshot(svc, EDITOR, data_rows, window_label)
+        print(f"\n→ Лист «{miss_table_tab.TAB}»: записано {n} непокрытых "
+              f"публикаций{' (+ИИ-рекомендации)' if recs else ''}.")
     return 0
 
 
