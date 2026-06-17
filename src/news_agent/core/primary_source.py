@@ -99,10 +99,12 @@ _JUNK_URL_FRAGMENTS = (
     # Contact / about pages
     "/contact", "/contacts", "/contact-us", "/contact.html",
     "/feedback", "/support",
-    # Tracking redirectors
+    # Tracking redirectors / click-counters (liveinternet wraps the target
+    # in /click with NO query string, so the "?"-suffixed forms miss it)
     "doubleclick.net", "googleadservices", "google.com/url?",
-    "googletagmanager.com", "ga4-",
-    "/redir?", "/redirect?", "/click?", "/r.php?",
+    "googletagmanager.com", "ga4-", "liveinternet.ru",
+    "/redir?", "/redirect?", "/click?", "/click/", "liveinternet.ru/click",
+    "/r.php?",
     # Generic search results pages
     "/search?", "/search/", "?q=",
 )

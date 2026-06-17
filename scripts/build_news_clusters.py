@@ -164,6 +164,18 @@ _STOPWORDS = frozenset({
     "announce", "announces", "announced", "announcement",
     "introduce", "introduces", "introduced",
     "make", "makes", "made", "making",
+    # generic display / framing words — NOT distinguishing, must not drive a
+    # merge on their own (jun-2026: Exeed EX6 reveal merged with the unrelated
+    # Exeed RX because both shared "official images suv shown design")
+    "official", "officially", "image", "images", "photo", "photos",
+    "picture", "pictures", "shown", "show", "shows", "showed", "design",
+    "designs", "video", "videos", "exclusive", "details", "detailed",
+    # body-types — generic, not a model identifier
+    "suv", "crossover", "coupe", "sedan", "hatchback", "wagon", "minivan",
+    "mpv", "liftback", "fastback", "roadster", "convertible",
+    "официальные", "официальный", "официально", "фото", "изображения",
+    "изображениях", "изображение", "дизайн", "видео", "эксклюзив",
+    "кроссовер", "седан", "купе", "универсал", "хэтчбек", "минивэн",
     # russian
     "и", "в", "на", "с", "по", "к", "у", "о", "об", "за", "из", "до",
     "от", "не", "под", "над", "при", "без", "для", "про", "через",
@@ -416,6 +428,15 @@ def cluster_articles(
 
     norms = [a["normalised"] for a in articles]
     primary_urls = [a.get("primary_url", "") for a in articles]
+    # Confidence of each detected primary. A shared primary only force-merges
+    # (primary_match) when it is a TRUSTED source — a real press release is
+    # "high". Medium/low primaries are often junk widgets (a liveinternet
+    # click-tracker, a "sell your car" form) that unrelated same-domain
+    # articles all carry; force-merging on those silently collapsed unrelated
+    # stories (jun-2026 review: Genesis concept + Avtodor M-11 + an auto-loan
+    # stat were glued because all three 5koleso pages shared liveinternet.ru/
+    # click). Empty conf (unit-test fixtures) is treated as non-junk.
+    primary_confs = [(a.get("primary_conf") or "").strip().lower() for a in articles]
     # brand+model key per article: prefer the upstream Phase-1 column
     # (col AD), but it is empty for anything without a launch-stage
     # keyword (spy shots, "appears in images"). Fall back to the URL-slug
@@ -448,18 +469,26 @@ def cluster_articles(
         ti = norms[i]
         ai_pub = articles[i]["pub_dt"]
         pi = primary_urls[i].strip().lower() if primary_urls[i] else ""
+        ci = primary_confs[i]
         bmi = brand_models[i]
         eki = event_keys[i]
         for j in range(i + 1, n):
             tj = norms[j]
             pj = primary_urls[j].strip().lower() if primary_urls[j] else ""
+            cj = primary_confs[j]
             bmj = brand_models[j]
             ekj = event_keys[j]
 
             # Cross-language safety net: same primary URL = same story.
             # Catches cases where RU and EN headlines have <5 token overlap
-            # (different verbs/nouns) but cite the same press release.
-            primary_match = bool(pi and pj and pi == pj)
+            # (different verbs/nouns) but cite the same press release. ONLY
+            # trust it for a non-junk primary: a medium/low-confidence
+            # primary is often a shared widget/tracker (liveinternet click,
+            # "sell your car" form) carried by unrelated same-domain articles.
+            primary_match = bool(
+                pi and pj and pi == pj
+                and ci not in ("medium", "low") and cj not in ("medium", "low")
+            )
 
             # Same extracted (brand, model) = same subject even when the
             # two headlines word it completely differently. Real editor

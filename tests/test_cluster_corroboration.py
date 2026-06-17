@@ -69,3 +69,37 @@ def test_same_brand_model_pair_merges() -> None:
     x = _a("Geely Emgrand i-HEV launched in China", bm="geely emgrand")
     y = _a("Sales of the Geely Emgrand hybrid sedan started", bm="geely emgrand")
     assert C(x, y)
+
+
+# --- lexical primary_match must not force-merge on junk medium-conf primaries
+from datetime import datetime, timezone  # noqa: E402
+
+_TS = datetime(2026, 6, 17, 12, 0, tzinfo=timezone.utc)
+
+
+def test_primary_match_ignores_junk_medium_conf_primary() -> None:
+    """Two UNRELATED no-brand articles that share a medium-conf junk primary
+    (a liveinternet click-tracker) must NOT force-merge (the v2 root cause)."""
+    bnc._BRANDS_LOWER = ["genesis"]
+    a = {"normalised": "avtodor denies traffic jams on m-11 neva highway blames drivers",
+         "pub_dt": _TS, "primary_url": "https://www.liveinternet.ru/click",
+         "primary_conf": "medium"}
+    b = {"normalised": "genesis unveiled magma gt3 concept",
+         "pub_dt": _TS, "primary_url": "https://www.liveinternet.ru/click",
+         "primary_conf": "medium"}
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 2   # stay separate — was 1 (over-merged) before fix
+
+
+def test_primary_match_high_conf_still_merges() -> None:
+    """A genuinely shared HIGH-conf primary (a real press release) still
+    force-merges across differently-worded headlines — the feature is kept."""
+    bnc._BRANDS_LOWER = []
+    a = {"normalised": "brand x launched new model in china today",
+         "pub_dt": _TS, "primary_url": "https://brand.example/press/1",
+         "primary_conf": "high"}
+    b = {"normalised": "completely different wording for the same announcement",
+         "pub_dt": _TS, "primary_url": "https://brand.example/press/1",
+         "primary_conf": "high"}
+    groups = bnc.cluster_articles([a, b])
+    assert len(groups) == 1
