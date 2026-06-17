@@ -6,6 +6,7 @@ from news_agent.core.primary_source import (
     detect_earliest_in_corpus,
     detect_primary_source,
     normalise_title,
+    _is_junk_link,
 )
 
 BRANDS = [
@@ -416,3 +417,51 @@ def test_earliest_in_corpus_no_match_returns_none() -> None:
         press_release_hosts=[],
     )
     assert res is None
+
+
+# --- jun-2026: share-widget aggregators + bare social profiles (prog v2 bugs)
+
+def test_is_junk_link_share_widgets_and_profiles() -> None:
+    # addtoany share wrapper (Mazda CX-90 case) — never a primary
+    assert _is_junk_link(
+        "https://www.addtoany.com/add_to/facebook?linkurl=https%3A%2F%2Ftopclassactions.com%2Fx")
+    # bare social profiles (Rivian case: author's Twitter profile)
+    assert _is_junk_link("https://twitter.com/MicheleTheodore")
+    assert _is_junk_link("https://x.com/SomeJournalist")
+    assert _is_junk_link("https://www.facebook.com/SomePage")
+    # a genuine post/status is NOT junk
+    assert not _is_junk_link("https://twitter.com/Rivian/status/123456789")
+    assert not _is_junk_link("https://www.facebook.com/Rivian/posts/123")
+    # t.me is a legitimate source here — must NOT be rejected by this filter
+    assert not _is_junk_link("https://t.me/autonews_channel/4567")
+    # a normal article passes
+    assert not _is_junk_link("https://www.cnbc.com/2026/06/16/rivian-layoffs.html")
+
+
+def test_addtoany_wrapper_falls_back_to_real_article() -> None:
+    """Mazda CX-90 case: addtoany share wrapper as the only outbound →
+    primary must fall back to the real fetched article, not the wrapper."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://topclassactions.com/lawsuit-settlements/investigations/mazda-cx-90-steering/",
+        body="Investigation into Mazda CX-90 steering. According to the filing...",
+        title="Mazda CX-90 class action investigation",
+        outbound_links=[
+            "https://www.addtoany.com/add_to/facebook?linkurl=https%3A%2F%2Ftopclassactions.com%2Fx",
+        ],
+        brands=BRANDS, cues=CUES,
+    )
+    assert "addtoany.com" not in url
+    assert url == "https://topclassactions.com/lawsuit-settlements/investigations/mazda-cx-90-steering/"
+
+
+def test_bare_twitter_profile_falls_back_to_real_article() -> None:
+    """Rivian case: a bare Twitter profile must never win over the article."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://www.cnbc.com/2026/06/16/rivian-layoffs.html",
+        body="Rivian cuts jobs. According to the report, the company...",
+        title="Rivian cuts hundreds of jobs",
+        outbound_links=["https://twitter.com/MicheleTheodore"],
+        brands=BRANDS, cues=CUES,
+    )
+    assert "twitter.com" not in url
+    assert url == "https://www.cnbc.com/2026/06/16/rivian-layoffs.html"

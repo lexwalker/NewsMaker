@@ -81,13 +81,15 @@ def _normalise_domain(d: str) -> str:
 # Outbound links that must NEVER be picked as a primary source. The full
 # string is checked case-insensitive against URL.
 _JUNK_URL_FRAGMENTS = (
-    # Share buttons
+    # Share buttons + share-widget aggregators (addtoany wraps the real
+    # article in a ?linkurl= param — never a usable primary itself)
     "facebook.com/sharer/", "facebook.com/share/",
     "twitter.com/intent/", "twitter.com/share",
     "t.me/share", "vk.com/share",
     "linkedin.com/share", "pinterest.com/pin/create",
     "wa.me/", "api.whatsapp.com/send",
     "ok.ru/share", "reddit.com/submit",
+    "addtoany.com", "/add_to/", "sharethis.com", "addthis.com",
     # Print / email-this widgets
     "/print/", "?print=", "/print.html",
     "mailto:", "/email-this", "/sendtofriend",
@@ -106,9 +108,19 @@ _JUNK_URL_FRAGMENTS = (
 )
 
 
+# Bare profiles/roots on these are not articles (e.g. twitter.com/SomeJourno);
+# a genuine post carries /status/, /posts/, /permalink or /p/. t.me is NOT
+# here — it is a legitimate source in this project.
+_SOCIAL_PROFILE_HOSTS = {
+    "twitter.com", "x.com", "facebook.com", "instagram.com", "threads.net",
+}
+_SOCIAL_POST_MARKERS = ("/status/", "/posts/", "/permalink", "/p/")
+
+
 def _is_junk_link(url: str) -> bool:
-    """Reject share buttons, login pages, tracking redirectors, root-only
-    URLs and similar non-source links."""
+    """Reject share buttons / share-widget aggregators, bare social-network
+    profiles, login pages, tracking redirectors, root-only URLs and similar
+    non-source links."""
     if not url:
         return True
     u = url.lower()
@@ -121,6 +133,11 @@ def _is_junk_link(url: str) -> bool:
     path = (parsed.path or "").rstrip("/")
     if not path or path == "/":
         # URL has no meaningful path
+        return True
+    # Reject bare social-network profiles (twitter.com/<handle> with no post
+    # marker) — they are not articles and must never be a primary source.
+    if (_normalise_domain(parsed.netloc) in _SOCIAL_PROFILE_HOSTS
+            and not any(m in u for m in _SOCIAL_POST_MARKERS)):
         return True
     return False
 
