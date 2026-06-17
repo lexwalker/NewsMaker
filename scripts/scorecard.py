@@ -29,9 +29,14 @@ from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 DATA = ROOT / "data"
 EVAL_V2 = DATA / "eval_set_v2.jsonl"
 PUBLISHED = DATA / "published_3.json"
+
+# Shared with weekly_kpi.py so the editor-comment precision is computed ONE
+# way in both places (no drift between the weekly KPI and this scorecard).
+from news_agent.core.editor_feedback import row_errors  # noqa: E402
 
 
 def _load_jsonl(p: Path) -> list[dict]:
@@ -45,24 +50,6 @@ def _load_jsonl(p: Path) -> list[dict]:
             except (json.JSONDecodeError, ValueError):
                 pass
     return out
-
-
-def _row_errors(r: dict) -> list[str]:
-    """Какие ошибки редактор отметил на этой строке."""
-    errs = []
-    if r.get("label_dup_within") or r.get("label_dup_cross_run"):
-        errs.append("дубль")
-    if r.get("label_section"):
-        errs.append("не та секция")
-    if r.get("label_wrong_primary"):
-        errs.append("не тот источник")
-    if (r.get("label_publish") is False
-            and not (r.get("label_dup_within")
-                     or r.get("label_dup_cross_run"))):
-        errs.append("не нужно")
-    if r.get("label_needs_translation"):
-        errs.append("нужен перевод")
-    return errs
 
 
 def precision_block(since_days: int) -> None:
@@ -92,7 +79,7 @@ def precision_block(since_days: int) -> None:
     err_counter: Counter = Counter()
     clean = with_err = 0
     for r in recent:
-        errs = _row_errors(r)
+        errs = row_errors(r)
         if errs:
             with_err += 1
             for e in errs:

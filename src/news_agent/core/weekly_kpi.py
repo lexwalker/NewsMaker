@@ -128,6 +128,57 @@ def coverage(editor_pubs: list[Item], collection_idx: Index,
             "by_url": url, "by_fuzzy": fuzzy, "miss_examples": misses[:8]}
 
 
+# A real prog run collects hundreds of articles; a day with fewer than this
+# means no prog ran (an ops gap), so it must NOT count against coverage.
+MIN_PROG_DAY = 20
+
+
+def active_collection_days(collected_dates: list, min_per_day: int = MIN_PROG_DAY) -> set:
+    """The calendar dates on which a prog actually ran, inferred from how
+    many articles we collected that day. `collected_dates` is a list of
+    date objects (one per collected article, in the window)."""
+    from collections import Counter
+    counts = Counter(collected_dates)
+    return {d for d, n in counts.items() if n >= min_per_day}
+
+
+def coverage_by_day(dated_pubs: list, active_dates: set, collection_idx: Index,
+                    threshold: float = DEFAULT_THRESHOLD) -> list:
+    """Per-day coverage rows for display. `dated_pubs` is list[(date, Item)].
+    Days with no prog are marked prog=False (excluded from the headline)."""
+    from collections import defaultdict
+    by_day: dict = defaultdict(list)
+    for d, it in dated_pubs:
+        by_day[d].append(it)
+    rows = []
+    for d in sorted(by_day):
+        pubs = by_day[d]
+        if d in active_dates:
+            c = coverage(pubs, collection_idx, threshold)
+            rows.append({"date": d.isoformat(), "pubs": len(pubs),
+                         "found": c["hit"], "rate": c["rate"], "prog": True})
+        else:
+            rows.append({"date": d.isoformat(), "pubs": len(pubs),
+                         "found": 0, "rate": 0.0, "prog": False})
+    return rows
+
+
+def coverage_day_aligned(dated_pubs: list, active_dates: set,
+                         collection_idx: Index,
+                         threshold: float = DEFAULT_THRESHOLD) -> dict:
+    """Day-aligned coverage: of editor pubs on days a prog ACTUALLY ran, how
+    many we collected. Pubs on no-prog days are reported separately
+    (excluded_no_prog) — that's an uptime gap, not a coverage failure.
+
+    `dated_pubs` is list[(date, Item)]; `active_dates` the set of prog days."""
+    on_active = [it for d, it in dated_pubs if d in active_dates]
+    excluded = sum(1 for d, _ in dated_pubs if d not in active_dates)
+    cov = coverage(on_active, collection_idx, threshold)
+    cov["excluded_no_prog"] = excluded
+    cov["active_days"] = len(active_dates)
+    return cov
+
+
 def precision_and_section(accepted: list[Item], archive_idx: Index,
                           archive_section_by_norm: dict,
                           threshold: float = DEFAULT_THRESHOLD) -> dict:
