@@ -558,6 +558,54 @@ def cluster_articles(
     return list(groups.values())
 
 
+def _bm_key(a: dict) -> str:
+    """Brand+model key for an article — the Phase-1 column or the URL slug."""
+    bm = (a.get("launch_brand_model") or "").strip().lower()
+    if not bm or " " not in bm:
+        bm = _url_model_key(a.get("url", "")) or bm
+    return bm
+
+
+def _llm_merge_corroborated(
+    anchor: dict, member: dict, *,
+    fuzz_floor: float = 50.0,
+    min_proper: int = PROPER_NOUN_OVERLAP_MIN,
+) -> bool:
+    """Guard on an LLM-editor merge: does ``member`` share REAL signal with
+    the event ``anchor``?
+
+    The LLM-as-editor can lump unrelated no-brand items (which carry no
+    brand/model/event signature) into one "event" — the jun-2026 output
+    review found a 5koleso Genesis concept and an Avtodor M-11 story
+    swallowed into an auto-loan cluster, and an Exeed RX refresh merged into
+    an Exeed EX6 reveal — silently DROPPING publishable stories. The lexical
+    stage guards itself; the LLM merges had no such check. Require at least
+    one corroborating signal:
+      • same primary_url (same press release), OR
+      • same (brand, model) pair, OR
+      • >= ``min_proper`` shared proper-noun tokens (brand/model/place,
+        stop-words excluded), OR
+      • title fuzz >= ``fuzz_floor``.
+    Without any of these the member is left out of the merge (stays its own
+    cluster). Same-brand+model dups and same-press-release / cross-language
+    dups (the LLM-editor's real value) all clear the bar.
+    """
+    pa = (anchor.get("primary_url") or "").strip().lower()
+    pm = (member.get("primary_url") or "").strip().lower()
+    if pa and pm and pa == pm:
+        return True
+    ba, bmk = _bm_key(anchor), _bm_key(member)
+    if ba and ba == bmk and " " in ba and len(ba) >= 5:
+        return True
+    na = anchor.get("normalised", "") or ""
+    nm = member.get("normalised", "") or ""
+    if _proper_noun_overlap(na, nm) >= min_proper:
+        return True
+    if na and nm and fuzz.token_set_ratio(na, nm) >= fuzz_floor:
+        return True
+    return False
+
+
 def _apply_llm_editor_pass(
     groups: list[list[dict]],
     articles: list[dict],
@@ -585,6 +633,7 @@ def _apply_llm_editor_pass(
         "brand_groups_called": 0,
         "events_returned": 0,
         "merges_applied": 0,
+        "uncorroborated_dropped": 0,
         "cross_run_dups": 0,
         "history_used_groups": 0,
         "llm_errors": 0,
@@ -700,6 +749,23 @@ def _apply_llm_editor_pass(
                                 if r in by_row]
             if len(target_articles) < 2:
                 continue
+            # GUARD (jun-2026 review): the LLM can lump unrelated no-brand
+            # items into one "event". Keep only members that corroborate the
+            # anchor (primary_row); drop the rest so they stay separate —
+            # prevents the over-merge that silently dropped publishable
+            # stories (Genesis concept / Avtodor M-11 / Exeed RX).
+            anchor = by_row.get(ev.primary_row) or target_articles[0]
+            kept = [anchor]
+            for a in target_articles:
+                if a is anchor:
+                    continue
+                if _llm_merge_corroborated(anchor, a):
+                    kept.append(a)
+                else:
+                    stats["uncorroborated_dropped"] += 1
+            if len(kept) < 2:
+                continue
+            target_articles = kept
             idxs = sorted({article_to_group[id(a)]
                            for a in target_articles})
             if len(idxs) <= 1:
@@ -858,6 +924,7 @@ def main() -> int:
               f"/{ed_stats['brand_groups_total']}")
         print(f"  events returned:     {ed_stats['events_returned']}")
         print(f"  merges applied:      {ed_stats['merges_applied']}")
+        print(f"  uncorroborated drop: {ed_stats['uncorroborated_dropped']}")
         print(f"  cross-run dups:      {ed_stats['cross_run_dups']}")
         print(f"  history-fed groups:  {ed_stats['history_used_groups']}")
         print(f"  llm errors:          {ed_stats['llm_errors']}")
