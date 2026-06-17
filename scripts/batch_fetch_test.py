@@ -1681,9 +1681,13 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
              "Catches publications that crossed the previous run's boundary.",
     )
     p.add_argument(
-        "--max-lookback-hours", type=int, default=24,
-        help="Ceiling on the fetch window. First run / stale state clamps to this. "
-             "Default 24h — matches FRESHNESS_HOURS.",
+        "--max-lookback-hours", type=int, default=48,
+        help="Ceiling on the fetch window. First run / stale state clamps to "
+             "this. Default 48h (not 24): if a daily run is MISSED, a 24h "
+             "ceiling permanently drops that day's publications, while 48h "
+             "lets the next run catch the backlog. Re-seen articles restore "
+             "from cache (≈$0); only genuinely-new ones cost LLM. On a normal "
+             "daily cadence the window is ~24h, so this only binds after a gap.",
     )
     p.add_argument(
         "--no-window", action="store_true",
