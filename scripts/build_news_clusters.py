@@ -105,6 +105,19 @@ def _svc():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 
+def _latest_articles_tab(svc) -> str:
+    """Newest 'ТЕСТ статьи vN' tab by version number. Lets the daily run
+    chain fetch→cluster without passing the tab name (which also sidesteps
+    the Cyrillic-argv encoding pitfall)."""
+    meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+    best, best_n = None, -1
+    for s in meta.get("sheets", []):
+        m = re.match(r"ТЕСТ статьи v(\d+)$", s["properties"]["title"])
+        if m and int(m.group(1)) > best_n:
+            best_n, best = int(m.group(1)), s["properties"]["title"]
+    return best or "ТЕСТ статьи v18"
+
+
 def _get(row: list[str], i: int) -> str:
     return row[i] if i < len(row) else ""
 
@@ -859,7 +872,8 @@ def main() -> int:
     use_llm_editor = "--use-llm-editor" in sys.argv
     if use_llm_editor:
         sys.argv = [a for a in sys.argv if a != "--use-llm-editor"]
-    tab = sys.argv[1] if len(sys.argv) > 1 else "ТЕСТ статьи v18"
+    tab = sys.argv[1] if len(sys.argv) > 1 else _latest_articles_tab(_svc())
+    print(f"Source tab: {tab}")
 
     brands = load_brand_domains()
     cues = load_primary_source_cues()

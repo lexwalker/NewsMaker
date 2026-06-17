@@ -254,6 +254,18 @@ def _svc():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 
+def _latest_articles_tab(svc) -> str:
+    """Newest 'ТЕСТ статьи vN' tab by version number, so the daily run can
+    push the just-built clusters without passing the tab name."""
+    meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+    pfx, best, best_n = "ТЕСТ статьи v", None, -1
+    for s in meta.get("sheets", []):
+        t = s["properties"]["title"]
+        if t.startswith(pfx) and t[len(pfx):].isdigit() and int(t[len(pfx):]) > best_n:
+            best_n, best = int(t[len(pfx):]), t
+    return best or "ТЕСТ статьи v18"
+
+
 def _ensure_tab(svc, tab: str) -> tuple[int, bool]:
     """Create tab if missing. Return (sheetId, was_created)."""
     meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
@@ -829,7 +841,8 @@ def _tint_section_cells(
 
 
 def main() -> int:
-    src_tab = sys.argv[1] if len(sys.argv) > 1 else "ТЕСТ статьи v18"
+    src_tab = sys.argv[1] if len(sys.argv) > 1 else _latest_articles_tab(_svc())
+    print(f"Source tab: {src_tab}")
     clusters_path = ROOT / "data" / f"clusters_{src_tab.replace(' ', '_')}.json"
     if not clusters_path.exists():
         print(f"Clusters file not found: {clusters_path}", file=sys.stderr)
