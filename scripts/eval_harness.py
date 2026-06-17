@@ -68,8 +68,16 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Offline classification eval")
     p.add_argument("--fast", action="store_true",
                    help="Heuristic layer only — no LLM, instant, $0")
-    p.add_argument("--sample", type=int, default=0,
-                   help="Cap LLM-evaluated rows (0 = all)")
+    p.add_argument("--sample", type=int, default=250,
+                   help="Cap LLM-evaluated rows (0 = all). Default 250 keeps "
+                        "cost low; the discriminating editor-comment rows sort "
+                        "first, so a sample is enough for a regression check. "
+                        "A full 1900-row pass is rarely needed and cost ~$3.")
+    p.add_argument("--max-cost", type=float, default=0.50,
+                   help="HARD USD cap: stop LLM calls once cumulative spend "
+                        "reaches this (0 = no cap). Guards against a runaway "
+                        "eval (jun-2026: a full run burned ~$2.9, half wasted "
+                        "when it died mid-pass).")
     p.add_argument("--eval-file", default="",
                    help="Alternate jsonl (e.g. a fixed strat subset)")
     p.add_argument("--diff", type=int, default=25,
@@ -157,6 +165,7 @@ def main() -> int:
     llm_budget = args.sample if args.sample > 0 else len(strict)
     llm_used = 0
     spent = 0.0
+    cost_capped = False
 
     # confusion accumulators
     tp = fp = tn = fn = 0          # publish prediction vs label
@@ -194,7 +203,8 @@ def main() -> int:
             ).hexdigest()
             if ck in cache:
                 rv = cache[ck]
-            elif llm_used < llm_budget:
+            elif (llm_used < llm_budget
+                  and (args.max_cost <= 0 or spent < args.max_cost)):
                 try:
                     review, u = client.editorial_review(
                         title=title, body=body, sections=sections,
@@ -210,6 +220,10 @@ def main() -> int:
                     skipped_llm += 1
                     continue
             else:
+                # budget OR hard cost-cap reached — stop spending, cached
+                # rows still score for free.
+                if args.max_cost > 0 and spent >= args.max_cost:
+                    cost_capped = True
                 skipped_llm += 1
                 continue
             pred_pub = rv["pub"]
@@ -263,6 +277,11 @@ def main() -> int:
     frr = fn / (tp + fn) if (tp + fn) else 0.0
     sec_acc = sec_ok / sec_tot if sec_tot else 0.0
     mode = "FAST(heuristic)" if args.fast else "FULL(+LLM)"
+
+    if cost_capped:
+        print(f"\n⚠ COST CAP hit at ${spent:.4f} (--max-cost {args.max_cost}). "
+              f"{skipped_llm} rows scored from cache/skipped without fresh LLM. "
+              f"Raise with --max-cost N (or --sample N) if you need full coverage.")
 
     print(f"\n=== EVAL {mode} — {len(strict)} strict rows "
           f"({time.time()-t0:.0f}s, ${spent:.4f}, "
