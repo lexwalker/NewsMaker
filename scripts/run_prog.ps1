@@ -32,7 +32,12 @@ function Stage($name, $argList) {
 }
 
 Write-Output "run_prog start $ts  (NoPush=$NoPush)  log=$log"
-Stage "1/3 fetch+classify"        @('scripts/batch_fetch_test.py')
+# --no-playwright: this unattended run must never hang. Playwright (headless
+# Chromium) has no hard per-navigation timeout, so a single bad article page
+# can stall the whole prog (jun-18: hung 26 min on a thekoreancarblog article
+# after that domain became a live impersonate source). httpx + curl_cffi
+# (impersonate) cover the vast majority; only a few JS-only SPA sites are skipped.
+Stage "1/3 fetch+classify"        @('scripts/batch_fetch_test.py','--no-playwright')
 Stage "2/3 cluster (LLM-editor)"  @('scripts/build_news_clusters.py','--use-llm-editor')
 if ($NoPush) {
   Write-Output "STOP before push (-NoPush). Review clusters, then run: python scripts\build_news_sheet.py" | Tee-Object -FilePath $log -Append
