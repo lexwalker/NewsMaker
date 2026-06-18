@@ -498,7 +498,9 @@ def _pick_outbound_links(soup: BeautifulSoup, page_url: str) -> list[str]:
     return out
 
 
-_ARTICLE_HINTS = ("/news/", "/article/", "/post/", "/20", "/story/", "-news-", ".html")
+_ARTICLE_HINTS = ("/news/", "/article/", "/post/", "/20", "/story/", "-news-",
+                  ".html", "/doc/")  # /doc/<id> = kommersant.ru article URLs
+                                      # (numeric id, no slug — were rejected)
 
 
 def _looks_like_article(url: str) -> bool:

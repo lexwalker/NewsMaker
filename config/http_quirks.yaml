@@ -83,6 +83,13 @@ impersonate_domains:
   # missing-source audit (may-2026): UK auto industry feed, 403 on plain httpx
   - just-auto.com
   - www.just-auto.com
+  # dead-source revival (jun-2026): editor-used OEM-press/blog behind a
+  # TLS-level WAF — confirmed curl_cffi(chrome) returns 200 while plain httpx
+  # gets 403/429. (autonews.gasgoo/autoblog NOT added: WAF beats impersonate too.)
+  - media.stellantis.com
+  - www.media.stellantis.com
+  - thekoreancarblog.com
+  - www.thekoreancarblog.com
 
 # Domains that require Playwright (headless Chromium) instead of httpx.
 # Use this only when either:
