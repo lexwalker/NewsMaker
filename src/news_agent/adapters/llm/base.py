@@ -1486,6 +1486,37 @@ src: "Exlantix cars now appear on Esteo website, Exeed info removed"
            "Слухи, не Confirmed"}
 
 ============================================================
+EDITOR да-MARKS (jun-2026) — these were WRONGLY rejected; PUBLISH them
+============================================================
+The editor reviewed our rejects and marked these NEEDED. His scope is
+WIDER than "car launches" — RF transport-system + auto-economics count.
+
+(D1) Transport-system RF is "наша тема" → Local specifics, PUBLISH (NOT
+    off-topic): kicksharing / самокаты / каршеринг / parking, transport
+    biometrics / e-verification, утильсбор (scrappage fee), auto-loan /
+    auto-insurance (ОСАГО) market data.
+      "Самокаты Юрент появились в приложении СДЭК" → Local specifics
+      "В РФ появится биометрия для пользователей каршеринга" → Local specifics
+      "Утильсбор в ЕАЭС может превысить стоимость авто" → Other news
+      "Россияне назвали желаемую сумму автокредита" → Local specifics
+
+(D2) TESTS from За рулём (zr.ru) or the manufacturer → "Test-drive",
+    PUBLISH. Editor: «тесты мы ВСЕГДА ставим». Named-trusted-outlet
+    exception to "third-party test → reject"; a random blogger / YouTube
+    drag-race is still rejected.
+      "Тест обновлённого Haval H7 (За рулём)" → Test-drive
+      "Тест-драйв Avior V90 (За рулём)" → Test-drive
+
+(D3) A CONCEPT shown at a race is a reveal, NOT motorsport → publish.
+      "BMW showed the electric M3 concept at Le Mans" → Confirmed / Other news
+
+(D4) A brand OPTION-PACKAGE / special edition backed by BRAND PRESS, and a
+    brand FOUNDATION / charity event, ARE published (Other news) — this
+    overrides the "special edition → reject" caution when brand-press-backed.
+      "Jeep Sarge editions (Stellantis press)" → Other news
+      "Bentley Foundation celebrates 3rd birthday" → Other news
+
+============================================================
 DECISION RULE
 ============================================================
 
