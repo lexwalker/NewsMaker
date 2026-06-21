@@ -1016,6 +1016,13 @@ def main() -> int:
         launch_stage = ""
         launch_brand_model = ""
         llm_reason = ""
+        # Preserve a cross-run "возможно дубль" hint from ANY member. The
+        # chosen llm_reason is the FIRST member's, but the per-article
+        # event-signature dedup (recent_event_dup_hint, 30d) may have flagged
+        # a DIFFERENT member — if we kept only the first reason the hint would
+        # be lost and the duplicate would NOT be diverted to the review tab
+        # (editor's complaint #1: "ставит то, что уже было"). jun-2026.
+        dup_hint = ""
         for a in grp_sorted:
             if not launch_stage and a.get("launch_stage"):
                 launch_stage = a["launch_stage"]
@@ -1023,8 +1030,15 @@ def main() -> int:
                 launch_brand_model = a["launch_brand_model"]
             if not llm_reason and a.get("llm_reason"):
                 llm_reason = a["llm_reason"]
-            if launch_stage and launch_brand_model and llm_reason:
+            if not dup_hint and "возможно дуб" in (a.get("llm_reason") or "").lower():
+                dup_hint = a["llm_reason"]
+            if launch_stage and launch_brand_model and llm_reason and dup_hint:
                 break
+        # Carry the dup hint into the cluster reason so the push (which diverts
+        # rows whose reason matches "возможно дуб") sends it to review, not the
+        # clean feed.
+        if dup_hint and "возможно дуб" not in (llm_reason or "").lower():
+            llm_reason = (((llm_reason + " ") if llm_reason else "") + dup_hint)[:400]
 
         # If LLM-as-editor assigned a section to this event, prefer it.
         # Validated: editor's manual section corrections (96 in v2 sync)

@@ -110,7 +110,13 @@ _STATIC_DOC_URL_HINTS = (
 _LLM_DUP_RE = re.compile(r"возможно дуб", re.I)
 _LLM_JUNK_RE = re.compile(
     r"не новост|не наша тема|это обзор|это гайд|правовой гайд|"
-    r"форум-вопрос|мнение колумниста|советы по|это реклам",
+    r"форум-вопрос|мнение колумниста|советы по|это реклам|"
+    # jun-19: catch the constitution's off-topic / excluded vocabulary so a row
+    # whose OWN reason calls it off-topic never lands in the clean feed (it goes
+    # to review instead). These leaked before because the regex was too narrow.
+    r"не автомобильн|категория исключена|смежн|инфраструктурн|не автопром|"
+    r"вне авторегуляц|лайфстайл|листикл|мнение агрегатора|лоббирован|"
+    r"не реальное событие|социальный контент",
     re.I,
 )
 def _llm_flag(c: dict) -> str:

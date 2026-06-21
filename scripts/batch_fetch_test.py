@@ -1047,6 +1047,26 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             # editor can see exactly why the bot accepted or rejected.
             r.llm_reason = review.reason[:300] if review.reason else ""
 
+            # Consistency guard (jun-18): the model occasionally returns
+            # should_publish=True while its OWN reason concludes the item must be
+            # rejected (e.g. "...без конкретной модели/рынка РФ — отклонить" got
+            # mislabelled "Test-drive" and slipped into the live feed — row 56 of
+            # the jun-18 push). Trust the explicit reject directive over the
+            # boolean and route it to the rejected tab (auditable), not the feed.
+            _rlow = (review.reason or "").lower()
+            if review.should_publish and any(
+                p in _rlow for p in ("отклонить", "reject", "не публику", "не наша тема")
+            ):
+                r.llm_relevance = "Нет"
+                r.verdict = "Отклонено LLM"
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    f"противоречие: publish=Да, reason='отклонить' → отклонено ({review.reason[:80]})"
+                print(
+                    f"  [{i}/{len(candidates)}] CONTRADICTION publish=True/reason=reject "
+                    f"→ REJECT  |  {r.title[:50]}"
+                )
+                continue
+
             if not review.should_publish:
                 # RU transport-civic rescue (jun-2026 "Опубликованные 3"
                 # recall audit). The LLM rejects Russian transport-CIVIC
@@ -1057,7 +1077,12 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 # Local specifics; the editor still reviews Local and can
                 # drop edge cases. Gated against military/banking noise
                 # inside is_ru_transport_civic.
-                if is_ru_transport_civic(r.title, r.body_excerpt):
+                if False and is_ru_transport_civic(r.title, r.body_excerpt):  # noqa: SIM223
+                    # RESCUE DISABLED (jun-19). The editorial constitution now
+                    # routes genuine RU-transport itself (regulation / carsharing
+                    # / loan surveys -> Local); the rescue was force-adding
+                    # OFF-topic Local junk the LLM correctly rejected (PMD-social,
+                    # taxi-tyres, parking-trivia, driving-tips). Trust the LLM.
                     r.llm_relevance = "Да"
                     r.llm_section = "Local specifics"
                     r.llm_region = "Local"
@@ -1555,7 +1580,9 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             # cached run short-circuits the whole change. Only flips
             # LLM-rejections (not heuristic hard-rejects, which are
             # correct); is_ru_transport_civic gates out military/banking.
-            if (row.verdict == "Отклонено LLM"
+            if (False  # RESCUE DISABLED jun-19 (see live path) — keep cached
+                    # LLM rejections rejected; constitution handles RU-transport
+                    and row.verdict == "Отклонено LLM"
                     and is_ru_transport_civic(row.title, row.body_excerpt)):
                 row.verdict = "Точно новость"
                 row.llm_relevance = "Да"
