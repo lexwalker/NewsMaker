@@ -128,6 +128,7 @@ def extract_article(
     source_url: str,
     source_language: str | None,
     fallback_title: str = "",
+    fallback_body: str = "",
     fallback_published: datetime | None = None,
     preferred_published: datetime | None = None,
 ) -> RawArticle | None:
@@ -148,6 +149,12 @@ def extract_article(
         return None
 
     body = _pick_body(html) or _fallback_body(soup)
+    # RSS-content fallback (jun-19): JS-rendered article pages (brand newsrooms,
+    # many press feeds) extract to ~nothing via httpx. When the page body is too
+    # thin and the caller passed the RSS entry's own content, use it — otherwise
+    # the article is silently dropped (body<200 fails looks_like_news).
+    if len(body.strip()) < 200 and len(fallback_body.strip()) >= 200:
+        body = fallback_body
     published = (
         preferred_published
         or _pick_published(soup)

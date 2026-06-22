@@ -24,6 +24,12 @@ ssl_insecure:
   - volkswagen-group.com
   - rosstat.gov.ru
   - www.rosstat.gov.ru
+  # silent-failure audit (jun-22): suzuki-motor.ru/press/news fails
+  # CERTIFICATE_VERIFY_FAILED on the verifying client; serves clean OEM press HTML
+  # over verify=False (9/10 links auto-productive). (romir.ru was a FALSE recovery
+  # — JS-rendered, identical 228-char chrome on every link — NOT added.)
+  - suzuki-motor.ru
+  - www.suzuki-motor.ru
 
   # NOTE: the following hosts also error on SSL but with
   #   UNEXPECTED_EOF_WHILE_READING — that's not a cert problem, the server
@@ -90,6 +96,52 @@ impersonate_domains:
   - www.media.stellantis.com
   - thekoreancarblog.com
   - www.thekoreancarblog.com
+  # coverage audit (jun-19): WAF-blocked (403/202) on plain httpx, confirmed
+  # curl_cffi(chrome) returns 200 + real content. 23 big sources unblocked.
+  - tass.ru
+  - www.tass.ru
+  - rbc.ru
+  - www.rbc.ru
+  - lada.ru
+  - www.lada.ru
+  - insideevs.com
+  - www.insideevs.com
+  - www.fleetnews.co.uk
+  - fips.ru
+  - www.soglasie.ru
+  - www.jeeppress-europe.com
+  - media.gm.com
+  - media.cadillac.com
+  - media.cadillaceurope.com
+  - media.chevrolet.com
+  - media.mbusa.com
+  - pressroom.lexus.com
+  - pressroom.toyota.com
+  - global.nissannews.com
+  - europe.nissannews.com
+  - uk.nissannews.com
+  - usa.nissannews.com
+  - russia.nissannews.com
+  - me.nissanmotornews.com
+  # silent-failure audit (jun-22): "timeout" bucket was mis-diagnosed — these
+  # IR/recall hosts deliberately STALL the httpx TLS fingerprint until ReadTimeout
+  # (anti-bot), but curl_cffi(chrome) returns 200 + bodies in <5s. NOT slow servers.
+  - ir.nio.com
+  - ir.lucidmotors.com
+  - ir.xiaopeng.com
+  - ir.lixiang.com
+  - vehiclerecalls.gov.au
+  - www.vehiclerecalls.gov.au
+  # same audit: WAF-403 on plain httpx, curl_cffi(chrome) gets 200 (econ-data
+  # sources — link recovery real, downstream auto-score marginal but harmless).
+  - opec.org
+  - www.opec.org
+  - worldeconomics.com
+  - www.worldeconomics.com
+  # same audit: investor.gm.com root serves 200 via impersonate (the sheet's
+  # /news-releases path 404s — see url_rewrites below).
+  - investor.gm.com
+  - www.investor.gm.com
 
 # Domains that require Playwright (headless Chromium) instead of httpx.
 # Use this only when either:

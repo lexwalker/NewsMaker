@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 import urllib.robotparser
@@ -16,6 +17,30 @@ from news_agent.core.urls import domain_of
 from news_agent.logging_setup import get_logger
 
 log = get_logger("fetch")
+
+
+def _accept_encoding() -> str:
+    """Advertise Brotli only if a decoder is actually importable.
+
+    httpx hands back the RAW compressed bytes (garbage) for any Content-Encoding
+    it can't decode. Advertising ``br`` without a Brotli decoder installed
+    silently corrupts every Brotli response — which most modern CDNs prefer —
+    so the HTML parses to nothing (0 links, body=0). Self-heal: drop ``br`` when
+    no decoder is present, so this can never silently recur if the lib vanishes.
+    """
+    for _m in ("brotli", "brotlicffi"):
+        try:
+            __import__(_m)
+            return "gzip, deflate, br"
+        except ImportError:
+            continue
+    return "gzip, deflate"
+
+
+_ACCEPT_ENCODING = _accept_encoding()
+
+# Sniff a <meta charset=...> declaration from the first bytes of an HTML body.
+_META_CHARSET = re.compile(rb"""<meta[^>]+charset=["']?\s*([A-Za-z0-9_-]+)""", re.I)
 
 
 class Fetcher(Protocol):
@@ -120,7 +145,7 @@ class RetryingHttpClient:
                 "image/avif,image/webp,image/apng,*/*;q=0.8"
             ),
             "Accept-Language": "ru,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": _ACCEPT_ENCODING,
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
             "Sec-Ch-Ua": '"Chromium";v="126", "Not.A/Brand";v="24"',
@@ -249,11 +274,45 @@ class RetryingHttpClient:
                 )
                 time.sleep(sleep)
                 continue
+            self._heal_charset(resp)
             return resp
 
         if last_exc:
             raise last_exc
         raise RuntimeError(f"request failed without exception: {method} {url}")
+
+    @staticmethod
+    def _heal_charset(resp: httpx.Response) -> None:
+        """Self-heal charset when the server omits it from the header.
+
+        Sibling of the Brotli decode bug: a windows-1251 RU page that declares
+        its charset only via <meta> (no Content-Type charset) makes httpx default
+        to utf-8, so ``resp.text`` is mojibake at HTTP 200 with no error — the
+        HTML parses to garbage and the source silently scores 0. Fix: if the
+        header gave no charset, sniff <meta charset> from the first bytes and set
+        ``resp.encoding`` BEFORE anything reads ``resp.text`` (httpx raises if set
+        after). Guarded to fire only for header-less, non-utf-8 HTML, so the
+        overwhelming utf-8 majority is untouched.
+        """
+        try:
+            if resp.charset_encoding is not None:
+                return
+            if "text/html" not in resp.headers.get("content-type", "").lower():
+                return
+            m = _META_CHARSET.search(resp.content[:4096])
+            if not m:
+                return
+            cs = m.group(1).decode("ascii", "ignore").lower()
+            if not cs or cs.replace("-", "") in ("utf8", "utf"):
+                return
+            try:
+                "x".encode(cs)  # validate it's a real codec
+            except LookupError:
+                return
+            resp.encoding = cs
+        except Exception:
+            # Charset healing is best-effort; never let it break a fetch.
+            return
 
 
 def make_http_client(

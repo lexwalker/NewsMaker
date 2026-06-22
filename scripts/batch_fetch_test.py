@@ -138,7 +138,7 @@ _HIGH_VOLUME_DOMAINS = frozenset({
     "kolesa.ru", "abreview.ru", "autoreview.ru", "iz.ru",
     "tass.ru", "ria.ru", "kommersant.ru", "rg.ru",
     "lenta.ru", "rbc.ru", "naavtotrasse.ru", "motor.ru",
-    "ixbt.com", "drom.ru", "motorpage.ru",
+    "ixbt.com", "drom.ru", "motorpage.ru", "zr.ru",
     # Global mass-market portals (English)
     "carnewschina.com", "cnevpost.com", "carscoops.com",
     "motor1.com", "autoevolution.com", "thekoreancarblog.com",
@@ -184,6 +184,14 @@ TELEGRAM_SEED_URLS = [
     "https://t.me/autopotoknews",
 ]
 USER_AGENT = os.environ.get("USER_AGENT", "NewsMakerBot/0.1 (+test)")
+
+# Global politeness throttle (jun-21): minimum seconds between ANY two fetches,
+# to cap the IP's request rate so WAF/CDN (Akamai on brand media) don't
+# rate-block mid-run. The bulk run blocks sources that pass in ISOLATION ->
+# load-based rate-limiting (verified: 9/10 blocked brand-media return 200 when
+# probed alone). Off by default (0); set FETCH_MIN_INTERVAL to enable.
+_FETCH_MIN_INTERVAL = float(os.environ.get("FETCH_MIN_INTERVAL", "0") or 0)
+_LAST_FETCH_T = [0.0]
 REPORT_TAB_BASE = "ТЕСТ прогон"
 ARTICLES_TAB_BASE = "ТЕСТ статьи"
 
@@ -730,6 +738,11 @@ def _http_get(client, url: str):
     Keeps the caller's existing code untouched — returns a duck-typed object
     with the same three attributes ``process_source`` needs.
     """
+    if _FETCH_MIN_INTERVAL > 0:
+        _wait = _FETCH_MIN_INTERVAL - (time.monotonic() - _LAST_FETCH_T[0])
+        if _wait > 0:
+            time.sleep(_wait)
+        _LAST_FETCH_T[0] = time.monotonic()
     if (
         PW_FETCHER is not None
         and PW_ALLOWLIST is not None
@@ -920,6 +933,21 @@ def _rss_pub_date(entry) -> datetime | None:  # type: ignore[no-untyped-def]
         return None
 
 
+def _rss_entry_body(entry) -> str:  # type: ignore[no-untyped-def]
+    """Best body text from an RSS entry (content:encoded > summary/description),
+    HTML-stripped. The fallback body when a JS-rendered article PAGE extracts
+    empty (jun-19 coverage fix — recovers brand newsrooms / press feeds)."""
+    import re
+    raw = ""
+    cont = entry.get("content")
+    if isinstance(cont, list) and cont:
+        raw = cont[0].get("value", "") or ""
+    if not raw:
+        raw = entry.get("summary", "") or entry.get("description", "") or ""
+    text = re.sub(r"<[^>]+>", " ", raw)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
     client: httpx.Client,
     entries,
@@ -940,6 +968,8 @@ def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
         _fetch_and_score(
             client, link, result, source_idx, idx, article_rows,
             rss_pub_date=rss_pub,
+            rss_title=(entry.get("title") or "").strip(),
+            rss_body=_rss_entry_body(entry),
         )
 
 
@@ -1337,6 +1367,8 @@ def _fetch_and_score(
     article_rows: list[ArticleRow],
     *,
     rss_pub_date: datetime | None = None,
+    rss_title: str = "",
+    rss_body: str = "",
 ) -> None:
     row = ArticleRow(
         source_idx=source_idx,
@@ -1353,6 +1385,8 @@ def _fetch_and_score(
             source_name="",
             source_url="",
             source_language=None,
+            fallback_title=rss_title,
+            fallback_body=rss_body,
             preferred_published=rss_pub_date,
         )
     except Exception as e:  # noqa: BLE001
