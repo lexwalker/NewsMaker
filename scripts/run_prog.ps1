@@ -18,6 +18,7 @@ param([switch]$NoPush)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot          # repo root (scripts/..)
 Set-Location $root
+$env:PYTHONUNBUFFERED = "1"   # real-time log: a crash/death point is visible immediately, not lost in a block buffer
 $ts  = Get-Date -Format "yyyyMMdd_HHmmss"
 if (-not (Test-Path (Join-Path $root "logs"))) { New-Item -ItemType Directory (Join-Path $root "logs") | Out-Null }
 $log = Join-Path $root "logs\run_prog_$ts.log"

@@ -1,11 +1,17 @@
-"""Re-run LLM only on rows whose ``Пометка бота`` (col M) carries an error
-trace from a previous batch (e.g. ``classify error: 400 ... usage limits``).
+"""Re-run the LLM editorial review on rows the main run left unclassified
+because the LLM failed mid-batch (``editorial_review error: 403`` etc. in the
+``Пометка бота`` column, or a row with no section / no EN: translation).
 
-Used when the API hit a transient hard-cap mid-run; once the cap is lifted
-this script touches only the broken rows and rewrites their LLM fields in
-place. Far cheaper than a full v19 re-fetch.
+Used when the API hit a transient block/hard-cap mid-run; once it lifts this
+script touches only the broken rows and rewrites their LLM fields IN PLACE:
+section, region, EN/RU title, AND the editorial reason ("Обоснование LLM",
+col AE). It uses the SAME consolidated ``editorial_review`` call as the main
+run (the editorial constitution), so recovered rows are judged identically and
+the reason column + the rejected-markup tab (which is built from that reason)
+are populated. Far cheaper than a full re-fetch.
 
-Run:  python scripts/retry_failed_llm.py "ТЕСТ статьи v18"
+Run:  python scripts/retry_failed_llm.py          # auto-picks newest "ТЕСТ статьи vN"
+      python scripts/retry_failed_llm.py "ТЕСТ статьи v18"   # explicit tab
 """
 
 from __future__ import annotations
@@ -56,14 +62,31 @@ def _get(r: list[str], i: int) -> str:
 
 
 def main() -> int:
-    tab = sys.argv[1] if len(sys.argv) > 1 else "ТЕСТ статьи v18"
+    svc = _svc()
+    # Tab name: explicit argv, else auto-pick the newest "ТЕСТ статьи vN".
+    # Auto-pick avoids passing a Cyrillic tab name on argv (Windows/PowerShell
+    # mangles it), which is why this is the preferred invocation.
+    if len(sys.argv) > 1:
+        tab = sys.argv[1]
+    else:
+        _meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+        _cand = [s["properties"]["title"] for s in _meta["sheets"]
+                 if s["properties"]["title"].startswith("ТЕСТ статьи v")]
+
+        def _vn(t: str) -> int:
+            try:
+                return int(t.rsplit("v", 1)[1])
+            except (ValueError, IndexError):
+                return -1
+
+        tab = max(_cand, key=_vn) if _cand else "ТЕСТ статьи v18"
+        print(f"  auto-picked newest tab: {tab}")
     settings = get_settings()
     sections = load_sections()
     budget = BudgetTracker(getattr(settings, "max_cost_usd", 5.0))
     client = make_llm_client(settings)
     print(f"  provider: {client.provider_name}  model: {client.model}")
 
-    svc = _svc()
     resp = svc.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AB"
     ).execute()
@@ -92,6 +115,7 @@ def main() -> int:
             "classify error" in note
             or "translate error" in note
             or "relevance error" in note
+            or "editorial_review error" in note
             or (not section)
             or ("EN:" not in title)
         )
@@ -102,6 +126,7 @@ def main() -> int:
         return 0
 
     updates: list[dict] = []
+    section_names = {s.name for s in sections}
     portal_country = "Russia"  # RU portal hard-coded for now
     rejected_count = 0
     for idx, (sheet_row, r) in enumerate(targets, start=1):
@@ -119,42 +144,42 @@ def main() -> int:
                     break
         body = _get(r, COL_LEDE)
 
-        # Step 0 (only for 'Возможно новость' or 'relevance error'): run
-        # the LLM relevance gate first. If it rejects, mark the row as
-        # 'Отклонено LLM' and skip translate.
-        note = _get(r, COL_NOTE)
-        needs_relevance = verdict == "Возможно новость" or "relevance error" in note
-        if needs_relevance:
-            try:
-                rel, u0 = client.is_automotive(clean_title, body)
-                budget.record(u0)
-            except Exception as e:  # noqa: BLE001
-                print(f"  [{idx}/{len(targets)}] RELEVANCE FAILED row {sheet_row}: {e!s:80}")
-                continue
-            if not rel.is_automotive_or_economy:
-                # Reject the row — don't translate / classify
-                updates.append({"range": f"'{tab}'!O{sheet_row}",
-                                "values": [["Отклонено LLM"]]})
-                updates.append({"range": f"'{tab}'!M{sheet_row}",
-                                "values": [["LLM: не авто/эконом (retry)"]]})
-                rejected_count += 1
-                print(f"  [{idx}/{len(targets)}] REJECTED row {sheet_row}: {clean_title[:60]!r}")
-                continue
-            # Otherwise: passed relevance, fall through to classify+translate.
-            # Promote 'Возможно новость' → 'Точно новость' below.
-
+        # Consolidated editorial review — the SAME path as the main run (so a
+        # recovered row is judged by the editorial constitution, not the old
+        # legacy is_automotive+classify_section it replaced) AND, crucially, it
+        # returns the `reason` that fills "Обоснование LLM" (col AE). The legacy
+        # path never produced a reason, so a mid-run-failure recovery left col AE
+        # — and the rejected-markup tab built from it — empty.
         try:
-            cls, u1 = client.classify_section(
+            review, ur = client.editorial_review(
                 title=clean_title, body=body,
-                sections=sections, few_shots=[], portal_country=portal_country,
+                sections=sections, portal_country=portal_country,
             )
-            budget.record(u1)
+            budget.record(ur)
         except Exception as e:  # noqa: BLE001
-            print(f"  [{idx}/{len(targets)}] CLASSIFY FAILED row {sheet_row}: {e!s:80}")
+            print(f"  [{idx}/{len(targets)}] EDITORIAL_REVIEW FAILED row {sheet_row}: {e!s:80}")
             continue
+        reason = (review.reason or "")[:300]
+        _rlow = (review.reason or "").lower()
+        # Reject if the model says skip, OR says publish while its own reason
+        # rejects (same consistency guard as the main run). Write the reason
+        # either way so the editor sees it in the rejected markup.
+        if (not review.should_publish) or any(
+            p in _rlow for p in ("отклонить", "reject", "не публику", "не наша тема")
+        ):
+            updates.append({"range": f"'{tab}'!O{sheet_row}",
+                            "values": [["Отклонено LLM"]]})
+            updates.append({"range": f"'{tab}'!M{sheet_row}",
+                            "values": [[f"LLM (retry): {reason[:120]}"]]})
+            updates.append({"range": f"'{tab}'!AE{sheet_row}", "values": [[reason]]})
+            rejected_count += 1
+            print(f"  [{idx}/{len(targets)}] REJECTED row {sheet_row}: {clean_title[:55]!r}")
+            continue
+        section = review.section if review.section in section_names else "Other news"
+        region = review.region or "Global"
         try:
-            tp, u2 = client.translate_title(title=clean_title, source_language_hint=None)
-            budget.record(u2)
+            tp, ut = client.translate_title(title=clean_title, source_language_hint=None)
+            budget.record(ut)
         except Exception as e:  # noqa: BLE001
             print(f"  [{idx}/{len(targets)}] TRANSLATE FAILED row {sheet_row}: {e!s:80}")
             continue
@@ -172,24 +197,25 @@ def main() -> int:
             f"EN: {tp.english[:220]}{en_suffix}\n"
             f"RU: {tp.russian[:220]}{ru_suffix}"
         )
-        cost = round(u1.cost_usd + u2.cost_usd, 5)
+        cost = round(ur.cost_usd + ut.cost_usd, 5)
         spent = budget.spent_usd
         print(
             f"  [{idx}/{len(targets)}] OK row {sheet_row}: "
-            f"section={cls.section} region={cls.region} cost=${cost} (run total ${spent:.4f})"
+            f"section={section} region={region} cost=${cost} (run total ${spent:.4f})"
         )
-        # Schedule cell updates: B (title), E (section), F (region),
-        # M (note — clear), O (verdict — promote 'Возможно' → 'Точно'),
-        # Z (relevance), AA (cost)
+        # Schedule cell updates: B (title), E (section), F (region), M (clear),
+        # O (promote 'Возможно' → 'Точно'), AA (cost), AE (editorial reason —
+        # the fix: fills "Обоснование LLM" so the column + rejected markup
+        # aren't empty after a recovery).
         updates.append({"range": f"'{tab}'!B{sheet_row}", "values": [[new_title]]})
-        updates.append({"range": f"'{tab}'!E{sheet_row}", "values": [[cls.section]]})
-        updates.append({"range": f"'{tab}'!F{sheet_row}", "values": [[cls.region]]})
+        updates.append({"range": f"'{tab}'!E{sheet_row}", "values": [[section]]})
+        updates.append({"range": f"'{tab}'!F{sheet_row}", "values": [[region]]})
         updates.append({"range": f"'{tab}'!M{sheet_row}", "values": [[""]]})
-        # Promote 'Возможно новость' → 'Точно новость' since LLM accepted
         if verdict == "Возможно новость":
             updates.append({"range": f"'{tab}'!O{sheet_row}",
                             "values": [["Точно новость"]]})
         updates.append({"range": f"'{tab}'!AA{sheet_row}", "values": [[cost]]})
+        updates.append({"range": f"'{tab}'!AE{sheet_row}", "values": [[reason]]})
 
     if updates:
         # Apply in chunks
