@@ -148,7 +148,7 @@ def extract_article(
     if not title:
         return None
 
-    body = _pick_body(html) or _fallback_body(soup)
+    body = _semantic_body(soup) or _pick_body(html) or _fallback_body(soup)
     # RSS-content fallback (jun-19): JS-rendered article pages (brand newsrooms,
     # many press feeds) extract to ~nothing via httpx. When the page body is too
     # thin and the caller passed the RSS entry's own content, use it — otherwise
@@ -197,6 +197,20 @@ def _pick_title(soup: BeautifulSoup) -> str:
     title_tag = soup.find("title")
     if isinstance(title_tag, Tag):
         return title_tag.get_text(strip=True)
+    return ""
+
+
+def _semantic_body(soup: BeautifulSoup) -> str:
+    """Schema.org articleBody — the explicit article-text container. Many CMSs
+    (e.g. naavtotrasse.ru) wrap the story in [itemprop=articleBody]; trafilatura
+    sometimes mis-picks the site nav-menu over it, returning "☰ menu" garbage as
+    the body (which then poisons section/region classification). Prefer this
+    semantic container when it's present and substantial."""
+    el = soup.find(attrs={"itemprop": "articleBody"})
+    if isinstance(el, Tag):
+        txt = el.get_text(" ", strip=True)
+        if len(txt) >= 200:
+            return txt
     return ""
 
 

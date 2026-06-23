@@ -1179,6 +1179,11 @@ Reject on-topic items that carry no concrete happening:
  - "Lada Niva test by zr.ru" -> Test-drive. "Jeep Wrangler Sarge editions" -> Other.
  - "Gas pipeline restored in Dagestan" -> REJECT (not auto). "Knife attack near a
    bus station, victim was a taxi driver" -> REJECT (crime).
+ - A Russian-language outlet reporting a FOREIGN/GLOBAL-brand event with NO Russian
+   angle (Porsche 911 patent, a Chinese-brand interior/spec reveal, a Range Rover
+   spy shot) is STILL global -> Confirmed / Other / Rumors per the event,
+   region=Global. NOT "Local specifics" - the SOURCE being in Russian does not make
+   the SUBJECT Russian. "Local" is only for news specifically about the RF market.
 
 ============================================================
 DECISION RULE
