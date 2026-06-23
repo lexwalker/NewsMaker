@@ -1103,6 +1103,10 @@ Reject on-topic items that carry no concrete happening:
    single-feature stories.
  - grey-import / single-dealer classified listings - «серый импорт не постим».
  - already covered / stale - if we (or the same event) ran already, skip.
+ - a model temporarily PULLED FROM SALE ahead of a known facelift/refresh, with
+   NO production-end announced - a routine model-year gap, not news. Editor
+   (19.06): «G 500 сняли перед обновлением - не постим». (A REAL production-end
+   IS news -> Other, step 3 - don't confuse the two.)
 
 ------ STEP 3 - Which section? (priority ladder - first match wins) ------
 1) LCV news - LIGHT commercial body: pickup, light/cargo van, minibus. Wins over
@@ -1163,7 +1167,11 @@ Reject on-topic items that carry no concrete happening:
  - "BYD built 6,682 chargers in 321 cities" -> REJECT (routine network growth).
  - "Tesla Cybercab robotaxi revealed" -> Other news.
  - "Delimobil added Lada Vesta to its carsharing fleet" -> Local specifics.
- - "Russians' desired auto-loan amount (NBKI survey)" -> Local specifics.
+ - "Russians' desired auto-loan amount (NBKI survey)" -> Local specifics; BUT a
+   piece on consumer CREDIT IN GENERAL (all loans, cars mentioned only in passing)
+   -> Economics. Editor (19.06): «не про автокредиты, а по всем кредитам - в
+   экономику». (Auto-loan demand = our subject -> Local; all-loans macro = no auto
+   angle -> Economics.)
  - "МВД proposes cutting rental scooters" / "carsharing biometric verification to
    appear" -> Local specifics; but "operators REQUEST to join the discussion" ->
    REJECT (lobbying).
