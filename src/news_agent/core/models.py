@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 Portal = Literal["RU", "UZ", "KZ"]
 Region = Literal["Local", "Global"]
@@ -113,6 +113,20 @@ class EditorialReview(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     reason: str = ""
     event_signature: EventSignature | None = None
+
+    @field_validator("region", mode="before")
+    @classmethod
+    def _tolerant_region(cls, v: object) -> str | None:
+        """Coerce an out-of-vocabulary region to None instead of raising.
+
+        The model occasionally emits a region outside {Local, Global} (a country
+        name, a lowercased value, a stray string). Without this, one bad field
+        sinks the WHOLE editorial verdict (jun-23: a region validation error lost
+        a cleanup row). None is safe — downstream treats it as "Global"."""
+        if v is None:
+            return None
+        s = str(v).strip().capitalize()
+        return s if s in ("Local", "Global") else None
 
 
 class TitlePair(BaseModel):
