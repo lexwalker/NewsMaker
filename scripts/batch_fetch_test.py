@@ -137,7 +137,7 @@ _HIGH_VOLUME_DOMAINS = frozenset({
     # RU mass-market portals
     "auto.ru", "auto.mail.ru", "autonews.ru", "autostat.ru",
     "kolesa.ru", "abreview.ru", "autoreview.ru", "iz.ru",
-    "tass.ru", "ria.ru", "kommersant.ru", "rg.ru",
+    "tass.ru", "ria.ru", "kommersant.ru", "rg.ru", "vedomosti.ru",
     "lenta.ru", "rbc.ru", "naavtotrasse.ru", "motor.ru",
     "ixbt.com", "drom.ru", "motorpage.ru", "zr.ru",
     # Global mass-market portals (English)

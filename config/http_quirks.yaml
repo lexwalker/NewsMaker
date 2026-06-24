@@ -31,6 +31,16 @@ ssl_insecure:
   - suzuki-motor.ru
   - www.suzuki-motor.ru
 
+  # source-yield audit (jun-24): re-verified reachable + link-productive from
+  # the prog host over verify=False. en.caam = China Assoc. of Automobile
+  # Manufacturers (EN sales/production stats), 200 + 40 links. roskazna = RF
+  # Federal Treasury, 3/3 hits 200 (353k) + 29 links — the "geo-blocked" note
+  # below is STALE for our IP. (ir.zeekrgroup.com NOT added: it fails the TLS
+  # HANDSHAKE itself — SSLV3_ALERT_HANDSHAKE_FAILURE — verify=False can't help.)
+  - en.caam.org.cn
+  - roskazna.gov.ru
+  - www.roskazna.gov.ru
+
   # NOTE: the following hosts also error on SSL but with
   #   UNEXPECTED_EOF_WHILE_READING — that's not a cert problem, the server
   #   is cutting the TLS stream (most likely geo-IP block or anti-bot WAF).
@@ -39,7 +49,7 @@ ssl_insecure:
   #     infiniti-now.ru
   #     www.infiniti.ru
   #     press.skoda-avto.ru
-  #     roskazna.gov.ru   (also 20s timeout — geo-blocked)
+  #   (roskazna.gov.ru was here — re-verified reachable jun-24, moved up.)
 
 url_rewrites:
   # Old sheet URL -> live URL. Applied at fetch time.
