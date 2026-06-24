@@ -111,3 +111,71 @@ def recent_event_dup_hint(
     return (
         f"(возможно дубль: «{display}» уже было {when} — проверьте)"
     )
+
+
+def published_dup_hint(
+    title: str,
+    event_brand: str,
+    event_model: str,
+    pub_titles: set[str] | list[str],
+    *,
+    threshold: float = 88.0,
+    model_threshold: float = 62.0,
+) -> str | None:
+    """ADVISORY — paraphrase check vs the editor's PUBLISHED archive
+    ("Опубликованные (все)", normalised titles within the recency window).
+
+    The deterministic gate (``already_published``) only catches an EXACT
+    source URL or EXACT normalised title; a story the editor already
+    published, re-surfacing under a rephrased headline / another outlet /
+    EN↔RU, slips straight through. Two cheap ($0, no LLM) recall layers
+    on top of it, BOTH brand-gated so we never collapse two unrelated
+    stories that merely share boilerplate words:
+
+      B) a recent archive title containing BOTH the event brand AND the event
+         model (the LLM event-signature) AND a moderate headline overlap
+         (``token_set_ratio`` ≥ ``model_threshold``) — catches the SAME
+         happening under a divergent headline / language. The similarity
+         floor is what separates a real repeat ("Vesta sales +20%" → "Vesta
+         sales up 20 percent") from a different event on the same model
+         ("Vesta sales" vs "Vesta new colour"), which the archive's missing
+         event_type can't tell apart on its own;
+      A) no model confirmation (model absent / not in the title) → demand a
+         STRONG full-title match (≥ ``threshold``) within the same brand,
+         covering rephrases where model extraction failed.
+
+    Never suppresses or reclassifies — returns a 'возможно дубль' string the
+    caller appends to ``llm_reason`` (→ diverted to the review tab, where the
+    editor confirms; reversible, unlike the exact-match hard reject).
+
+    Returns None when there is no brand anchor (can't gate → don't risk a
+    false flag), on empty inputs, or no match. ``pub_titles`` must already be
+    normalised (``normalise_title``), matching how the archive index is built;
+    the archive's English titles (col D) align with the LLM's English
+    brand/model.
+    """
+    eb = (event_brand or "").strip().lower()
+    if not eb or not pub_titles:
+        return None  # no brand anchor → can't gate safely → stay silent
+    em = (event_model or "").strip().lower()
+    from news_agent.core.primary_source import normalise_title
+    nt = normalise_title(title)
+    if not nt:
+        return None
+    for pt in pub_titles:
+        if not pt or eb not in pt:
+            continue  # brand gate: the archive title must mention this brand
+        ratio = fuzz.token_set_ratio(nt, pt)
+        # B — same brand+model AND a plausibly-similar headline.
+        if em and len(em) >= 3 and em in pt and ratio >= model_threshold:
+            return (
+                f"(возможно дубль: уже публиковали о «{event_brand} "
+                f"{event_model}» — проверьте)"
+            )
+        # A — no model confirmation: demand a strong full-title match.
+        if ratio >= threshold:
+            return (
+                "(возможно дубль: похожий заголовок уже публиковали "
+                "— проверьте)"
+            )
+    return None

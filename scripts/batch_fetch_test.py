@@ -74,6 +74,7 @@ from news_agent.core.config_loader import (  # noqa: E402
     load_whitelist_domains,
 )
 from news_agent.core.dedup import (  # noqa: E402
+    published_dup_hint,
     recent_event_dup_hint,
     recent_model_dup_hint,
 )
@@ -1171,13 +1172,17 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                     "требует ручной проверки — Test-drive"
 
             # Advisory dup hint — accepted row only, never changes
-            # verdict/section. Prefer the Stage-2a SEMANTIC event-key
-            # (catches divergent-headline / cross-language repeats);
-            # fall back to the lexical P3-D brand_model. Append only ONE.
+            # verdict/section. Priority: (0) PUBLISHED-archive paraphrase —
+            # already in "Опубликованные (все)" under a divergent headline,
+            # the strongest "don't re-post" signal the exact gate missed;
+            # then (1) the Stage-2a SEMANTIC event-key vs our own recent runs;
+            # (2) the lexical P3-D brand_model. Append only ONE.
             try:
                 canon_u = canonicalise(r.article_url)
-                hint = None
-                if r.event_model and recent_ev:
+                hint = published_dup_hint(
+                    r.title, r.event_brand, r.event_model, PUBLISHED_TITLES,
+                )
+                if not hint and r.event_model and recent_ev:
                     hint = recent_event_dup_hint(
                         r.event_brand, r.event_model, r.event_type,
                         recent_ev, canon_u,

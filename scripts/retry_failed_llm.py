@@ -33,8 +33,12 @@ load_dotenv(ROOT / ".env", override=True)
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
 from news_agent.core.budget import BudgetTracker  # noqa: E402
 from news_agent.core.config_loader import load_sections  # noqa: E402
+from news_agent.core.dedup import published_dup_hint  # noqa: E402
 from news_agent.core.models import RawArticle  # noqa: E402
 from news_agent.settings import get_settings  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "scripts"))  # published_archive.py lives here
+import published_archive  # noqa: E402  reads "Опубликованные (все)" archive
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
@@ -86,6 +90,21 @@ def main() -> int:
     budget = BudgetTracker(getattr(settings, "max_cost_usd", 5.0))
     client = make_llm_client(settings)
     print(f"  provider: {client.provider_name}  model: {client.model}")
+
+    # Anti-dup parity with the main run: load the editor's published archive
+    # so a recovered row that paraphrases an already-published story gets the
+    # same "возможно дубль" hint (→ diverted to review by the push). Resilient:
+    # any failure → empty set → published_dup_hint stays silent, never breaks.
+    try:
+        _editor_id = os.environ.get(
+            "EDITOR_SPREADSHEET_ID",
+            "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
+        _pub_urls, pub_titles = published_archive.load_published_index(
+            svc, _editor_id)
+        print(f"  published-archive dedup: {len(pub_titles)} recent titles loaded")
+    except Exception as e:  # noqa: BLE001 — never break recovery over the gate
+        pub_titles = set()
+        print(f"  published-archive load failed (paraphrase dedup off): {e!s:80}")
 
     resp = svc.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AB"
@@ -177,6 +196,15 @@ def main() -> int:
             continue
         section = review.section if review.section in section_names else "Other news"
         region = review.region or "Global"
+        # Archive paraphrase dedup — parity with the main run's LLM pass: an
+        # already-published story recovered here under a divergent headline
+        # gets a 'возможно дубль' hint appended to the reason, so the push
+        # diverts it to review instead of the clean feed. Advisory only.
+        _es = getattr(review, "event_signature", None)
+        if _es is not None and pub_titles:
+            _dup = published_dup_hint(clean_title, _es.brand, _es.model, pub_titles)
+            if _dup:
+                reason = ((reason + " " + _dup) if reason else _dup)[:300]
         try:
             tp, ut = client.translate_title(title=clean_title, source_language_hint=None)
             budget.record(ut)
