@@ -63,6 +63,12 @@ url_rewrites:
 #
 # Verified via smoke test on 2026-04-22 (all returned 200 with real body):
 impersonate_domains:
+  # source-yield audit (jun-24): curl_cffi NOW gets jdpower's index (200 + 56
+  # real article links). Moved here from playwright_domains, where it was
+  # 403-dead (Playwright not rescuing it). If article BODIES prove JS-rendered,
+  # the next report shows links-but-0-candidates -> revisit.
+  - jdpower.com
+  - www.jdpower.com
   - www.nhtsa.gov
   - nhtsa.gov
   - www.media.volvocars.com
@@ -164,8 +170,8 @@ impersonate_domains:
 # domain in ``impersonate_domains`` only.
 playwright_domains:
   # Cloudflare JS challenge — verified that curl_cffi is not enough
-  - jdpower.com
-  - www.jdpower.com
+  # (jdpower.com moved to impersonate_domains jun-24 — curl_cffi now suffices
+  #  for its index: 200 + 56 real article links; was 403-dead here.)
   - tass.ru
   - pressroom.toyota.com
   - pressroom.lexus.com
