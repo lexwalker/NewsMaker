@@ -69,6 +69,19 @@ impersonate_domains:
   # the next report shows links-but-0-candidates -> revisit.
   - jdpower.com
   - www.jdpower.com
+  # jun-24 re-audit: moved from playwright_domains — curl_cffi gets their index
+  # (200 + 5-40 real article links) AND article bodies (verified Toyota 491 chars,
+  # Mercedes-USA 16k); Playwright (slower + broken here) was leaving them dead.
+  - pressroom.toyota.com
+  - pressroom.lexus.com
+  - cleantechnica.com
+  - fleetnews.co.uk
+  - media.mbusa.com
+  - uk.nissannews.com
+  - me.nissanmotornews.com
+  - usa.nissannews.com
+  - omodaauto.co.uk
+  - www.genesisnewseurope.com
   - www.nhtsa.gov
   - nhtsa.gov
   - www.media.volvocars.com
@@ -169,21 +182,15 @@ impersonate_domains:
 # Playwright is ~10× slower than curl_cffi. When both work, keep the
 # domain in ``impersonate_domains`` only.
 playwright_domains:
-  # Cloudflare JS challenge — verified that curl_cffi is not enough
-  # (jdpower.com moved to impersonate_domains jun-24 — curl_cffi now suffices
-  #  for its index: 200 + 56 real article links; was 403-dead here.)
-  - tass.ru
-  - pressroom.toyota.com
-  - pressroom.lexus.com
-  - cleantechnica.com
-  - fleetnews.co.uk
-  - media.mbusa.com
-  - uk.nissannews.com
-  - me.nissanmotornews.com
-  - usa.nissannews.com
-  - omodaauto.co.uk
+  # jun-24 source-yield re-audit: 10 entries that returned 200 + real article
+  # links AND extractable bodies via curl_cffi were MOVED to impersonate_domains
+  # (Playwright is ~10x slower and is currently broken on this host — chromium
+  # not installed — so it was leaving them 403-dead). The old "curl not enough"
+  # note proved stale for them. tass.ru was ALSO removed from here (it was in
+  # BOTH lists): it's an RSS feed served as text/html, recovered by the
+  # RSS-detection fix via the impersonate/httpx path — never needs Playwright.
 
-  # JS-rendered SPA OEM press rooms
+  # JS-rendered SPA OEM press rooms (curl_cffi returns only the empty shell)
   - media.vw.com
   - www.hyundainews.com
   - media.mercedes-benz.com
@@ -194,7 +201,6 @@ playwright_domains:
   - en.kg-mobility.com
   - www.polestar.com
   - ir.zeekrgroup.com
-  - www.genesisnewseurope.com
   - media.lamborghini.com
 
   # NOTE: these hosts returned 403 from Playwright even with stealth —

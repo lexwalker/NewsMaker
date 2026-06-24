@@ -866,19 +866,28 @@ def process_source(
     html = resp.text
     content_type = resp.headers.get("Content-Type", "").lower()
 
-    # Check whether the page is itself an RSS/Atom feed
+    # Check whether the page is itself an RSS/Atom feed. The BODY is the
+    # authoritative signal: some servers (e.g. tass.ru/rss/v2.xml) serve a
+    # valid feed with Content-Type: text/html, so AND-gating detection on an
+    # xml content-type silently dropped the whole feed -> 0 links. Detect on
+    # body-OR-ctype, then commit to the RSS branch ONLY if feedparser actually
+    # yields entries — so a stray "<rss" inside an HTML page harmlessly falls
+    # through to HTML mode instead of being trapped as an empty feed.
     head_lower = html[:1000].lower()
-    if any(t in content_type for t in ("rss", "atom", "xml")) and (
-        "<rss" in head_lower or "<feed" in head_lower
-    ):
-        r.detected_type = "rss"
-        r.feed_url = url
+    looks_like_feed = (
+        any(t in content_type for t in ("rss", "atom", "xml"))
+        or "<rss" in head_lower or "<feed" in head_lower
+    )
+    if looks_like_feed:
         cap = _items_cap_for(url)
         entries = feedparser.parse(html).entries[:cap]
-        r.articles_attempted = len(entries)
-        _fill_from_rss_entries(client, entries, r, source_idx, article_rows)
-        r.elapsed_ms = int((time.monotonic() - t0) * 1000)
-        return r
+        if entries:
+            r.detected_type = "rss"
+            r.feed_url = url
+            r.articles_attempted = len(entries)
+            _fill_from_rss_entries(client, entries, r, source_idx, article_rows)
+            r.elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return r
 
     feed_url = discover_feed(client, url, html)
     if feed_url:
