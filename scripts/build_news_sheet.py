@@ -130,6 +130,29 @@ def _llm_flag(c: dict) -> str:
     return ""
 
 
+_PLACEHOLDER_TITLES = {"<unknown>", "unknown", "untitled", "no title", "n/a", "—", "-"}
+
+
+def _is_placeholder_title(combined: str) -> bool:
+    """True if the cluster's EN headline is empty / an UNKNOWN-style placeholder.
+
+    ``translate_title`` emits '<UNKNOWN>' when title extraction found nothing —
+    e.g. a 202 / SPA press-room page that yields a real body but no usable
+    <title> (the jun-24 row-33 leak: usa.nissannews.com). A titleless row must
+    never reach the clean feed; this routes it to review instead."""
+    if not combined:
+        return True
+    en = ""
+    for line in combined.splitlines():
+        if line.strip().lower().startswith("en:"):
+            en = line.split(":", 1)[1].strip()
+            break
+    cand = (en or combined).strip().lower()
+    # drop a trailing " (xx)" / " (<u)" language tag, then surrounding punctuation
+    cand = re.sub(r"\s*\(<?[a-zа-яё]{1,5}>?\)\s*$", "", cand).strip("«»\"'<> -\t")
+    return (not cand) or cand in _PLACEHOLDER_TITLES or cand.startswith("unknown")
+
+
 def _divert_to_review(svc, flagged: list[dict], run_human: str) -> None:
     """Send LLM-flagged clusters to the SHARED review tab (the same one
     sample_rejected uses) so the editor confirms keep/reject in one place,
@@ -869,14 +892,22 @@ def main() -> int:
 
     # Divert rows the LLM itself flagged (possible-dup / not-news) AWAY from
     # the clean feed — they go to the review tab for the editor to confirm,
-    # not into the main table (editor feedback, jun-2026).
-    flagged = [c for c in clean if _llm_flag(c)]
-    clean = [c for c in clean if not _llm_flag(c)]
+    # not into the main table (editor feedback, jun-2026). Same for a cluster
+    # whose headline failed to extract (UNKNOWN/empty): never push a titleless
+    # row to the feed — send it to review with a clear reason (row-33, jun-24).
+    for c in clean:
+        if _is_placeholder_title(c.get("canonical_title", "")):
+            c["_placeholder_title"] = True
+            c["llm_reason"] = ("пустой/UNKNOWN заголовок — извлечение заголовка "
+                               "не удалось (тело есть, нужен заголовок)")
+    flagged = [c for c in clean if _llm_flag(c) or c.get("_placeholder_title")]
+    clean = [c for c in clean if not (_llm_flag(c) or c.get("_placeholder_title"))]
     if flagged:
         n_dup = sum(1 for c in flagged if _llm_flag(c) == "dup")
-        n_junk = len(flagged) - n_dup
+        n_ph = sum(1 for c in flagged if c.get("_placeholder_title"))
+        n_junk = len(flagged) - n_dup - n_ph
         print(f"LLM-flagged → diverted to '{review_tab.REVIEW_TAB}': "
-              f"{len(flagged)} ({n_dup} possible-dup, {n_junk} not-news)")
+              f"{len(flagged)} ({n_dup} possible-dup, {n_junk} not-news, {n_ph} no-title)")
 
     svc = _svc()
     sheet_id, was_created = _ensure_tab(svc, NEWS_TAB)
