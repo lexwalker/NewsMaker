@@ -182,26 +182,25 @@ impersonate_domains:
 # Playwright is ~10× slower than curl_cffi. When both work, keep the
 # domain in ``impersonate_domains`` only.
 playwright_domains:
-  # jun-24 source-yield re-audit: 10 entries that returned 200 + real article
-  # links AND extractable bodies via curl_cffi were MOVED to impersonate_domains
-  # (Playwright is ~10x slower and is currently broken on this host — chromium
-  # not installed — so it was leaving them 403-dead). The old "curl not enough"
-  # note proved stale for them. tass.ru was ALSO removed from here (it was in
-  # BOTH lists): it's an RSS feed served as text/html, recovered by the
-  # RSS-detection fix via the impersonate/httpx path — never needs Playwright.
-
-  # JS-rendered SPA OEM press rooms (curl_cffi returns only the empty shell)
-  - media.vw.com
-  - www.hyundainews.com
-  - media.mercedes-benz.com
-  - media.renaultgroup.com
-  - media.jaguar.com
-  - media.stellantisnorthamerica.com
-  - www.globalsuzuki.com
-  - en.kg-mobility.com
-  - www.polestar.com
-  - ir.zeekrgroup.com
-  - media.lamborghini.com
+  # jun-25 Playwright RE-TEST. Chromium WORKS now (the earlier "broken / not
+  # installed" note was STALE). Tested the 38 audit JS-bucket sources through the
+  # real PlaywrightFetcher: only ~7 actually rendered >=5 article links. 14 are
+  # 403-bot-blocked EVEN WITH the browser (need a residential proxy — Playwright
+  # can't help), and 16 render but yield 0 links (cross-host / selector — a
+  # link-extraction problem, NOT a Playwright one). So this list is curated to
+  # ONLY the auto-value OEM the browser genuinely rescues, keeping any Playwright
+  # run bounded. (10 OEM that already work via curl_cffi live in
+  # impersonate_domains; tass.ru is RSS, handled there too.)
+  - www.hyundainews.com        # rendered 40 article links
+  - media.renaultgroup.com     # 12
+  - media.jaguar.com           # 13
+  - int-media.peugeot.com      # 17
+  - hongqi.ru                  # 6
+  # NOT here (Playwright renders them but finds 0 links — cross-host/selector,
+  # needs link-extract work, not a browser): media.vw.com, media.mercedes-benz.com,
+  # media.stellantisnorthamerica.com, www.globalsuzuki.com, en.kg-mobility.com,
+  # www.polestar.com, media.lamborghini.com, xpeng.com, media.lucidmotors.com.
+  # Blocked even with the browser (need proxy): ir.zeekrgroup.com.
 
   # NOTE: these hosts returned 403 from Playwright even with stealth —
   # they combine JS challenge with IP-reputation checks (datacenter IPs
