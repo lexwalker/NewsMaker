@@ -524,6 +524,11 @@ _ARTICLE_HINTS = ("/news/", "/article/", "/post/", "/20", "/story/", "-news-",
                                       # (numeric id, no slug — were rejected)
 
 
+# Slug-like query keys (aseancap.org serves the headline as news_post.php?slug=…).
+# Deliberately NOT q=/search=/filter= — those are result pages, not articles.
+_SLUG_QUERY_RE = re.compile(r"(?:^|&)(slug|article|title|news|story|post)=", re.I)
+
+
 def _looks_like_article(url: str) -> bool:
     p = urlparse(url)
     path = p.path.lower()
@@ -531,6 +536,17 @@ def _looks_like_article(url: str) -> bool:
         return False
     if any(seg in path for seg in _ARTICLE_HINTS):
         return True
-    # Long slug with hyphens → plausibly an article
-    last = path.rstrip("/").split("/")[-1]
-    return last.count("-") >= 3
+    # Long hyphenated slug → plausibly an article. If the LAST path segment is a
+    # pure numeric id (siam.in /…/auto-industry-performance-of-may-2026/609), the
+    # real slug is the segment before it — check that one.
+    segs = [s for s in path.rstrip("/").split("/") if s]
+    slug = segs[-1] if segs else ""
+    if slug.isdigit() and len(segs) >= 2:
+        slug = segs[-2]
+    if slug.count("-") >= 3:
+        return True
+    # Some sites carry the slug in the query string (aseancap.org). Slug-like
+    # query keys only, so /search?q=red-car-for-sale stays a non-article.
+    if p.query and p.query.count("-") >= 3 and _SLUG_QUERY_RE.search(p.query):
+        return True
+    return False
