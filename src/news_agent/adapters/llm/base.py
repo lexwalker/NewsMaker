@@ -1132,6 +1132,11 @@ Reject on-topic items that carry no concrete happening:
    dealers/parts; carsharing FLEET expansion; Russian-company financial results;
    market / loan / ownership surveys (Avito, NBKI). «всё что касается ТС в РФ - в
    Местные». Never "Economics" for an RF auto subject.
+   GUARD: a FOREIGN brand's event is NEVER Local, even when a Russian-language
+   outlet reports it - the source language is not the market. Route it by the
+   event (rule 2/4): a foreign powertrain/tech patent or discontinuation -> Other,
+   region=Global. Editor (24.06): the Porsche EREV-for-911 patent was wrongly
+   filed «Местные» -> it is «Другие» (Other, generic tech, region=Global).
 4) Other news - global, not a model debut: brand financial RESULTS (finished
    period); OEM partnerships / cooperation ("intention to deepen cooperation"
    counts); foreign showroom openings; global/US recalls; production-end /
