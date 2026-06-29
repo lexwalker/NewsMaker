@@ -27,6 +27,17 @@ def _parse_date(s: str) -> datetime | None:
     s = (s or "").strip()
     if not s:
         return None
+    # Google Sheets serial number: with valueRenderOption=UNFORMATTED_VALUE a
+    # date cell comes back as a float (days since the 1899-12-30 epoch), e.g.
+    # 46199.70 -> 2026-06-29. The recent (date-typed) rows arrive this way, so
+    # without this branch they fail every string format below and drop out of
+    # the recency window -> 0 recent titles -> the paraphrase dedup silently dies.
+    try:
+        serial = float(s)
+        if 30000 < serial < 80000:  # ~1982..2119, a plausible date serial
+            return datetime(1899, 12, 30, tzinfo=timezone.utc) + timedelta(days=serial)
+    except (ValueError, OverflowError):
+        pass
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
             return datetime.strptime(s[: len(fmt) + 2].strip(), fmt).replace(
