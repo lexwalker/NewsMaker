@@ -1069,6 +1069,8 @@ adjacent domains even if a car brand is named:
  - HEAVY trucks (грузовики, тягачи, lorries, heavy-duty), heavy-truck MARKET
    stats, truck service-network news -> REJECT - «грузовые (тяжёлые) - не наша
    тема». LIGHT commercial (pickups, light vans, minibuses) IS ours -> LCV.
+   МАЗ / КамАЗ / БелАЗ are heavy-truck makers - ANY of their events (a new МАЗ
+   service centre, a dealer move) is heavy -> reject «это тяжёлая техника».
  - motorcycles, e-bikes/scooters as a product (but RF micromobility REGULATION
    -> Local, step 3).
 Reject by FORM regardless of subject: clickbait/yellow-press wording; tips &
@@ -1182,6 +1184,8 @@ Reject on-topic items that carry no concrete happening:
    REJECT (lobbying).
  - "Lukashenko: EAEU scrappage fee may exceed car cost" -> Other news (утильсбор).
  - "Lada Niva test by zr.ru" -> Test-drive. "Jeep Wrangler Sarge editions" -> Other.
+ - A brand's OWN official teaser / preview of a specific model -> Confirmed (it is
+   official - Lamborghini Urus SE teaser «это факты», NOT Rumors).
  - "Gas pipeline restored in Dagestan" -> REJECT (not auto). "Knife attack near a
    bus station, victim was a taxi driver" -> REJECT (crime).
  - A Russian-language outlet reporting a FOREIGN/GLOBAL-brand event with NO Russian
