@@ -993,6 +993,17 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     Stops early on budget exhaustion (raises BudgetExceeded)."""
     settings = get_settings()
     client: LLMClient = make_llm_client(settings)
+    # The editorial DECISION (publish? section?) is the precision bottleneck and
+    # benefits from a stronger model; translation does not. Route ONLY
+    # editorial_review through EDITORIAL_MODEL when set (e.g. claude-sonnet-4-6),
+    # keeping translate/relevance on the cheaper default. Unset -> one model for
+    # all. (jun-29: Sonnet +7pp vs Haiku on the editor-labeled set, almost all on
+    # section accuracy; ~3x/call but cache caps it, ~$2.7/run editorial-only.)
+    editorial_client: LLMClient = client
+    _ed_model = os.environ.get("EDITORIAL_MODEL", "").strip()
+    if _ed_model and _ed_model != getattr(client, "model", ""):
+        editorial_client = make_llm_client(settings)
+        editorial_client.model = _ed_model
     sections = load_sections()
     budget = BudgetTracker(cap_usd=LLM_BUDGET_USD)
 
@@ -1021,6 +1032,8 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     )
     mode = "legacy (relevance + classify)" if use_legacy else "editorial_review (consolidated)"
     print(f"  provider: {client.provider_name}  model: {client.model}  mode: {mode}  cap: ${LLM_BUDGET_USD}")
+    if editorial_client is not client:
+        print(f"  editorial_review model: {editorial_client.model} (translate/relevance stay {client.model})")
 
     country = "Russia"  # portal country for now; будет параметром позже
     section_names = {s.name for s in sections}
@@ -1062,7 +1075,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             # NEW PATH: one consolidated LLM call returning publish/skip
             # + section + region + confidence + reason.
             try:
-                review, u = client.editorial_review(
+                review, u = editorial_client.editorial_review(
                     title=r.title,
                     body=r.body_excerpt or r.title,
                     sections=sections,

@@ -89,7 +89,16 @@ def main() -> int:
     sections = load_sections()
     budget = BudgetTracker(getattr(settings, "max_cost_usd", 5.0))
     client = make_llm_client(settings)
-    print(f"  provider: {client.provider_name}  model: {client.model}")
+    # Route editorial_review through EDITORIAL_MODEL (e.g. Sonnet) like the main
+    # run, so a recovered batch is judged by the same model; translate stays on
+    # the cheaper default.
+    editorial_client = client
+    _ed_model = os.environ.get("EDITORIAL_MODEL", "").strip()
+    if _ed_model and _ed_model != getattr(client, "model", ""):
+        editorial_client = make_llm_client(settings)
+        editorial_client.model = _ed_model
+    print(f"  provider: {client.provider_name}  model: {client.model}"
+          + (f"  editorial: {editorial_client.model}" if editorial_client is not client else ""))
 
     # Anti-dup parity with the main run: load the editor's published archive
     # so a recovered row that paraphrases an already-published story gets the
@@ -170,7 +179,7 @@ def main() -> int:
         # path never produced a reason, so a mid-run-failure recovery left col AE
         # — and the rejected-markup tab built from it — empty.
         try:
-            review, ur = client.editorial_review(
+            review, ur = editorial_client.editorial_review(
                 title=clean_title, body=body,
                 sections=sections, portal_country=portal_country,
             )
