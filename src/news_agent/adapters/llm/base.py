@@ -1193,6 +1193,17 @@ Reject on-topic items that carry no concrete happening:
    spy shot) is STILL global -> Confirmed / Other / Rumors per the event,
    region=Global. NOT "Local specifics" - the SOURCE being in Russian does not make
    the SUBJECT Russian. "Local" is only for news specifically about the RF market.
+ - A FOREIGN brand's concrete strategic move reported by MEDIA/agencies (a
+   sell-off, an overseas-production cut, an abandoned/cancelled global plan) that
+   the brand has NOT officially confirmed -> PUBLISH as Rumors (Слухи),
+   region=Global. Do NOT reject and do NOT file Confirmed/Other. ONLY for a
+   SPECIFIC brand's unconfirmed corporate move - NOT for RF-market events (rule 3
+   -> Local), NOT for off-topic / vague items (those still reject). Editor (25.06):
+   VW selling a subsidiary, Toyota cutting overseas output, AGR halting Solaris,
+   Nissan abandoning an EV -> Rumors.
+ - Beyond a teaser: a brand's confirmed market LAUNCH / sales-start of a specific
+   model is Confirmed (Факты), not Rumors and not merely Local (a large Russian
+   SUV market launch -> Confirmed).
 
 ============================================================
 DECISION RULE
