@@ -52,6 +52,7 @@ from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     parse_channel_html,
     to_channel_preview_url,
 )
+from news_agent.adapters.fetchers import nhtsa_recalls  # noqa: E402
 from news_agent.adapters.fetchers.base import make_http_client  # noqa: E402
 from news_agent.adapters.fetchers.impersonate import (  # noqa: E402
     CURL_CFFI_AVAILABLE,
@@ -184,6 +185,18 @@ TELEGRAM_SEED_URLS = [
     "https://t.me/sergtselikov",
     "https://t.me/autopotoknews",
 ]
+
+# NHTSA US-recalls structured source (editor request: "все отзывные компании
+# по США искать тут"). Appended to the source list when enabled (default on);
+# routed to the nhtsa_recalls adapter, NOT scraped. Lookback is wide to absorb
+# NHTSA's ~3-5 day publishing lag — the published-archive + cache dedup
+# collapses anything already surfaced, so a wide window only adds new
+# campaigns. Disable with NHTSA_RECALLS=0.
+ENABLE_NHTSA_RECALLS = os.environ.get("NHTSA_RECALLS", "1").strip() != "0"
+NHTSA_RECALLS_SENTINEL = nhtsa_recalls.RECALLS_ENDPOINT
+NHTSA_RECALL_LOOKBACK_DAYS = int(os.environ.get("NHTSA_RECALL_LOOKBACK_DAYS", "10") or 10)
+NHTSA_RECALL_MAX_ITEMS = int(os.environ.get("NHTSA_RECALL_MAX_ITEMS", "50") or 50)
+
 USER_AGENT = os.environ.get("USER_AGENT", "NewsMakerBot/0.1 (+test)")
 
 # Global politeness throttle (jun-21): minimum seconds between ANY two fetches,
@@ -808,11 +821,130 @@ def looks_like_news(title: str, body: str, published_at, url: str) -> bool:
 
 
 # ------------------------------------------------------------- core
+def _score_recall(article, r: SourceResult, row: ArticleRow) -> bool:  # type: ignore[no-untyped-def]
+    """Populate an ArticleRow from a NHTSA recall RawArticle.
+
+    Reuses the published-archive + cache dedup (so a campaign never
+    republishes), but DELIBERATELY skips two gates that don't fit recalls:
+      * the freshness window — NHTSA lags ~3-5 days, so a recall's
+        report_received_date is "old" the moment we first see it; "new"
+        is decided by dedup, not by a clock;
+      * the heuristic relevance grade — a recall is always a candidate;
+        the editorial constitution (Sonnet) makes the real keep/section
+        decision (foreign-brand recall → Other/Global; trailer/RV/bus → reject).
+    Always returns True (the row is written; verdict says whether it's a
+    candidate, an exact dup, or already published)."""
+    row.article_url = urldefrag(article.url)[0]
+    row.title = article.title
+    row.body_len = len(article.body)
+    row.body_excerpt = article.body[:1000]
+    row.published_at = article.published_at.isoformat() if article.published_at else ""
+    row.source_language = "en"
+    row.is_article = True
+    row.article_score = 1.0
+    row.article_reasons = "nhtsa-recall (structured)"
+    row.auto_topic = True
+    row.auto_hits = "recall"
+    # The NHTSA campaign IS the authoritative primary source.
+    row.primary_url = row.article_url
+    row.primary_domain = "nhtsa.gov"
+    row.primary_confidence = "high"
+    row.primary_method = "nhtsa-official"
+
+    # Within-run final-URL dedup.
+    canon = canonicalise(article.url)
+    if canon in SEEN_FINAL_URLS:
+        row.verdict = "Отклонить (дубль финального URL)"
+        row.article_reasons = "duplicate-final-url"
+        return True
+    SEEN_FINAL_URLS.add(canon)
+
+    # Already in the editor's published archive? (campaign URL or recent title)
+    pub_reason = already_published(
+        article.url, article.title, PUBLISHED_URLS, PUBLISHED_TITLES)
+    if pub_reason:
+        row.verdict = "Отклонить (уже опубликовано редактором)"
+        row.article_reasons = f"published-archive-{pub_reason}"
+        return True
+
+    # Classified on a prior run at the current rules? Restore — no re-LLM,
+    # no re-push (build_news_sheet also dedups by URL as a backstop).
+    uh = url_hash(canon)
+    if uh in PREVIOUSLY_SEEN:
+        cached = PREVIOUSLY_SEEN[uh]
+        version_ok = cached.get("cls_ver", "") == CLASSIFIER_VERSION
+        if cache_is_authoritative(
+            cached.get("verdict", ""), bool(cached.get("llm_section")), version_ok
+        ):
+            row.verdict = cached.get("verdict", "") or "Возможно новость"
+            row.llm_relevance = cached.get("llm_relevance", "")
+            row.llm_section = cached.get("llm_section", "")
+            row.llm_region = cached.get("llm_region", "")
+            row.llm_confidence = cached.get("llm_confidence", "")
+            row.llm_title_en = cached.get("llm_title_en", "")
+            row.llm_title_ru = cached.get("llm_title_ru", "")
+            row.llm_reason = cached.get("llm_reason", "")
+            row.event_brand = cached.get("event_brand", "")
+            row.event_model = cached.get("event_model", "")
+            row.event_type = cached.get("event_type", "")
+            row.llm_cost_usd = 0
+            row.llm_note = "из кэша"
+            row.from_cache = True
+            return True
+
+    # Fresh campaign → force into the editorial LLM pass.
+    row.verdict = "Возможно новость"
+    return True
+
+
+def _process_nhtsa_recalls(  # type: ignore[no-untyped-def]
+    client: httpx.Client,
+    url: str,
+    source_idx: int,
+    article_rows: list[ArticleRow],
+    t0: float,
+) -> SourceResult:
+    """Structured source: pull recent US recall campaigns from the NHTSA ODI
+    dataset and inject each as a candidate ArticleRow (see _score_recall)."""
+    r = SourceResult(url=url)
+    r.detected_type = "nhtsa"
+    r.feed_url = url
+    try:
+        articles = nhtsa_recalls.fetch_recent_recalls(
+            client,
+            lookback_days=NHTSA_RECALL_LOOKBACK_DAYS,
+            limit=NHTSA_RECALL_MAX_ITEMS,
+            now=(RUN_WINDOW.now if RUN_WINDOW is not None else None),
+        )
+    except Exception as e:  # noqa: BLE001 — a source failure must not crash the run
+        r.error = f"{type(e).__name__}: {e}"[:200]
+        r.elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return r
+    r.articles_attempted = len(articles)
+    for idx, article in enumerate(articles, start=1):
+        row = ArticleRow(
+            source_idx=source_idx,
+            source_url=url,
+            article_idx=idx,
+            article_url=article.url,
+        )
+        if _score_recall(article, r, row):
+            article_rows.append(row)
+    r.elapsed_ms = int((time.monotonic() - t0) * 1000)
+    return r
+
+
 def process_source(
     client: httpx.Client, url: str, source_idx: int, article_rows: list[ArticleRow]
 ) -> SourceResult:
     r = SourceResult(url=url)
     t0 = time.monotonic()
+
+    # NHTSA recalls branch (structured Socrata JSON) — pull recall campaigns
+    # directly, no HTML fetch. Handled first because it owns its own freshness
+    # (dedup-based, not the 24-48h window — NHTSA lags ~3-5 days).
+    if nhtsa_recalls.is_recalls_source(url):
+        return _process_nhtsa_recalls(client, url, source_idx, article_rows, t0)
 
     # Telegram branch (t.me / telegram.me) — use the public web preview.
     if is_telegram_url(url):
@@ -1944,6 +2076,10 @@ def main(argv: list[str] | None = None) -> int:
               f"(drop candidates already published by the editor).")
 
     urls = TELEGRAM_SEED_URLS + read_active_sources(svc, NUM_SOURCES)
+    if ENABLE_NHTSA_RECALLS:
+        urls.append(NHTSA_RECALLS_SENTINEL)
+        print("NHTSA recalls source enabled "
+              f"(lookback {NHTSA_RECALL_LOOKBACK_DAYS}d, cap {NHTSA_RECALL_MAX_ITEMS}).")
     if not urls:
         print("No active sources found in the sheet.", file=sys.stderr)
         return 2
