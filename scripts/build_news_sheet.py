@@ -459,6 +459,18 @@ def _col_letter(n: int) -> str:
     return out
 
 
+def _is_nhtsa_cluster(c: dict) -> bool:
+    """True for a NHTSA recall cluster — the authoritative US-recall source
+    the editor designated. Such a cluster must never be collapsed INTO a
+    secondary-source row by the fuzzy anti-dup; it gets its own row."""
+    blob = " ".join((
+        c.get("primary_domain") or "",
+        c.get("primary_url") or "",
+        c.get("canonical_url") or "",
+    )).lower()
+    return "nhtsa.gov" in blob
+
+
 def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
     members_urls = "\n".join(m["url"] for m in c["members"])
     flag = _flag_review(c["canonical_title"])
@@ -995,12 +1007,19 @@ def main() -> int:
             _maybe_patch_date(existing_row_by_url, c)
             continue
 
-        # 2) Fuzzy anti-dup — same story, different URL
-        match_row = _find_existing_match(c, existing_meta, brand_lex)
-        if match_row:
-            merge_into.append((match_row, c))
-            _maybe_patch_date(match_row, c)
-            continue
+        # 2) Fuzzy anti-dup — same story, different URL.
+        # EXCEPTION: a NHTSA recall is the authoritative US-recall source
+        # (editor directive) — never collapse it INTO a secondary-source row.
+        # It gets its own row, attributed to NHTSA. The exact-URL check above
+        # still stops the same campaign re-appearing; and a non-NHTSA story
+        # that matches an EXISTING NHTSA row still merges into it below, so
+        # NHTSA stays primary either way.
+        if not _is_nhtsa_cluster(c):
+            match_row = _find_existing_match(c, existing_meta, brand_lex)
+            if match_row:
+                merge_into.append((match_row, c))
+                _maybe_patch_date(match_row, c)
+                continue
 
         # 3) Truly new — schedule for prepend
         fresh.append(c)
