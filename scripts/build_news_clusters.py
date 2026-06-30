@@ -382,6 +382,15 @@ def _cluster_priority(
     dom = article["domain"]
     pub = article["pub_dt"] or datetime.max.replace(tzinfo=timezone.utc)
 
+    # NHTSA recall campaigns are the authoritative US-recall source the editor
+    # designated ("все отзывы по США — из NHTSA"). When a recall ALSO surfaces
+    # via blogs / OEM pages and clusters with them, NHTSA must win canonical
+    # ABSOLUTELY (ranks above tier-0 press-release hosts) so the story is
+    # attributed to the official campaign and never collapsed into a secondary
+    # source. The campaign URL / domain is nhtsa.gov on both url and primary.
+    if "nhtsa.gov" in (dom or "") or "nhtsa.gov" in (article.get("primary_dom") or ""):
+        return (-1, pub)
+
     # Legacy press_release_hosts override stays as tier 0
     if dom in press_release_hosts or any(
         dom.endswith("." + h) for h in press_release_hosts
