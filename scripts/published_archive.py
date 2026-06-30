@@ -56,8 +56,11 @@ def load_published_index(
     """(pub_urls, pub_recent_titles). Columns: D Название(EN) | E
     Заголовок локализованный(RU) | F Начало активности | L Outer Link."""
     try:
+        # A:R (NOT A1:R6000): the archive outgrew 6000 rows (jun-2026: 6077),
+        # and a hard row cap silently TRUNCATES the most-recent publications —
+        # exactly the ones the anti-dup must catch. Open-ended range reads all.
         rows = svc.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id, range=f"'{PUB_TAB}'!A1:R6000",
+            spreadsheetId=spreadsheet_id, range=f"'{PUB_TAB}'!A:R",
             valueRenderOption="UNFORMATTED_VALUE",
         ).execute().get("values", [])
     except Exception:  # noqa: BLE001 — never break the prog over the gate

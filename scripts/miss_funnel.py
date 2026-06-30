@@ -119,7 +119,7 @@ def load_editor_pubs(svc, start: datetime, end: datetime) -> tuple[list[EditorPu
     A Раздел | D Название | E Заголовок локализованный | F Начало активности
     | L Outer Link."""
     rows = svc.spreadsheets().values().get(
-        spreadsheetId=EDITOR, range=f"'{PUB_TAB}'!A1:R6000",
+        spreadsheetId=EDITOR, range=f"'{PUB_TAB}'!A:R",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute().get("values", [])
     pubs: list[EditorPub] = []

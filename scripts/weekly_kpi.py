@@ -71,7 +71,7 @@ def _svc():
 def load_archive(svc):
     """Return (all_entries: list[Item], section_by_urlkey: dict, dated: list[(dt,Item)])."""
     rows = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET, range=f"'{PUB_TAB}'!A1:R6000",
+        spreadsheetId=SHEET, range=f"'{PUB_TAB}'!A:R",
         valueRenderOption="UNFORMATTED_VALUE").execute().get("values", [])
 
     def c(r, i):

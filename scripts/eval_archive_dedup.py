@@ -67,7 +67,7 @@ def _svc():
 
 def load_archive(svc) -> list[ArchiveEntry]:
     rows = svc.spreadsheets().values().get(
-        spreadsheetId=EDITOR, range=f"'{PUB_TAB}'!A1:R6000",
+        spreadsheetId=EDITOR, range=f"'{PUB_TAB}'!A:R",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute().get("values", [])
     out: list[ArchiveEntry] = []
