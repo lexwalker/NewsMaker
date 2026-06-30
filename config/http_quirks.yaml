@@ -69,6 +69,13 @@ impersonate_domains:
   # the next report shows links-but-0-candidates -> revisit.
   - jdpower.com
   - www.jdpower.com
+  # jun-30 top-СМИ audit: auto.ru (Yandex) serves 266k + 16 passing auto
+  # articles via httpx, but intermittently load-blocks in the bulk run
+  # (v23 att=0). curl_cffi (Chrome JA3) stabilises it. Playwright does NOT
+  # help here (auto.ru heavy SPA / drive.ru news is API-only, not in the
+  # HTML) — verified jun-30, so browser-fetch was NOT re-enabled.
+  - auto.ru
+  - www.auto.ru
   # jun-24 re-audit: moved from playwright_domains — curl_cffi gets their index
   # (200 + 5-40 real article links) AND article bodies (verified Toyota 491 chars,
   # Mercedes-USA 16k); Playwright (slower + broken here) was leaving them dead.
