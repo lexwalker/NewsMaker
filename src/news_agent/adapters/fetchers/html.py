@@ -183,6 +183,22 @@ def extract_article(
 
 
 # ----------------------------------------------------- extraction primitives
+# JS-framework default document titles. A JS-rendered news page served to httpx
+# is an un-hydrated shell whose <title> is the build-tool boilerplate ("Document"
+# is the HTML5/Vite default). Treating these as a real title shadows the good RSS
+# fallback_title → the article is rejected as a placeholder. Skip them so the RSS
+# title (or og:title) wins. (jun-2026: recovered gazeta.ru auto RSS, whose article
+# pages all extracted title="Document".)
+_PLACEHOLDER_TITLES = {
+    "document", "untitled", "untitled document", "new tab", "new page",
+    "react app", "vite app", "vue app", "my app", "next app",
+}
+
+
+def _is_placeholder_title(title: str) -> bool:
+    return title.strip().lower() in _PLACEHOLDER_TITLES
+
+
 def _pick_title(soup: BeautifulSoup) -> str:
     for sel in [
         ('meta', {"property": "og:title"}),
@@ -190,13 +206,19 @@ def _pick_title(soup: BeautifulSoup) -> str:
     ]:
         tag = soup.find(sel[0], attrs=sel[1])
         if isinstance(tag, Tag) and tag.get("content"):
-            return str(tag.get("content"))
+            c = str(tag.get("content")).strip()
+            if c and not _is_placeholder_title(c):
+                return c
     h1 = soup.find("h1")
     if isinstance(h1, Tag):
-        return h1.get_text(strip=True)
+        c = h1.get_text(strip=True)
+        if c and not _is_placeholder_title(c):
+            return c
     title_tag = soup.find("title")
     if isinstance(title_tag, Tag):
-        return title_tag.get_text(strip=True)
+        c = title_tag.get_text(strip=True)
+        if c and not _is_placeholder_title(c):
+            return c
     return ""
 
 

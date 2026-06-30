@@ -90,3 +90,44 @@ def test_preferred_published_none_falls_back_to_heuristics() -> None:
     assert art is not None
     assert art.published_at is not None
     assert art.published_at.astimezone(timezone.utc).isoformat().startswith("2026-04-10")
+
+
+def test_placeholder_page_title_falls_back_to_rss_title() -> None:
+    """JS-shell pages served to httpx carry a framework default <title>
+    ("Document"). That placeholder must NOT shadow the real RSS fallback_title
+    — otherwise the article is rejected as a single-word placeholder.
+
+    Regression: gazeta.ru auto-RSS article pages all extracted title="Document",
+    so every fresh auto item was dropped (0-pass).
+    """
+    html = """<html><head><title>Document</title></head>
+    <body><div id="root"></div>
+    <p>Тест-драйв нового кроссовера показал хорошую динамику и расход.</p>
+    </body></html>"""
+    art = extract_article(
+        html=html,
+        url="https://www.gazeta.ru/auto/2026/06/30/belgee-x70.shtml",
+        source_name="gazeta",
+        source_url="https://www.gazeta.ru/",
+        source_language="ru",
+        fallback_title="Место силы: тест-драйв Belgee X70",
+    )
+    assert art is not None
+    assert art.title == "Место силы: тест-драйв Belgee X70"
+    assert art.title.lower() != "document"
+
+
+def test_real_title_still_wins_over_fallback() -> None:
+    """Guard: a genuine page <title> must still be used (not over-eagerly
+    discarded as a placeholder)."""
+    html = """<html><head><title>BYD Atto 2 refresh spied in China</title></head>
+    <body><h1>BYD Atto 2 refresh spied in China</h1>
+    <p>Spy photographers caught the updated crossover testing near the plant.</p>
+    </body></html>"""
+    art = extract_article(
+        html=html, url="https://example.com/byd", source_name="ex",
+        source_url="https://example.com/", source_language="en",
+        fallback_title="some rss title",
+    )
+    assert art is not None
+    assert art.title == "BYD Atto 2 refresh spied in China"
