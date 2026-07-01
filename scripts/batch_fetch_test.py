@@ -1924,9 +1924,11 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         description="NewsMaker batch fetch — scheduled / ad-hoc news ingest",
     )
     p.add_argument(
-        "--since-overlap-minutes", type=int, default=20,
-        help="How far before last_run_at to start the fetch window (default 20). "
-             "Catches publications that crossed the previous run's boundary.",
+        "--since-overlap-minutes", type=int, default=120,
+        help="How far before last_run_at to start the fetch window (default 120 "
+             "= 2h). Re-scans the 2h before the last run so articles that only "
+             "appeared on the source AFTER that run fetched it are still caught "
+             "(a source-timing coverage lever). Re-fetched items are deduped.",
     )
     p.add_argument(
         "--max-lookback-hours", type=int, default=48,
