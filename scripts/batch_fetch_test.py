@@ -166,6 +166,15 @@ HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # DISABLED on timeouts, so this just widens the window once.
 ENABLE_LLM = True         # flip to False to run pure heuristics again
 LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
+# Circuit breaker: this many CONSECUTIVE editorial_review failures = a
+# persistent outage (org-disabled, credit-exhausted, bad model id, 429 storm)
+# → abort the pass loudly instead of silently burning every remaining call.
+CONSEC_LLM_ERRORS_ABORT = 5
+# Published-archive sanity floors (the archive is ~6000 rows; thousands of
+# URLs / dozens of recent titles are the legitimate minimum). Below these the
+# dedup gate is degraded — a state that has silently occurred 3 times.
+ARCHIVE_URLS_FLOOR = 1000
+ARCHIVE_TITLES_FLOOR = 20
 FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # legacy fallback (ad-hoc runs)
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
 STATE_PATH = Path(os.environ.get("RUN_STATE_PATH", "./data/state.json"))
@@ -1126,14 +1135,17 @@ def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
         )
 
 
-def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> None:
+def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> dict:
     """For every certain/possible row: run LLM editorial review + translate.
 
     By default uses the consolidated `editorial_review` call (replaces
     is_automotive + classify_section in one). Pass ``use_legacy=True`` to
     fall back to the old 2-call sequence.
 
-    Stops early on budget exhaustion (raises BudgetExceeded)."""
+    Stops early on budget exhaustion (raises BudgetExceeded) or on a
+    persistent editorial_review failure (circuit breaker — see the abort
+    block). Returns ``{"aborted": reason_or_empty}`` so main() can fail the
+    run loudly instead of pushing a silently truncated feed (incident I2)."""
     settings = get_settings()
     client: LLMClient = make_llm_client(settings)
     # The editorial DECISION (publish? section?) is the precision bottleneck and
@@ -1165,7 +1177,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             f"LLM pass: кандидатов для LLM нет "
             f"(из кэша: {cached_count} строк — LLM не вызван)."
         )
-        return
+        return {"aborted": ""}
 
     print(
         f"\nLLM pass: {len(candidates)} свежих кандидатов "
@@ -1209,6 +1221,8 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         print(f"  Stage2a: event-key lookup skipped ({type(_e).__name__})")
         recent_ev = {}
 
+    consec_errors = 0   # circuit breaker: N in a row → persistent failure
+    aborted = ""        # non-empty = why the pass stopped early
     for i, r in enumerate(candidates, start=1):
         # ============================================================
         # Stage 1+2: editorial review (NEW path — consolidated call)
@@ -1227,25 +1241,37 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 budget.record(u)
                 r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
             except Exception as e:  # noqa: BLE001
-                r.llm_note = f"editorial_review error: {e!s:100}"
-                # An account-level usage-limit 400 ("reached your specified API
-                # usage limits") is PERSISTENT — every remaining call will fail
-                # the same way. Don't silently burn the rest of the candidates
-                # (that truncated the tail every run, dropping the last ~15% —
-                # incl. NHTSA recalls). Abort loudly so the operator raises the
-                # limit; the untouched rows stay "Возможно новость" and re-run
-                # next time (cache is not authoritative for them).
+                r.llm_note = f"editorial_review error: {str(e)[:200]}"
+                consec_errors += 1
+                # Persistent failures must ABORT, not silently burn the rest of
+                # the candidates (the I2 incident: a usage-limit 400 truncated
+                # the tail ~15% of every run, invisible outside per-row notes).
+                # Two triggers:
+                #   • fast-path: the known usage-limit wording;
+                #   • generic: N consecutive failures of ANY wording — catches
+                #     org-disabled 403 (the v16 broken run), credit-exhausted,
+                #     404 from a typo'd EDITORIAL_MODEL, sustained 429 storms,
+                #     and any future rewording of the limit message.
+                # Untouched rows stay "Возможно новость" and re-run next time
+                # (the cache is not authoritative for them).
                 _em = str(e).lower()
-                if "usage limit" in _em or "reached your specified" in _em:
+                _limit_hit = "usage limit" in _em or "reached your specified" in _em
+                if _limit_hit or consec_errors >= CONSEC_LLM_ERRORS_ABORT:
+                    aborted = (
+                        "usage limit" if _limit_hit
+                        else f"{consec_errors} consecutive editorial_review errors "
+                             f"(last: {str(e)[:120]})"
+                    )
                     print(
-                        f"\n!!! Anthropic API usage limit reached at candidate "
-                        f"{i}/{len(candidates)} — ABORTING LLM pass; "
-                        f"{len(candidates) - i} candidates left unclassified. "
-                        f"Raise the limit in the Anthropic Console (Billing → "
-                        f"Usage limits) and re-run.", file=sys.stderr,
+                        f"\n!!! LLM pass ABORTED at candidate {i}/{len(candidates)}"
+                        f" — {aborted}. {len(candidates) - i} candidates left "
+                        f"unclassified; they will re-run next time. "
+                        f"(usage limit → raise it in Anthropic Console → Billing.)",
+                        file=sys.stderr,
                     )
                     break
                 continue
+            consec_errors = 0  # a successful call resets the breaker
 
             r.llm_relevance = "Да" if review.should_publish else "Нет"
             # Hybrid dedup Stage 1: capture the semantic event-signature
@@ -1387,7 +1413,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 r.llm_relevance = "Да" if rel.is_automotive_or_economy else "Нет"
                 r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
             except Exception as e:  # noqa: BLE001
-                r.llm_note = f"relevance error: {e!s:100}"
+                r.llm_note = f"relevance error: {str(e)[:200]}"
                 continue
             if not rel.is_automotive_or_economy:
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + "LLM: не авто/эконом"
@@ -1429,7 +1455,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                             "требует ручной проверки — Test-drive"
                 except Exception as e:  # noqa: BLE001
                     r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                        f"classify error: {e!s:100}"
+                        f"classify error: {str(e)[:200]}"
                     continue
 
         # 3. Translate title
@@ -1445,7 +1471,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
         except Exception as e:  # noqa: BLE001
             r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                f"translate error: {e!s:100}"
+                f"translate error: {str(e)[:200]}"
 
         # Row passed both relevance + classification + translation. If it
         # came in as "Возможно новость" (yellow), promote it to "Точно
@@ -1464,6 +1490,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     print(f"\nLLM pass done: {snap['calls']} calls, "
           f"${snap['spent_usd']} / ${snap['cap_usd']}  "
           f"({snap['input_tokens']} in / {snap['output_tokens']} out)")
+    return {"aborted": aborted}
 
 
 def _run_corpus_primary_source_pass(article_rows: list[ArticleRow]) -> None:
@@ -2017,6 +2044,99 @@ def _append_run_log(
         f.write(_json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _health_check(
+    results: list[SourceResult],
+    article_rows: list[ArticleRow],
+    *,
+    llm_ran: bool,
+    llm_aborted: str,
+    dedup_enabled: bool,
+    prev_state: dict,
+) -> list[str]:
+    """End-of-run invariant check — the anti-silent-failure gate.
+
+    Every incident of the last month (archive truncation at 6000 rows,
+    usage-limit tail burn, serial-date dedup decay 219→47→0, Brotli garbage
+    HTML, JS-shell zero-yield) was detectable from data the run already had —
+    it just was never asserted. This checks the cheap invariants and returns
+    ALARMS: non-empty ⇒ the run is degraded, main() exits non-zero and the
+    chain does NOT push a silently broken feed. Softer anomalies print as
+    warnings without failing the run.
+    """
+    alarms: list[str] = []
+    warns: list[str] = []
+
+    # 1. LLM-pass integrity: after a completed pass no fresh candidate may
+    #    remain unclassified (llm_relevance empty = never got a verdict).
+    stuck = [
+        r for r in article_rows
+        if r.verdict in ("Точно новость", "Возможно новость")
+        and not r.from_cache and not r.llm_relevance
+    ]
+    if llm_ran:
+        if llm_aborted:
+            alarms.append(
+                f"LLM pass aborted ({llm_aborted}) — "
+                f"{len(stuck)} candidates unclassified"
+            )
+        elif stuck:
+            alarms.append(
+                f"{len(stuck)} candidates unclassified after a 'completed' "
+                f"LLM pass (errors swallowed per-row?)"
+            )
+
+    # 2. Published-archive dedup: floors + shrink-vs-last-run (the gate has
+    #    silently died 3 times; a >10% shrink is the early-decay signature).
+    if dedup_enabled:
+        prev_urls = int(prev_state.get("archive_urls_count") or 0)
+        if (len(PUBLISHED_URLS) < ARCHIVE_URLS_FLOOR
+                or len(PUBLISHED_TITLES) < ARCHIVE_TITLES_FLOOR):
+            alarms.append(
+                f"archive dedup degraded: {len(PUBLISHED_URLS)} urls / "
+                f"{len(PUBLISHED_TITLES)} recent titles (floors "
+                f"{ARCHIVE_URLS_FLOOR}/{ARCHIVE_TITLES_FLOOR})"
+            )
+        elif prev_urls and len(PUBLISHED_URLS) < prev_urls * 0.9:
+            warns.append(
+                f"archive urls shrank {prev_urls} → {len(PUBLISHED_URLS)} "
+                f"(>10% — archive read decaying?)"
+            )
+
+    # 3. Fetch mass-failure signal (informational unless widespread).
+    err_sources = sum(1 for s in results if s.error)
+    zero_links = sum(
+        1 for s in results if not s.error and s.articles_attempted == 0)
+    if results and err_sources > len(results) * 0.4:
+        warns.append(
+            f"{err_sources}/{len(results)} sources errored — mass fetch "
+            f"failure (network/proxy/WAF)?"
+        )
+
+    print("\n=== RUN HEALTH ===")
+    print(f"  sources : {len(results)} fetched | {err_sources} errored | "
+          f"{zero_links} reachable-but-0-links")
+    if llm_ran:
+        print(f"  llm     : {'ABORTED: ' + llm_aborted if llm_aborted else 'completed'}"
+              f" | stuck={len(stuck)}")
+    if dedup_enabled:
+        print(f"  dedup   : archive {len(PUBLISHED_URLS)} urls / "
+              f"{len(PUBLISHED_TITLES)} recent titles")
+    for w in warns:
+        print(f"  WARN  : {w}")
+    for a in alarms:
+        print(f"  ALARM : {a}")
+    if alarms:
+        print(
+            "!!! RUN DEGRADED — exiting non-zero so the chain does not push "
+            "a silently broken feed. State window NOT advanced (next run "
+            "re-covers this period; cached classifications make it cheap).",
+            file=sys.stderr,
+        )
+    else:
+        print("  status  : OK")
+    return alarms
+
+
 # ------------------------------------------------------------- main
 def main(argv: list[str] | None = None) -> int:
     global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
@@ -2105,6 +2225,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Published-archive dedup: {len(PUBLISHED_URLS)} source URLs + "
               f"{len(PUBLISHED_TITLES)} recent titles loaded "
               f"(drop candidates already published by the editor).")
+        # Floor alarm — this exact gate has silently died THREE times (empty
+        # tab read, serial-date decay 219→47→0, the A1:R6000 truncation). The
+        # archive is ~6000 rows, so thousands of URLs / dozens of recent
+        # titles are the legitimate minimum; below that the gate is degraded
+        # and dups will flow to the editor. Loud now, and re-checked with
+        # last-run comparison in the end-of-run health report.
+        if len(PUBLISHED_URLS) < ARCHIVE_URLS_FLOOR or len(PUBLISHED_TITLES) < ARCHIVE_TITLES_FLOOR:
+            print(
+                f"!!! ARCHIVE DEDUP DEGRADED: {len(PUBLISHED_URLS)} urls / "
+                f"{len(PUBLISHED_TITLES)} recent titles (floor "
+                f"{ARCHIVE_URLS_FLOOR}/{ARCHIVE_TITLES_FLOOR}) — already-published "
+                f"stories WILL reach the feed this run.", file=sys.stderr,
+            )
 
     # NHTSA recalls go FIRST (right after the telegram seeds), NOT last: the
     # editor requires the NHTSA source for US recalls, and a mid-run API
@@ -2228,11 +2361,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"News-like articles across all sources: {news_total}")
 
     # ------------------------------------------ LLM pass (certain + possible)
+    llm_ran = False
+    llm_aborted = ""
     if ENABLE_LLM and not args.no_llm:
+        llm_ran = True
         try:
-            _run_llm_pass(article_rows, use_legacy=args.legacy_llm)
+            _llm_stats = _run_llm_pass(article_rows, use_legacy=args.legacy_llm) or {}
+            llm_aborted = _llm_stats.get("aborted", "")
         except BudgetExceeded as e:
+            # The cap tripping mid-pass leaves the tail unclassified — same
+            # truncated-feed hazard as I2. Health check below fails the run.
             print(f"\n!!! Бюджет LLM превышен: {e}", file=sys.stderr)
+            llm_aborted = f"budget exceeded: {e}"
     elif args.no_llm:
         print(
             "\nLLM pass SKIPPED (--no-llm). 'Точно новость' / 'Возможно "
@@ -2264,6 +2404,14 @@ def main(argv: list[str] | None = None) -> int:
                 "Отклонить (не удалось извлечь)",
                 "Отклонить (уже опубликовано редактором)",
             }:
+                continue
+            # Don't persist accept-graded rows the LLM never classified
+            # (aborted/errored pass, --no-llm run): an unclassified row is NOT
+            # a final state. I2 froze 1000+ such rows stamped with the CURRENT
+            # cls_ver — harmless to correctness (cache_is_authoritative refuses
+            # them) but poisonous to forensics. Let the next run redo them.
+            if (row.verdict in {"Точно новость", "Возможно новость"}
+                    and not row.from_cache and not row.llm_relevance):
                 continue
             canon_u = canonicalise(row.article_url)
             uh = url_hash(canon_u)
@@ -2349,13 +2497,33 @@ def main(argv: list[str] | None = None) -> int:
     rows_new = sum(1 for r in article_rows if not r.from_cache)
     elapsed_total_s = (time.monotonic() - total_t0)
     run_at_dt = datetime.fromisoformat(run_ts.replace("Z", "+00:00"))
-    if RUN_WINDOW is not None:
+
+    # -------------------- end-of-run health check (anti-silent-failure) -----
+    alarms = _health_check(
+        results, article_rows,
+        llm_ran=llm_ran,
+        llm_aborted=llm_aborted,
+        dedup_enabled=not args.no_published_dedup,
+        prev_state=state.load(),
+    )
+
+    # State window advances ONLY on a healthy run: a degraded run must be
+    # re-covered by the next run (its unclassified rows re-fetch + re-classify;
+    # the cache makes the healthy part cost ~$0).
+    if RUN_WINDOW is not None and not alarms:
         try:
             state.update_success(
                 run_at=run_at_dt,
                 window_start=RUN_WINDOW.since,
                 articles=len(article_rows),
                 cost_usd=total_cost,
+                extra={
+                    # Baselines for the next run's health comparison + the
+                    # explicit stage-handoff pointer (which tab this run wrote).
+                    "archive_urls_count": len(PUBLISHED_URLS),
+                    "archive_titles_count": len(PUBLISHED_TITLES),
+                    "articles_tab": articles_tab,
+                },
             )
             print(
                 f"State saved: last_run_at={run_at_dt.isoformat(timespec='seconds')}, "
@@ -2369,6 +2537,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"{type(e).__name__}: {e}",
                 file=sys.stderr,
             )
+    elif RUN_WINDOW is not None:
+        print("State NOT advanced (degraded run) — next run re-covers this window.")
 
     try:
         _append_run_log(
@@ -2379,13 +2549,15 @@ def main(argv: list[str] | None = None) -> int:
             rows_new=rows_new,
             cost_usd=total_cost,
             elapsed_s=elapsed_total_s,
-            status="ok",
+            status="ok" if not alarms else ("degraded: " + "; ".join(alarms))[:200],
         )
         print(f"Run log appended: {args.runs_log}")
     except Exception as e:  # noqa: BLE001
         print(f"WARNING: failed to append run log: {e}", file=sys.stderr)
 
-    return 0
+    # Exit 3 = degraded: run_prog.ps1's Stage() aborts the chain on non-zero,
+    # so a truncated/undeduped feed is never pushed silently.
+    return 0 if not alarms else 3
 
 
 if __name__ == "__main__":

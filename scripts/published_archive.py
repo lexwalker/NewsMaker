@@ -63,7 +63,18 @@ def load_published_index(
             spreadsheetId=spreadsheet_id, range=f"'{PUB_TAB}'!A:R",
             valueRenderOption="UNFORMATTED_VALUE",
         ).execute().get("values", [])
-    except Exception:  # noqa: BLE001 — never break the prog over the gate
+    except Exception as e:  # noqa: BLE001 — never break the prog over the gate
+        # …but never die SILENTLY either: this exact gate has gone dark three
+        # times (empty-tab read, serial-date decay, the A1:R6000 truncation)
+        # and each time dups flowed to the editor for days. The caller's
+        # health check also floors the sizes; this line makes the cause
+        # greppable in the run log.
+        import sys
+        print(
+            f"!!! published-archive load FAILED ({type(e).__name__}: "
+            f"{str(e)[:200]}) — archive dedup is EMPTY this run.",
+            file=sys.stderr,
+        )
         return set(), set()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)

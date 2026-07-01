@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
 
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
-from news_agent.core.budget import BudgetTracker  # noqa: E402
+from news_agent.core.budget import BudgetExceeded, BudgetTracker  # noqa: E402
 from news_agent.core.config_loader import load_sections  # noqa: E402
 from news_agent.core.dedup import published_dup_hint  # noqa: E402
 from news_agent.core.models import RawArticle  # noqa: E402
@@ -113,7 +113,8 @@ def main() -> int:
         print(f"  published-archive dedup: {len(pub_titles)} recent titles loaded")
     except Exception as e:  # noqa: BLE001 — never break recovery over the gate
         pub_titles = set()
-        print(f"  published-archive load failed (paraphrase dedup off): {e!s:80}")
+        print(f"  !!! published-archive load FAILED (paraphrase dedup OFF this "
+              f"run): {str(e)[:160]}", file=sys.stderr)
 
     resp = svc.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AB"
@@ -157,6 +158,7 @@ def main() -> int:
     section_names = {s.name for s in sections}
     portal_country = "Russia"  # RU portal hard-coded for now
     rejected_count = 0
+    consec_errors = 0  # circuit breaker — parity with the main run's LLM pass
     for idx, (sheet_row, r) in enumerate(targets, start=1):
         url = _get(r, COL_URL)
         title = _get(r, COL_TITLE)
@@ -184,9 +186,29 @@ def main() -> int:
                 sections=sections, portal_country=portal_country,
             )
             budget.record(ur)
+        except BudgetExceeded as e:
+            # Cap tripped mid-recovery: STOP but FLUSH what's already paid for
+            # (previously this propagated and discarded every accumulated
+            # update — $1-2 of recovery work thrown away, sheet unchanged).
+            print(f"\n!!! LLM budget exceeded at {idx}/{len(targets)} — stopping; "
+                  f"flushing {len(updates)} accumulated updates.", file=sys.stderr)
+            break
         except Exception as e:  # noqa: BLE001
-            print(f"  [{idx}/{len(targets)}] EDITORIAL_REVIEW FAILED row {sheet_row}: {e!s:80}")
+            print(f"  [{idx}/{len(targets)}] EDITORIAL_REVIEW FAILED row {sheet_row}: {str(e)[:160]}")
+            consec_errors += 1
+            _em = str(e).lower()
+            # Same abort semantics as the main run (parity for I2): a
+            # usage-limit 400 or N consecutive failures of any wording is a
+            # persistent outage — burning one failing call per remaining row
+            # would replay the exact incident this tool exists to fix.
+            if ("usage limit" in _em or "reached your specified" in _em
+                    or consec_errors >= 5):
+                print(f"\n!!! persistent LLM failure ({str(e)[:120]}) — aborting "
+                      f"retry pass at {idx}/{len(targets)}; flushing "
+                      f"{len(updates)} accumulated updates.", file=sys.stderr)
+                break
             continue
+        consec_errors = 0
         reason = (review.reason or "")[:300]
         _rlow = (review.reason or "").lower()
         # Reject if the model says skip, OR says publish while its own reason
@@ -217,8 +239,12 @@ def main() -> int:
         try:
             tp, ut = client.translate_title(title=clean_title, source_language_hint=None)
             budget.record(ut)
+        except BudgetExceeded as e:
+            print(f"\n!!! LLM budget exceeded at {idx}/{len(targets)} — stopping; "
+                  f"flushing {len(updates)} accumulated updates.", file=sys.stderr)
+            break
         except Exception as e:  # noqa: BLE001
-            print(f"  [{idx}/{len(targets)}] TRANSLATE FAILED row {sheet_row}: {e!s:80}")
+            print(f"  [{idx}/{len(targets)}] TRANSLATE FAILED row {sheet_row}: {str(e)[:160]}")
             continue
         # Build new title cell with EN/RU + lang tags
         lang = (tp.source_language or "").lower()[:2]

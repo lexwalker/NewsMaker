@@ -94,17 +94,25 @@ class RunState:
         window_start: datetime,
         articles: int,
         cost_usd: float,
+        extra: dict[str, Any] | None = None,
     ) -> None:
-        """Persist a successful-run snapshot."""
+        """Persist a successful-run snapshot.
+
+        ``extra`` — additional flat fields merged into the snapshot (e.g.
+        health-check baselines like archive index sizes, or the articles-tab
+        name for an explicit stage handoff). Core fields always win on key
+        collision."""
         run_at_utc = run_at.astimezone(timezone.utc) if run_at.tzinfo else run_at.replace(tzinfo=timezone.utc)
         win_utc = window_start.astimezone(timezone.utc) if window_start.tzinfo else window_start.replace(tzinfo=timezone.utc)
-        self.save({
+        payload = dict(extra or {})
+        payload.update({
             "last_run_at": run_at_utc.isoformat(timespec="seconds"),
             "last_run_status": "ok",
             "last_run_window_start": win_utc.isoformat(timespec="seconds"),
             "last_run_articles": int(articles),
             "last_run_cost_usd": round(float(cost_usd), 4),
         })
+        self.save(payload)
 
     # ------------------------------------------------------ window strategy
     def compute_window(
