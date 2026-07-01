@@ -1228,6 +1228,23 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
             except Exception as e:  # noqa: BLE001
                 r.llm_note = f"editorial_review error: {e!s:100}"
+                # An account-level usage-limit 400 ("reached your specified API
+                # usage limits") is PERSISTENT — every remaining call will fail
+                # the same way. Don't silently burn the rest of the candidates
+                # (that truncated the tail every run, dropping the last ~15% —
+                # incl. NHTSA recalls). Abort loudly so the operator raises the
+                # limit; the untouched rows stay "Возможно новость" and re-run
+                # next time (cache is not authoritative for them).
+                _em = str(e).lower()
+                if "usage limit" in _em or "reached your specified" in _em:
+                    print(
+                        f"\n!!! Anthropic API usage limit reached at candidate "
+                        f"{i}/{len(candidates)} — ABORTING LLM pass; "
+                        f"{len(candidates) - i} candidates left unclassified. "
+                        f"Raise the limit in the Anthropic Console (Billing → "
+                        f"Usage limits) and re-run.", file=sys.stderr,
+                    )
+                    break
                 continue
 
             r.llm_relevance = "Да" if review.should_publish else "Нет"
@@ -2087,11 +2104,16 @@ def main(argv: list[str] | None = None) -> int:
               f"{len(PUBLISHED_TITLES)} recent titles loaded "
               f"(drop candidates already published by the editor).")
 
-    urls = TELEGRAM_SEED_URLS + read_active_sources(svc, NUM_SOURCES)
+    # NHTSA recalls go FIRST (right after the telegram seeds), NOT last: the
+    # editor requires the NHTSA source for US recalls, and a mid-run API
+    # usage-limit 400 truncates the TAIL of the candidate list — appended last,
+    # the recalls were the consistent victims (they classify fine when reached;
+    # see the editorial-review abort below). Early → always processed.
+    nhtsa_seed = [NHTSA_RECALLS_SENTINEL] if ENABLE_NHTSA_RECALLS else []
     if ENABLE_NHTSA_RECALLS:
-        urls.append(NHTSA_RECALLS_SENTINEL)
         print("NHTSA recalls source enabled "
               f"(lookback {NHTSA_RECALL_LOOKBACK_DAYS}d, cap {NHTSA_RECALL_MAX_ITEMS}).")
+    urls = TELEGRAM_SEED_URLS + nhtsa_seed + read_active_sources(svc, NUM_SOURCES)
     if not urls:
         print("No active sources found in the sheet.", file=sys.stderr)
         return 2
