@@ -77,19 +77,21 @@ class ImpersonateFetcher:
         self.impersonate = impersonate
         self.timeout = timeout
 
-    def fetch(self, url: str) -> tuple[int, str]:
+    def fetch(self, url: str, proxy: str | None = None) -> tuple[int, str]:
         """Return ``(status_code, rendered_html)``.
+
+        ``proxy`` (e.g. ``socks5://127.0.0.1:40000``) routes this request
+        through a proxy — used to reach foreign sites via a WARP/VPN exit
+        while Russian sites go direct. curl (libcurl) supports SOCKS natively.
 
         Raises on connection failure so the caller can fall back.
         """
         host = urlparse(url).netloc.lower()
         profile = PER_HOST_IMPERSONATE.get(host, self.impersonate)
-        r = _cffi_requests.get(  # type: ignore[union-attr]
-            url,
-            impersonate=profile,
-            timeout=self.timeout,
-            allow_redirects=True,
-        )
+        kwargs = dict(impersonate=profile, timeout=self.timeout, allow_redirects=True)
+        if proxy:
+            kwargs["proxies"] = {"http": proxy, "https": proxy}
+        r = _cffi_requests.get(url, **kwargs)  # type: ignore[union-attr]
         # ``r.text`` does charset detection; fast and usually correct.
         return r.status_code, r.text
 

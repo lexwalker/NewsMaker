@@ -53,7 +53,7 @@ from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     to_channel_preview_url,
 )
 from news_agent.adapters.fetchers import nhtsa_recalls  # noqa: E402
-from news_agent.adapters.fetchers.base import make_http_client  # noqa: E402
+from news_agent.adapters.fetchers.base import make_http_client, host_matches  # noqa: E402
 from news_agent.adapters.fetchers.impersonate import (  # noqa: E402
     CURL_CFFI_AVAILABLE,
     ImpersonateAllowlist,
@@ -213,6 +213,11 @@ ARTICLES_TAB_BASE = "ТЕСТ статьи"
 # final-URL deduplication set.
 WHITELIST: set[str] = set()
 SEEN_FINAL_URLS: set[str] = set()
+# Split-tunnel proxy (config/http_quirks.yaml). Set in main() so the curl_cffi
+# path in _http_get can route foreign hosts through the proxy while .ru go
+# direct — mirroring the httpx client's routing.
+PROXY_URL: str = ""
+PROXY_DIRECT: set[str] = set()
 # Editor's published archive (loaded fresh each run in main): url_keys of
 # every published source + normalised titles of recently-published items.
 PUBLISHED_URLS: set[str] = set()
@@ -715,6 +720,8 @@ def make_client():  # -> RetryingHttpClient, but annotated loose for httpx.Clien
         timeout=HTTP_TIMEOUT,
         ssl_insecure_domains=q.ssl_insecure,
         url_rewrites=q.url_rewrites,
+        proxy_url=q.proxy_url,
+        proxy_direct=q.proxy_direct,
     )
 
 
@@ -776,7 +783,11 @@ def _http_get(client, url: str):
         and IMP_ALLOWLIST.matches(url)
     ):
         try:
-            status, html = IMP_FETCHER.fetch(url)
+            # Split-tunnel: foreign hosts via the proxy, .ru direct (same rule
+            # as the httpx client). curl (libcurl) does SOCKS natively.
+            _proxy = (PROXY_URL if (PROXY_URL and not host_matches(domain_of(url), PROXY_DIRECT))
+                      else None)
+            status, html = IMP_FETCHER.fetch(url, proxy=_proxy)
             return _PwResponse(url, status, html)
         except Exception as e:  # noqa: BLE001
             print(f"   ! curl_cffi failed on {url}: {type(e).__name__}: {str(e)[:80]}")
@@ -1992,6 +2003,7 @@ def main(argv: list[str] | None = None) -> int:
     global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
     global PUBLISHED_URLS, PUBLISHED_TITLES
     global PRIMARY_CUES, PW_FETCHER, PW_ALLOWLIST, IMP_FETCHER, IMP_ALLOWLIST
+    global PROXY_URL, PROXY_DIRECT
     global RUN_WINDOW
     args = _parse_cli(argv)
     state = RunState(args.state_path)
@@ -2147,6 +2159,14 @@ def main(argv: list[str] | None = None) -> int:
             IMP_FETCHER = None
     elif not CURL_CFFI_AVAILABLE:
         print("curl_cffi not installed — skipping TLS impersonation.")
+
+    # Split-tunnel proxy (config/http_quirks.yaml). Mirrors the httpx client's
+    # routing on the curl_cffi path. Empty proxy_url → no proxy (unchanged).
+    PROXY_URL = quirks.proxy_url
+    PROXY_DIRECT = quirks.proxy_direct
+    if PROXY_URL:
+        print(f"split-tunnel proxy ON: foreign -> {PROXY_URL}, direct for "
+              f"{sorted(PROXY_DIRECT)} (e.g. .ru stay on the real local IP).")
 
     try:
         with make_client() as client:

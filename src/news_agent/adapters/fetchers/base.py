@@ -113,6 +113,21 @@ DEFAULT_BROWSER_UA = (
 )
 
 
+def host_matches(host: str, patterns: set[str]) -> bool:
+    """True if ``host`` matches any pattern. A leading-dot pattern (".ru") is a
+    suffix match (covers iz.ru, sub.iz.ru, and bare "ru"); a plain pattern
+    ("electrek.co") matches the host or any subdomain of it."""
+    host = (host or "").lower()
+    for p in patterns:
+        p = p.lower()
+        if p.startswith("."):
+            if host.endswith(p) or host == p[1:]:
+                return True
+        elif host == p or host.endswith("." + p):
+            return True
+    return False
+
+
 class RetryingHttpClient:
     """httpx.Client wrapper that transparently retries on:
         • HTTPX transient network errors (ReadError, RemoteProtocolError)
@@ -137,6 +152,8 @@ class RetryingHttpClient:
         backoff_base: float = 1.2,
         ssl_insecure_domains: set[str] | None = None,
         url_rewrites: dict[str, str] | None = None,
+        proxy_url: str = "",
+        proxy_direct: set[str] | None = None,
     ) -> None:
         self._headers = {
             "User-Agent": user_agent,
@@ -168,6 +185,12 @@ class RetryingHttpClient:
         self._insecure_client: httpx.Client | None = None
         self._ssl_insecure_domains = {d.lower() for d in (ssl_insecure_domains or set())}
         self._url_rewrites = dict(url_rewrites or {})
+        # Split-tunnel proxy (see host_matches / HttpQuirks). Empty proxy_url →
+        # never proxy (unchanged behaviour). Proxy clients are created lazily.
+        self._proxy_url = (proxy_url or "").strip()
+        self._proxy_direct = {d.lower() for d in (proxy_direct or set())}
+        self._proxy_client: httpx.Client | None = None
+        self._proxy_insecure_client: httpx.Client | None = None
         self.max_attempts = max_attempts
         self.backoff_base = backoff_base
 
@@ -181,6 +204,34 @@ class RetryingHttpClient:
                 verify=False,
             )
         return self._insecure_client
+
+    def _should_proxy(self, url: str) -> bool:
+        """Route through the proxy unless the host is in proxy_direct (.ru)."""
+        if not self._proxy_url:
+            return False
+        host = urlparse(url).netloc.lower()
+        return not host_matches(host, self._proxy_direct)
+
+    def _get_proxy_client(self, *, insecure: bool) -> httpx.Client:
+        attr = "_proxy_insecure_client" if insecure else "_proxy_client"
+        c = getattr(self, attr)
+        if c is None:
+            c = httpx.Client(
+                headers=self._headers,
+                follow_redirects=True,
+                timeout=self._timeout,
+                http2=False,
+                verify=not insecure,
+                proxy=self._proxy_url,
+            )
+            setattr(self, attr, c)
+        return c
+
+    def _pick_client(self, url: str) -> httpx.Client:
+        insecure = self._needs_insecure(url)
+        if self._should_proxy(url):
+            return self._get_proxy_client(insecure=insecure)
+        return self._get_insecure_client() if insecure else self._client
 
     def _needs_insecure(self, url: str) -> bool:
         if not self._ssl_insecure_domains:
@@ -206,8 +257,10 @@ class RetryingHttpClient:
 
     def close(self) -> None:
         self._client.close()
-        if self._insecure_client is not None:
-            self._insecure_client.close()
+        for c in (self._insecure_client, self._proxy_client,
+                  self._proxy_insecure_client):
+            if c is not None:
+                c.close()
 
     @property
     def headers(self) -> httpx.Headers:
@@ -235,7 +288,7 @@ class RetryingHttpClient:
           • 4xx — our fault (auth, not found, forbidden).
         """
         url = self._rewrite(url)
-        client = self._get_insecure_client() if self._needs_insecure(url) else self._client
+        client = self._pick_client(url)
 
         last_exc: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
@@ -320,6 +373,8 @@ def make_http_client(
     timeout: float = 20.0,
     ssl_insecure_domains: set[str] | None = None,
     url_rewrites: dict[str, str] | None = None,
+    proxy_url: str = "",
+    proxy_direct: set[str] | None = None,
 ) -> "RetryingHttpClient":
     """Return a browser-like HTTP client with automatic retries.
 
@@ -339,4 +394,6 @@ def make_http_client(
         timeout=timeout,
         ssl_insecure_domains=ssl_insecure_domains,
         url_rewrites=url_rewrites,
+        proxy_url=proxy_url,
+        proxy_direct=proxy_direct,
     )

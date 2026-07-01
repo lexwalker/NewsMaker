@@ -110,6 +110,13 @@ class HttpQuirks(BaseModel):
     url_rewrites: dict[str, str] = Field(default_factory=dict)
     playwright_domains: set[str] = Field(default_factory=set)
     impersonate_domains: set[str] = Field(default_factory=set)
+    # Split-tunnel: when proxy_url is set (e.g. socks5://127.0.0.1:40000, a
+    # WARP/VPN proxy for reaching foreign sites), route ALL fetches through it
+    # EXCEPT hosts matching proxy_direct — those go direct (the real local IP).
+    # Use case: the run exits via a foreign WARP IP that Russian sites (.ru)
+    # geo-block; proxy_direct=[".ru"] keeps them on the direct Russian IP.
+    proxy_url: str = ""
+    proxy_direct: set[str] = Field(default_factory=set)
 
 
 def load_http_quirks() -> HttpQuirks:
@@ -119,6 +126,8 @@ def load_http_quirks() -> HttpQuirks:
         url_rewrites={str(k): str(v) for k, v in (data.get("url_rewrites") or {}).items()},
         playwright_domains={d.strip().lower() for d in data.get("playwright_domains", []) if d},
         impersonate_domains={d.strip().lower() for d in data.get("impersonate_domains", []) if d},
+        proxy_url=str(data.get("proxy_url", "") or "").strip(),
+        proxy_direct={d.strip().lower() for d in data.get("proxy_direct", []) if d},
     )
 
 

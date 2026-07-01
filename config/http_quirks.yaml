@@ -1,5 +1,16 @@
 # Per-domain HTTP quirks — whitelisted workarounds for broken servers.
 #
+# `proxy_url` + `proxy_direct`:  split-tunnel. When proxy_url is set, ALL
+#   fetches route through it EXCEPT hosts matching proxy_direct, which use the
+#   real local IP. Use when the machine exits via a foreign WARP/VPN IP that
+#   Russian sites geo-block (403): point proxy_url at the local WARP proxy and
+#   keep `.ru` direct so they stay on the real Russian IP.
+#   Cloudflare WARP in proxy-mode exposes SOCKS5 at 127.0.0.1:40000.
+#   Empty proxy_url (default) = no proxy, unchanged behaviour.
+proxy_url: ""
+proxy_direct:
+  - .ru      # all Russian domains go direct (real local IP), not via the proxy
+#
 # `ssl_insecure`:  skip TLS verification. Ok ONLY for news/PR sites we just
 #                  READ HTML from. Never add a domain here that we submit
 #                  credentials to.
