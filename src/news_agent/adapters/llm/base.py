@@ -109,6 +109,22 @@ Return FALSE for:
 When unsure, prefer FALSE — the editor would rather see fewer correct
 items than wade through noise."""
 
+# ============================================================================
+# ██ DEAD CODE — DO NOT EDIT TO CHANGE PRODUCTION BEHAVIOR ██
+#
+# CLASSIFY_SYSTEM below is the LEGACY 2-call classifier prompt. Production
+# does NOT use it: the prog's editorial decision runs on EDITORIAL_REVIEW_SYSTEM
+# (the "constitution", ~line 1050 below, STEP 1/2/3 ladder). This legacy prompt
+# is reachable ONLY via `--legacy-llm` / the old pipeline path, and it
+# CONTRADICTS the live constitution in places (production-end routing, RF
+# recalls) — it reads like current policy but is not.
+#
+# Editing THIS string changes nothing in production (jun-23: a batch of editor
+# rules was wasted here before anyone noticed). Edit EDITORIAL_REVIEW_SYSTEM,
+# and confirm the edit landed: _compute_classifier_version() in
+# batch_fetch_test must CHANGE. Version didn't bump ⇒ you edited the wrong
+# prompt.
+# ============================================================================
 CLASSIFY_SYSTEM = """\
 You classify automotive news into one of a fixed list of sections. You
 also decide whether the news is specifically about the portal's country
@@ -1259,12 +1275,17 @@ EDITORIAL_REVIEW_SCHEMA = {
                 "model": {"type": "string"},
                 "event_type": {
                     "type": "string",
+                    # NO "" here: the prompt says EXACTLY one of these 15 and
+                    # "other" already covers none-of-the-above. An empty
+                    # event_type validated cleanly but produced a weak
+                    # signature key (brand|model|"") that silently degraded
+                    # the Stage-1 semantic dedup this field exists for.
                     "enum": [
                         "launch", "reveal", "spy_shot", "recall",
                         "financial", "sales_stat", "facelift",
                         "production_end", "partnership", "motorshow",
                         "pricing", "dealer", "tech", "regulation",
-                        "other", "",
+                        "other",
                     ],
                 },
             },

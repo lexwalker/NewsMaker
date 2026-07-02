@@ -1,6 +1,12 @@
 # Canonical sections — must match the 'Разделы новостей' sheet verbatim.
 # Refined from editorial answers: Q1/Q2/Q3/Q6/Q7 and group 1-7 examples
 # (Ольга, Рита, Д, Эмма).
+#
+# NOTE: production editorial_review reads ONLY the section NAMES from this
+# file; the routing logic lives in the constitution (EDITORIAL_REVIEW_SYSTEM,
+# base.py) and in places CONTRADICTS the descriptions below (they feed only
+# the dormant legacy classifier). Do NOT wire these descriptions into the
+# editorial prompt without an eval — they would inject conflicting policy.
 
 sections:
   - name: Confirmed

@@ -12,7 +12,6 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from news_agent.adapters.llm.base import (
     CLASSIFY_SCHEMA,
-    CLASSIFY_SYSTEM,
     EDITORIAL_REVIEW_SCHEMA,
     RELEVANCE_SCHEMA,
     RELEVANCE_SYSTEM,
