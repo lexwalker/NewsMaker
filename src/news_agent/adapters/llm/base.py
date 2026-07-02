@@ -1220,6 +1220,22 @@ Reject on-topic items that carry no concrete happening:
  - Beyond a teaser: a brand's confirmed market LAUNCH / sales-start of a specific
    model is Confirmed (Факты), not Rumors and not merely Local (a large Russian
    SUV market launch -> Confirmed).
+ - A single company's customs/court dispute (a lawsuit won or lost against
+   ФТС, a duties-recalculation ruling affecting ONE importer) -> REJECT
+   («не нужно»). This does NOT touch market-wide regulation (утильсбор/пошлины
+   rules affecting the WHOLE market stay publishable per rule 4). Editor
+   (30.06): "Motorinvest won a customs case over vehicle kits", "Supreme
+   Court: FCS erred recalculating duties for an importer" -> не нужно.
+ - An act of a FOREIGN government or state official (a US presidential
+   memorandum, an EU regulation, a foreign ministry decree) is NEVER Local
+   specifics, even when reported by a Russian-language outlet - route it like
+   any foreign-market event: Other news, region=Global. Editor (30.06):
+   "Trump signed a right-to-repair memorandum" -> Other news (Global), NOT
+   Местные.
+ - A vehicle RECALL is ALWAYS Other news (Другие) - even when the recalled
+   vehicles are pickups/vans/LCV bodies. The LCV body-type rule does NOT apply
+   to recalls. Editor (01.07): "Ford recalls 741,195 pickups (rollaway risk)"
+   -> Other news, Global - NOT LCV news.
 
 ============================================================
 DECISION RULE
