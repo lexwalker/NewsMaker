@@ -59,31 +59,33 @@ SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# Column indices in 'ТЕСТ статьи vN' (matching write_articles())
-COL_RUN = 0
-COL_TITLE = 1
-COL_LEDE = 2
-COL_URL = 3
-COL_SECTION = 4
-COL_REGION = 5
-COL_COUNTRY = 6
-COL_PUBLISHED = 7
-COL_IMAGE = 8
-COL_PRIMARY_DOM = 9
-COL_PRIMARY_URL = 10
-COL_PRIMARY_CONF = 11
-COL_NOTE = 12
-COL_CONFIDENCE = 13
-COL_VERDICT = 14
-# Phase-1 launch lifecycle (added in apr-2026)
-COL_LAUNCH_STAGE = 28  # AC
-COL_LAUNCH_BRAND_MODEL = 29  # AD
-# LLM editorial review reason (added may-2026)
-COL_LLM_REASON = 30  # AE
-# Hybrid dedup Stage 1: semantic event-signature (added may-2026)
-COL_EVENT_BRAND = 31  # AF
-COL_EVENT_MODEL = 32  # AG
-COL_EVENT_TYPE = 33   # AH
+# Column indices come from the ONE canonical schema module (they used to be
+# hand-copied here and in ~10 sibling scripts, and had already drifted in
+# retry_failed_llm — the A1:R6000 failure family). Aliased to the local
+# names the rest of this script uses.
+from news_agent.core.articles_schema import COL, check_header  # noqa: E402
+
+COL_RUN = COL.RUN
+COL_TITLE = COL.TITLE
+COL_LEDE = COL.LEDE
+COL_URL = COL.URL
+COL_SECTION = COL.SECTION
+COL_REGION = COL.REGION
+COL_COUNTRY = COL.COUNTRY
+COL_PUBLISHED = COL.PUBLISHED
+COL_IMAGE = COL.IMAGE
+COL_PRIMARY_DOM = COL.PRIMARY_DOM
+COL_PRIMARY_URL = COL.PRIMARY_URL
+COL_PRIMARY_CONF = COL.PRIMARY_CONF
+COL_NOTE = COL.NOTE
+COL_CONFIDENCE = COL.CONFIDENCE
+COL_VERDICT = COL.VERDICT
+COL_LAUNCH_STAGE = COL.LAUNCH_STAGE
+COL_LAUNCH_BRAND_MODEL = COL.LAUNCH_BRAND_MODEL
+COL_LLM_REASON = COL.LLM_REASON
+COL_EVENT_BRAND = COL.EVENT_BRAND
+COL_EVENT_MODEL = COL.EVENT_MODEL
+COL_EVENT_TYPE = COL.EVENT_TYPE
 
 SIMILARITY_THRESHOLD = 65  # rapidfuzz token_set_ratio (0-100). Lowered
                             # from 72 after v22: Avtotor JETOUR triple
@@ -105,17 +107,18 @@ def _svc():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 
-def _latest_articles_tab(svc) -> str:
-    """Newest 'ТЕСТ статьи vN' tab by version number. Lets the daily run
-    chain fetch→cluster without passing the tab name (which also sidesteps
-    the Cyrillic-argv encoding pitfall)."""
-    meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
-    best, best_n = None, -1
-    for s in meta.get("sheets", []):
-        m = re.match(r"ТЕСТ статьи v(\d+)$", s["properties"]["title"])
-        if m and int(m.group(1)) > best_n:
-            best_n, best = int(m.group(1)), s["properties"]["title"]
-    return best or "ТЕСТ статьи v18"
+def _latest_articles_tab(svc, argv_tab: str = "") -> str:
+    """The articles tab to consume — the EXPLICIT handoff pointer written by
+    the last healthy batch run (state.json articles_tab), newest-vN only as
+    a warned fallback. Kills the "whatever tab is newest" state that let a
+    manual 1-source push poison the production chain (I9), and the silent
+    hard-coded 'ТЕСТ статьи v18' last resort."""
+    from news_agent.core.tab_handoff import resolve_articles_tab
+    return resolve_articles_tab(
+        svc, SHEET_ID,
+        state_path=ROOT / "data" / "state.json",
+        argv_tab=argv_tab,
+    )
 
 
 def _get(row: list[str], i: int) -> str:
@@ -934,6 +937,20 @@ def main() -> int:
     # Extended to AE to read:
     #   AC = launch stage, AD = brand+model (Phase 1 lifecycle)
     #   AE = LLM reason (may-2026 editorial review)
+    # Read the HEADER row too and validate it against the canonical schema:
+    # a mid-header insert/rename silently shifts every positional read below
+    # (the A1:R6000 failure family) — fail loud instead of consuming garbage.
+    hdr_resp = svc.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AH1"
+    ).execute()
+    hdr = (hdr_resp.get("values") or [[]])[0]
+    problems = check_header(hdr, context=tab)
+    if problems:
+        for p in problems:
+            print(f"!!! SCHEMA MISMATCH: {p}", file=sys.stderr)
+        print("Refusing to cluster with a shifted schema.", file=sys.stderr)
+        return 2
+
     resp = svc.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:AH"
     ).execute()

@@ -462,53 +462,11 @@ HEADER = [
 
 
 # ----- Re-designed 4-block layout (28 columns, 17 visible, 11 hidden) ------
-# Block 1 (light green):  "Что за новость"        — columns A–I
-# Block 2 (light blue):   "Первоисточник"         — columns J–L
-# Block 3 (light yellow): "Для редактора"          — columns M–Q
-# Block 4 (light grey):   "Отладка"  (hidden)     — columns R–AB
-ARTICLES_HEADER = [
-    # --- Block 1: «Что за новость» --------------------------------------
-    "Прогон (UTC)",                    # A
-    "Заголовок (EN / RU)",             # B  combined EN+RU (+ source lang tag)
-    "Лид",                             # C  first ~300 chars of body
-    "URL статьи",                      # D
-    "Раздел",                          # E  LLM section (+ "(неактивный)" for Test-drive)
-    "Регион",                          # F  Local / Global
-    "Страна",                          # G  Russia / Uzbekistan / Kazakhstan
-    "Дата публикации",                 # H
-    "Картинка (URL)",                  # I  full image URL, not just a flag
-    # --- Block 2: «Первоисточник» ---------------------------------------
-    "Первоисточник (домен)",           # J
-    "Первоисточник URL",               # K
-    "Уверенность источника",           # L  high / medium / low
-    # --- Block 3: «Для редактора» ---------------------------------------
-    "Пометка бота",                    # M
-    "Confidence раздела",              # N  0.00-1.00
-    "Итог бота",                       # O  ← colour formatting column
-    "Ручная проверка (Новость / Не новость)",  # P
-    "Комментарий",                     # Q
-    # --- Block 4: «Отладка» (hidden by default) --------------------------
-    "URL источника",                   # R
-    "№ ист.",                          # S
-    "№ ст.",                           # T
-    "Тело (симв)",                     # U
-    "is_article",                      # V
-    "is_article score",                # W
-    "Причины is_article",              # X
-    "Hits темы",                       # Y
-    "LLM relevance",                   # Z
-    "Стоимость LLM, $",                # AA
-    "Способ поиска источника",         # AB
-    # --- Phase-1 launch lifecycle (visible after Block 4) ---------------
-    "Стадия запуска",                  # AC
-    "Бренд + модель",                  # AD
-    # --- LLM editorial review reason ------------------------------------
-    "Обоснование LLM",                 # AE
-    # --- Hybrid dedup Stage 1: semantic event-signature -----------------
-    "event_brand",                     # AF
-    "event_model",                     # AG
-    "event_type",                      # AH
-]
+# The canonical 34-column schema lives in ONE place now
+# (news_agent.core.articles_schema) — it was hand-copied across ~10 scripts
+# and had already drifted (retry carried stale indices). Add new columns AT
+# THE END, in the schema module.
+from news_agent.core.articles_schema import ARTICLES_HEADER  # noqa: E402
 
 # Portal → country label (visible in the sheet) + numeric code (kept for
 # future CMS integration — per the task spec RU=7, UZ=608, KZ=14).
@@ -518,45 +476,20 @@ PORTAL_COUNTRY: dict[str, tuple[str, int]] = {
     "KZ": ("Kazakhstan", 14),
 }
 
-# Source language → (EN-title tag, RU-title tag), matching the format the
-# editorial team uses in "Новости опубликованные".
-#   EN line gets the ISO code in Latin uppercase: (EN), (RU), (DE)...
-#   RU line gets a 3-letter Russian abbreviation: (АНГЛ), (РУС), (ДЕ)...
-# Mapping verified against 2,817 rows of "Новости опубликованные":
-# EN tag uses the Latin ISO-639-1 code, RU tag uses a Russian 3-4 letter
-# abbreviation — these are the exact strings the editor uses, not guesses.
-_LANG_TAG_MAP: dict[str, tuple[str, str]] = {
-    "en": ("EN", "АНГЛ"),
-    "ru": ("RU", "РУС"),
-    "de": ("DE", "НЕМ"),      # editor uses НЕМ, not ДЕ
-    "fr": ("FR", "ФР"),
-    "it": ("IT", "ИТАЛ"),     # editor uses ИТАЛ, not ИТ
-    "es": ("ES", "ИСП"),
-    "zh": ("ZH", "КИТ"),
-    "ja": ("JA", "ЯП"),
-    "ko": ("KO", "КОР"),
-    "pl": ("PL", "ПОЛ"),
-    "pt": ("PT", "ПОР"),
-    "nl": ("NL", "НИД"),
-    "cs": ("CS", "ЧЕШ"),
-    "tr": ("TR", "ТУР"),
-    "uk": ("UK", "УКР"),
-}
+# Lang-tag map + helper are shared with retry_failed_llm via
+# news_agent.core.editorial_pass (they had drifted: retry's inline copy had
+# 8 languages vs 15 — a recovered Korean title got "(KO)" not "(КОР)").
+from news_agent.core.editorial_pass import (  # noqa: E402
+    dup_hint_for,
+    has_reject_directive,
+    lang_tags_for as _shared_lang_tags_for,
+    looks_like_usage_limit,
+    resolve_section_region,
+)
 
 
-def _lang_tags_for(lang: str) -> tuple[str, str]:
-    """Return (EN-tag, RU-tag) for a given ISO-639-1 language code.
-
-    Falls back to the uppercase code itself if we don't have a specific
-    Russian abbreviation for that language.
-    """
-    if not lang:
-        return ("", "")
-    key = lang.strip().lower()[:2]
-    if key in _LANG_TAG_MAP:
-        return _LANG_TAG_MAP[key]
-    up = key.upper()
-    return (up, up)
+# Thin alias — the implementation is shared (editorial_pass.lang_tags_for).
+_lang_tags_for = _shared_lang_tags_for
 
 
 def _net_retry(fn, *args, what="network-op", tries=5, base_delay=2.0, **kwargs):
@@ -1254,8 +1187,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 #     and any future rewording of the limit message.
                 # Untouched rows stay "Возможно новость" and re-run next time
                 # (the cache is not authoritative for them).
-                _em = str(e).lower()
-                _limit_hit = "usage limit" in _em or "reached your specified" in _em
+                _limit_hit = looks_like_usage_limit(str(e))
                 if _limit_hit or consec_errors >= CONSEC_LLM_ERRORS_ABORT:
                     aborted = (
                         "usage limit" if _limit_hit
@@ -1292,10 +1224,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             # mislabelled "Test-drive" and slipped into the live feed — row 56 of
             # the jun-18 push). Trust the explicit reject directive over the
             # boolean and route it to the rejected tab (auditable), not the feed.
-            _rlow = (review.reason or "").lower()
-            if review.should_publish and any(
-                p in _rlow for p in ("отклонить", "reject", "не публику", "не наша тема")
-            ):
+            if review.should_publish and has_reject_directive(review.reason):
                 r.llm_relevance = "Нет"
                 r.verdict = "Отклонено LLM"
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
@@ -1348,63 +1277,50 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                     )
                     continue
 
-            # Accepted — populate section/region. Apply heuristic pre-classifier
-            # to override LLM if heuristic is confident (e.g. body-type pickup
-            # → LCV always wins). This is a safety net: heuristic catches
-            # systematic LLM mistakes (e.g. body-type confusion).
-            pre = heuristic_section(
+            # Accepted — final section/region via the SHARED resolver
+            # (heuristic pre-classifier override + Other-news fallback;
+            # single source of truth with retry_failed_llm).
+            dec = resolve_section_region(
+                review_section=review.section,
+                review_region=review.region,
+                review_confidence=review.confidence,
                 title=r.title,
                 body_excerpt=r.body_excerpt,
                 domain=domain_of(r.article_url),
+                section_names=section_names,
             )
-            if pre is not None:
-                r.llm_section = pre.section if pre.section in section_names else "Other news"
-                r.llm_region = pre.region
-                r.llm_confidence = round(pre.confidence, 2)
-                r.llm_note = (
-                    (r.llm_note + " | " if r.llm_note else "")
-                    + f"эвристика: {pre.reason} (LLM said {review.section})"
-                )
-            else:
-                r.llm_section = (
-                    review.section if review.section in section_names else "Other news"
-                )
-                r.llm_region = review.region or "Global"
-                r.llm_confidence = round(review.confidence, 2)
-                if review.reason:
-                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                        f"reason: {review.reason[:100]}"
+            r.llm_section = dec.section
+            r.llm_region = dec.region
+            r.llm_confidence = dec.confidence
+            if dec.heuristic_note:
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    dec.heuristic_note
+            elif review.reason:
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    f"reason: {review.reason[:100]}"
 
             if r.llm_section == "Test-drive":
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                     "требует ручной проверки — Test-drive"
 
-            # Advisory dup hint — accepted row only, never changes
-            # verdict/section. Priority: (0) PUBLISHED-archive paraphrase —
-            # already in "Опубликованные (все)" under a divergent headline,
-            # the strongest "don't re-post" signal the exact gate missed;
-            # then (1) the Stage-2a SEMANTIC event-key vs our own recent runs;
-            # (2) the lexical P3-D brand_model. Append only ONE.
-            try:
-                canon_u = canonicalise(r.article_url)
-                hint = published_dup_hint(
-                    r.title, r.event_brand, r.event_model, PUBLISHED_TITLES,
-                )
-                if not hint and r.event_model and recent_ev:
-                    hint = recent_event_dup_hint(
-                        r.event_brand, r.event_model, r.event_type,
-                        recent_ev, canon_u,
-                    )
-                if not hint and r.launch_brand_model and recent_bm:
-                    hint = recent_model_dup_hint(
-                        r.launch_brand_model, recent_bm, canon_u,
-                    )
-                if hint:
-                    r.llm_reason = ((r.llm_reason + " ") if r.llm_reason
-                                    else "") + hint
-                    r.llm_reason = r.llm_reason[:300]
-            except Exception:  # noqa: BLE001
-                pass  # advisory only — never break the pass
+            # Advisory dup hint — SHARED 3-tier helper (archive paraphrase →
+            # semantic event-key → lexical brand_model); at most one hint.
+            # PREPENDED so the [:300] reason cap can never amputate it (the
+            # push diverts on the "возможно дуб" substring).
+            hint = dup_hint_for(
+                title=r.title,
+                event_brand=r.event_brand,
+                event_model=r.event_model,
+                event_type=r.event_type,
+                launch_brand_model=r.launch_brand_model,
+                canon_url=canonicalise(r.article_url),
+                pub_titles=PUBLISHED_TITLES,
+                recent_ev=recent_ev,
+                recent_bm=recent_bm,
+            )
+            if hint:
+                r.llm_reason = (
+                    hint + (" | " + r.llm_reason if r.llm_reason else ""))[:300]
         else:
             # LEGACY PATH: 2 separate LLM calls (relevance + classify)
             try:

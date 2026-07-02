@@ -284,15 +284,14 @@ def _svc():
 
 
 def _latest_articles_tab(svc) -> str:
-    """Newest 'ТЕСТ статьи vN' tab by version number, so the daily run can
-    push the just-built clusters without passing the tab name."""
-    meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
-    pfx, best, best_n = "ТЕСТ статьи v", None, -1
-    for s in meta.get("sheets", []):
-        t = s["properties"]["title"]
-        if t.startswith(pfx) and t[len(pfx):].isdigit() and int(t[len(pfx):]) > best_n:
-            best_n, best = int(t[len(pfx):]), t
-    return best or "ТЕСТ статьи v18"
+    """The articles tab whose clusters to push — the EXPLICIT handoff pointer
+    from the last healthy batch run (state.json articles_tab); newest-vN only
+    as a warned fallback, no hard-coded last resort (see tab_handoff)."""
+    from news_agent.core.tab_handoff import resolve_articles_tab
+    return resolve_articles_tab(
+        svc, SHEET_ID,
+        state_path=ROOT / "data" / "state.json",
+    )
 
 
 def _ensure_tab(svc, tab: str) -> tuple[int, bool]:

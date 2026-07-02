@@ -31,10 +31,23 @@ sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
 
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
+from news_agent.core.articles_schema import (  # noqa: E402
+    COL,
+    check_header,
+    col_letter,
+)
 from news_agent.core.budget import BudgetExceeded, BudgetTracker  # noqa: E402
 from news_agent.core.config_loader import load_sections  # noqa: E402
-from news_agent.core.dedup import published_dup_hint  # noqa: E402
+from news_agent.core.editorial_pass import (  # noqa: E402
+    dup_hint_for,
+    has_reject_directive,
+    lang_tags_for,
+    looks_like_usage_limit,
+    resolve_section_region,
+)
 from news_agent.core.models import RawArticle  # noqa: E402
+from news_agent.core.tab_handoff import resolve_articles_tab  # noqa: E402
+from news_agent.core.urls import canonicalise, domain_of  # noqa: E402
 from news_agent.settings import get_settings  # noqa: E402
 
 sys.path.insert(0, str(ROOT / "scripts"))  # published_archive.py lives here
@@ -44,16 +57,19 @@ SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# Column indices (matches write_articles())
-COL_TITLE = 1
-COL_LEDE = 2
-COL_URL = 3
-COL_SECTION = 4
-COL_REGION = 5
-COL_NOTE = 12
-COL_VERDICT = 14
-COL_LLM_REL = 24
-COL_COST = 25
+# Column indices come from the canonical schema module. The hand-copied
+# block this replaces had ALREADY drifted: COL_LLM_REL=24 pointed at
+# 'Hits темы' and COL_COST=25 at 'LLM relevance' (dead constants then,
+# loaded traps for the next edit).
+COL_TITLE = COL.TITLE
+COL_LEDE = COL.LEDE
+COL_URL = COL.URL
+COL_SECTION = COL.SECTION
+COL_REGION = COL.REGION
+COL_NOTE = COL.NOTE
+COL_VERDICT = COL.VERDICT
+COL_LLM_REL = COL.LLM_RELEVANCE
+COL_COST = COL.COST
 
 
 def _svc():
@@ -67,24 +83,17 @@ def _get(r: list[str], i: int) -> str:
 
 def main() -> int:
     svc = _svc()
-    # Tab name: explicit argv, else auto-pick the newest "ТЕСТ статьи vN".
-    # Auto-pick avoids passing a Cyrillic tab name on argv (Windows/PowerShell
-    # mangles it), which is why this is the preferred invocation.
-    if len(sys.argv) > 1:
-        tab = sys.argv[1]
-    else:
-        _meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
-        _cand = [s["properties"]["title"] for s in _meta["sheets"]
-                 if s["properties"]["title"].startswith("ТЕСТ статьи v")]
-
-        def _vn(t: str) -> int:
-            try:
-                return int(t.rsplit("v", 1)[1])
-            except (ValueError, IndexError):
-                return -1
-
-        tab = max(_cand, key=_vn) if _cand else "ТЕСТ статьи v18"
-        print(f"  auto-picked newest tab: {tab}")
+    # Tab: explicit argv override, else the EXPLICIT handoff pointer from the
+    # last healthy batch run (state.json articles_tab); newest-vN only as a
+    # warned fallback (see tab_handoff — kills the I9 "newest tab wins"
+    # poisoning and the hard-coded v18 last resort). Auto-resolve also avoids
+    # passing a Cyrillic tab name on argv (Windows/PowerShell mangles it).
+    tab = resolve_articles_tab(
+        svc, SHEET_ID,
+        state_path=ROOT / "data" / "state.json",
+        argv_tab=sys.argv[1] if len(sys.argv) > 1 else "",
+    )
+    print(f"  tab: {tab}")
     settings = get_settings()
     sections = load_sections()
     budget = BudgetTracker(getattr(settings, "max_cost_usd", 5.0))
@@ -116,12 +125,39 @@ def main() -> int:
         print(f"  !!! published-archive load FAILED (paraphrase dedup OFF this "
               f"run): {str(e)[:160]}", file=sys.stderr)
 
+    # Dup-hint tiers 2-3 (semantic event-key + lexical brand_model vs our own
+    # recent runs) — parity with the main run, which had all 3 tiers while
+    # recovery had only the archive paraphrase. Read-only; failure → hints off.
+    recent_ev: dict = {}
+    recent_bm: dict = {}
+    try:
+        from news_agent.adapters.storage import DedupStore
+        _sqlite = ROOT / "data" / "news_agent.sqlite"
+        if _sqlite.exists():
+            _store = DedupStore(_sqlite)
+            _portal = os.environ.get("DEDUP_PORTAL", "RU") or "RU"
+            recent_ev = _store.recent_event_keys(_portal, days=30)
+            recent_bm = _store.recent_brand_models(_portal, days=30)
+            print(f"  dup hints: {len(recent_ev)} event-keys, "
+                  f"{len(recent_bm)} brand-models (30d)")
+    except Exception as e:  # noqa: BLE001 — advisory only
+        print(f"  dup-hint store unavailable ({type(e).__name__}) — tiers 2-3 off")
+
     resp = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AB"
+        spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AH"
     ).execute()
     rows = resp.get("values", [])
     header = rows[0] if rows else []
     rows = rows[1:]
+    # Validate the tab's header against the canonical schema — a mid-header
+    # insert silently shifts every positional read AND write below (verdicts
+    # into the wrong column). Fail loud instead.
+    problems = check_header(header, context=tab)
+    if problems:
+        for p in problems:
+            print(f"!!! SCHEMA MISMATCH: {p}", file=sys.stderr)
+        print("Refusing to retry against a shifted schema.", file=sys.stderr)
+        return 2
     # Find rows that need a retry: classify error in note OR Точно новость
     # with empty section.
     targets: list[tuple[int, list[str]]] = []
@@ -196,13 +232,11 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             print(f"  [{idx}/{len(targets)}] EDITORIAL_REVIEW FAILED row {sheet_row}: {str(e)[:160]}")
             consec_errors += 1
-            _em = str(e).lower()
             # Same abort semantics as the main run (parity for I2): a
             # usage-limit 400 or N consecutive failures of any wording is a
             # persistent outage — burning one failing call per remaining row
             # would replay the exact incident this tool exists to fix.
-            if ("usage limit" in _em or "reached your specified" in _em
-                    or consec_errors >= 5):
+            if looks_like_usage_limit(str(e)) or consec_errors >= 5:
                 print(f"\n!!! persistent LLM failure ({str(e)[:120]}) — aborting "
                       f"retry pass at {idx}/{len(targets)}; flushing "
                       f"{len(updates)} accumulated updates.", file=sys.stderr)
@@ -210,32 +244,51 @@ def main() -> int:
             continue
         consec_errors = 0
         reason = (review.reason or "")[:300]
-        _rlow = (review.reason or "").lower()
         # Reject if the model says skip, OR says publish while its own reason
-        # rejects (same consistency guard as the main run). Write the reason
-        # either way so the editor sees it in the rejected markup.
-        if (not review.should_publish) or any(
-            p in _rlow for p in ("отклонить", "reject", "не публику", "не наша тема")
-        ):
-            updates.append({"range": f"'{tab}'!O{sheet_row}",
+        # rejects (SHARED consistency guard — same phrase list as the main
+        # run). Write the reason either way so the editor sees it in the
+        # rejected markup.
+        if (not review.should_publish) or has_reject_directive(review.reason):
+            updates.append({"range": f"'{tab}'!{col_letter(COL_VERDICT)}{sheet_row}",
                             "values": [["Отклонено LLM"]]})
-            updates.append({"range": f"'{tab}'!M{sheet_row}",
+            updates.append({"range": f"'{tab}'!{col_letter(COL_NOTE)}{sheet_row}",
                             "values": [[f"LLM (retry): {reason[:120]}"]]})
-            updates.append({"range": f"'{tab}'!AE{sheet_row}", "values": [[reason]]})
+            updates.append({"range": f"'{tab}'!{col_letter(COL.LLM_REASON)}{sheet_row}",
+                            "values": [[reason]]})
             rejected_count += 1
             print(f"  [{idx}/{len(targets)}] REJECTED row {sheet_row}: {clean_title[:55]!r}")
             continue
-        section = review.section if review.section in section_names else "Other news"
-        region = review.region or "Global"
-        # Archive paraphrase dedup — parity with the main run's LLM pass: an
-        # already-published story recovered here under a divergent headline
-        # gets a 'возможно дубль' hint appended to the reason, so the push
-        # diverts it to review instead of the clean feed. Advisory only.
+        # Section/region via the SHARED resolver — parity fix: recovery rows
+        # now get the same heuristic pre-classifier override as the main run
+        # (previously a recovered row could land in a different section than
+        # a mainline row with identical content).
+        dec = resolve_section_region(
+            review_section=review.section,
+            review_region=review.region,
+            review_confidence=review.confidence,
+            title=clean_title,
+            body_excerpt=body,
+            domain=domain_of(url) if url else "",
+            section_names=section_names,
+        )
+        section, region = dec.section, dec.region
+        # Advisory dup hint — SHARED 3-tier helper, parity with the main run
+        # (was: archive-paraphrase tier only). PREPENDED so the [:300] cap
+        # can't amputate it; the push diverts on "возможно дуб".
         _es = getattr(review, "event_signature", None)
-        if _es is not None and pub_titles:
-            _dup = published_dup_hint(clean_title, _es.brand, _es.model, pub_titles)
-            if _dup:
-                reason = ((reason + " " + _dup) if reason else _dup)[:300]
+        _hint = dup_hint_for(
+            title=clean_title,
+            event_brand=(_es.brand if _es else "") or "",
+            event_model=(_es.model if _es else "") or "",
+            event_type=(_es.event_type if _es else "") or "",
+            launch_brand_model="",
+            canon_url=canonicalise(url) if url else "",
+            pub_titles=pub_titles,
+            recent_ev=recent_ev,
+            recent_bm=recent_bm,
+        )
+        if _hint:
+            reason = (_hint + (" | " + reason if reason else ""))[:300]
         try:
             tp, ut = client.translate_title(title=clean_title, source_language_hint=None)
             budget.record(ut)
@@ -246,14 +299,10 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             print(f"  [{idx}/{len(targets)}] TRANSLATE FAILED row {sheet_row}: {str(e)[:160]}")
             continue
-        # Build new title cell with EN/RU + lang tags
-        lang = (tp.source_language or "").lower()[:2]
-        lang_map = {
-            "en": ("EN", "АНГЛ"), "ru": ("RU", "РУС"), "de": ("DE", "НЕМ"),
-            "fr": ("FR", "ФР"),  "it": ("IT", "ИТАЛ"), "es": ("ES", "ИСП"),
-            "zh": ("ZH", "КИТ"), "ja": ("JA", "ЯП"),
-        }
-        en_tag, ru_tag = lang_map.get(lang, (lang.upper(), lang.upper()))
+        # Build new title cell with EN/RU + lang tags (SHARED 15-language map;
+        # the inline 8-language copy this replaces gave a recovered Korean
+        # title "(KO)" instead of the editor's "(КОР)").
+        en_tag, ru_tag = lang_tags_for(tp.source_language or "")
         en_suffix = f" ({en_tag})" if en_tag else ""
         ru_suffix = f" ({ru_tag})" if ru_tag else ""
         new_title = (
@@ -266,19 +315,20 @@ def main() -> int:
             f"  [{idx}/{len(targets)}] OK row {sheet_row}: "
             f"section={section} region={region} cost=${cost} (run total ${spent:.4f})"
         )
-        # Schedule cell updates: B (title), E (section), F (region), M (clear),
-        # O (promote 'Возможно' → 'Точно'), AA (cost), AE (editorial reason —
-        # the fix: fills "Обоснование LLM" so the column + rejected markup
-        # aren't empty after a recovery).
-        updates.append({"range": f"'{tab}'!B{sheet_row}", "values": [[new_title]]})
-        updates.append({"range": f"'{tab}'!E{sheet_row}", "values": [[section]]})
-        updates.append({"range": f"'{tab}'!F{sheet_row}", "values": [[region]]})
-        updates.append({"range": f"'{tab}'!M{sheet_row}", "values": [[""]]})
+        # Schedule cell updates (letters derived from the schema): title,
+        # section, region, note (heuristic-override note or clear), verdict
+        # promotion, cost, editorial reason.
+        _L = col_letter
+        updates.append({"range": f"'{tab}'!{_L(COL_TITLE)}{sheet_row}", "values": [[new_title]]})
+        updates.append({"range": f"'{tab}'!{_L(COL_SECTION)}{sheet_row}", "values": [[section]]})
+        updates.append({"range": f"'{tab}'!{_L(COL_REGION)}{sheet_row}", "values": [[region]]})
+        updates.append({"range": f"'{tab}'!{_L(COL_NOTE)}{sheet_row}",
+                        "values": [[dec.heuristic_note or ""]]})
         if verdict == "Возможно новость":
-            updates.append({"range": f"'{tab}'!O{sheet_row}",
+            updates.append({"range": f"'{tab}'!{_L(COL_VERDICT)}{sheet_row}",
                             "values": [["Точно новость"]]})
-        updates.append({"range": f"'{tab}'!AA{sheet_row}", "values": [[cost]]})
-        updates.append({"range": f"'{tab}'!AE{sheet_row}", "values": [[reason]]})
+        updates.append({"range": f"'{tab}'!{_L(COL_COST)}{sheet_row}", "values": [[cost]]})
+        updates.append({"range": f"'{tab}'!{_L(COL.LLM_REASON)}{sheet_row}", "values": [[reason]]})
 
     if updates:
         # Apply in chunks
