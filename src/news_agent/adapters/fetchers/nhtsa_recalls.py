@@ -29,6 +29,7 @@ the single network call lives in :func:`fetch_recent_recalls`.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -39,6 +40,14 @@ from news_agent.core.models import RawArticle
 # self-documenting "source" sentinel registered in batch_fetch_test.py so
 # the dispatcher can route to this adapter.
 RECALLS_ENDPOINT = "https://data.transportation.gov/resource/6axg-epim.json"
+
+# Per-campaign detail API (powers the nhtsa.gov recall page). Its payload
+# links the OFFICIAL Part-573 recall report PDF (static.nhtsa.gov/odi/rcl/
+# YYYY/RCLRPT-<id>-NNNN.pdf) — the document the editor wants as the primary
+# source («нужен сам документ по NHTSA»). The -NNNN suffix is not derivable,
+# so it must be looked up here.
+SAFETY_ISSUES_API = "https://api.nhtsa.gov/safetyIssues/byNhtsaId?nhtsaId={nhtsa_id}"
+_RCLRPT_RE = re.compile(r"https://static\.nhtsa\.gov/odi/rcl/\d{4}/RCLRPT-[A-Za-z0-9]+-\d+\.pdf")
 
 # NHTSA also issues Equipment / Tire / Child-Seat recalls — off-topic for
 # car news. Pre-filter to Vehicle campaigns to save LLM calls; the editorial
@@ -141,9 +150,35 @@ def recall_url(rec: dict) -> str:
     return ""
 
 
-def recall_to_article(rec: dict) -> RawArticle | None:
+def fetch_recall_report_url(client: httpx.Client, nhtsa_id: str) -> str:
+    """The official Part-573 recall report PDF for a campaign, or "".
+
+    One extra API call per recall (~2-4/day) against the safetyIssues
+    endpoint; any failure degrades to "" — the campaign URL then stays the
+    primary source, never breaks the fetch.
+    """
+    nhtsa_id = (nhtsa_id or "").strip()
+    if not nhtsa_id:
+        return ""
+    try:
+        resp = client.get(
+            SAFETY_ISSUES_API.format(nhtsa_id=nhtsa_id),
+            timeout=20, follow_redirects=True,
+        )
+        m = _RCLRPT_RE.search(resp.text or "")
+        return m.group(0) if m else ""
+    except Exception:  # noqa: BLE001 — enrichment only
+        return ""
+
+
+def recall_to_article(rec: dict, *, report_url: str = "") -> RawArticle | None:
     """Map one Socrata recall row → RawArticle. None when it has no usable
-    campaign URL (can't dedup or link it → skip)."""
+    campaign URL (can't dedup or link it → skip).
+
+    ``report_url`` (the official recall-report PDF) is carried in
+    ``outbound_links`` — the batch scorer promotes it to the row's primary
+    source so the editor gets «сам документ», while the campaign URL stays
+    the article/dedup URL."""
     url = recall_url(rec)
     if not url:
         return None
@@ -152,6 +187,7 @@ def recall_to_article(rec: dict) -> RawArticle | None:
         title=format_title(rec),
         body=format_body(rec),
         published_at=_parse_dt(rec.get("report_received_date") or ""),
+        outbound_links=[report_url] if report_url else [],
         source_name="NHTSA",
         source_url=RECALLS_ENDPOINT,
         source_language=SOURCE_LANGUAGE,
@@ -193,7 +229,10 @@ def fetch_recent_recalls(
         rtype = (rec.get("recall_type") or "").strip()
         if RECALL_TYPES and rtype not in RECALL_TYPES:
             continue
-        art = recall_to_article(rec)
+        # Resolve the official recall-report PDF (editor request: «нужен сам
+        # документ по NHTSA») — best-effort, "" keeps the campaign URL primary.
+        report = fetch_recall_report_url(client, rec.get("nhtsa_id") or "")
+        art = recall_to_article(rec, report_url=report)
         if art is not None:
             out.append(art)
     return out

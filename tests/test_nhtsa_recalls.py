@@ -132,3 +132,51 @@ def test_fetch_builds_dated_where_clause() -> None:
     where = client.last_params["$where"]
     assert where == "report_received_date > '2026-06-20T00:00:00'"
     assert client.last_params["$order"] == "report_received_date DESC"
+
+
+class _TextResp:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def raise_for_status(self) -> None:  # pragma: no cover - trivial
+        pass
+
+
+class _ReportStubClient:
+    """Returns a safetyIssues-like payload embedding the RCLRPT PDF url."""
+
+    def __init__(self, text: str = "", raise_exc: bool = False) -> None:
+        self._text = text
+        self._raise = raise_exc
+
+    def get(self, url, *, params=None, timeout=None, follow_redirects=None):
+        if self._raise:
+            raise RuntimeError("network down")
+        return _TextResp(self._text)
+
+
+def test_recall_report_url_extracted_from_safety_issues() -> None:
+    # The editor-provided example: the -NNNN suffix is not derivable, only
+    # discoverable via the safetyIssues payload.
+    payload = ('{"results":[{"associatedDocuments":"'
+               'https://static.nhtsa.gov/odi/rcl/2026/RCLRPT-26V403-8025.pdf"}]}')
+    url = nr.fetch_recall_report_url(_ReportStubClient(payload), "26V403000")
+    assert url == "https://static.nhtsa.gov/odi/rcl/2026/RCLRPT-26V403-8025.pdf"
+
+
+def test_recall_report_url_degrades_to_empty() -> None:
+    assert nr.fetch_recall_report_url(_ReportStubClient("{}"), "26V999000") == ""
+    assert nr.fetch_recall_report_url(_ReportStubClient(raise_exc=True), "26V1") == ""
+    assert nr.fetch_recall_report_url(_ReportStubClient("x"), "") == ""
+
+
+def test_recall_to_article_carries_report_pdf_in_outbound_links() -> None:
+    pdf = "https://static.nhtsa.gov/odi/rcl/2026/RCLRPT-26V400-5456.pdf"
+    art = nr.recall_to_article(HYUNDAI, report_url=pdf)
+    assert art is not None
+    assert art.outbound_links == [pdf]
+    # campaign URL stays the article/dedup URL
+    assert art.url == "https://www.nhtsa.gov/recalls?nhtsaId=26V400000"
+    # without a report the links stay empty (campaign URL remains primary)
+    art2 = nr.recall_to_article(HYUNDAI)
+    assert art2 is not None and art2.outbound_links == []

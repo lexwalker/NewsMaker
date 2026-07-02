@@ -798,8 +798,13 @@ def _score_recall(article, r: SourceResult, row: ArticleRow) -> bool:  # type: i
     row.article_reasons = "nhtsa-recall (structured)"
     row.auto_topic = True
     row.auto_hits = "recall"
-    # The NHTSA campaign IS the authoritative primary source.
-    row.primary_url = row.article_url
+    # The NHTSA campaign IS the authoritative primary source; when the
+    # adapter resolved the official Part-573 recall-report PDF (carried in
+    # outbound_links — editor: «нужен сам документ по NHTSA»), the PDF wins
+    # as the primary URL. static.nhtsa.gov keeps the nhtsa.gov match for the
+    # cluster-priority and feed-dedup NHTSA rules.
+    row.primary_url = (article.outbound_links[0]
+                       if article.outbound_links else row.article_url)
     row.primary_domain = "nhtsa.gov"
     row.primary_confidence = "high"
     row.primary_method = "nhtsa-official"
