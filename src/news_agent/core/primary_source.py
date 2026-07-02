@@ -59,6 +59,12 @@ _REDISTRIBUTION_HOSTS: frozenset[str] = frozenset({
     # may-2026 editor note: «спидми очень редко используем как
     # первоисточник — обычно это перепост англ новостей».
     "speedme.ru",
+    # jul-02: the editor's #1 re-attribution target («искать на NHTSA уже
+    # писала неоднократно», «первоисточник autonews.ru» — both on
+    # naavtotrasse reposts). It names its source in TEXT/slug only (no
+    # outbound href), so it must never self-certify as the primary.
+    "naavtotrasse.ru",
+    "ixbt.com", "media.ixbt.com",
 })
 _PREFERRED_PRIMARY_HOSTS: frozenset[str] = frozenset({
     # journalistic primaries the editor named explicitly
@@ -119,14 +125,25 @@ _SOCIAL_PROFILE_HOSTS = {
 _SOCIAL_POST_MARKERS = ("/status/", "/posts/", "/permalink", "/p/")
 
 
+# Image / CDN-resize URLs are page furniture, not sources. A real case: an
+# ixbt article's only "outbound" link was media.ixbt.com/fit-in/1110x/… (an
+# image-resize URL) and it was promoted to primary with medium confidence.
+_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".avif")
+_IMAGE_PATH_MARKERS = ("/fit-in/", "/resize/", "/thumb/", "/thumbs/", "/img/")
+
+
 def _is_junk_link(url: str) -> bool:
     """Reject share buttons / share-widget aggregators, bare social-network
-    profiles, login pages, tracking redirectors, root-only URLs and similar
-    non-source links."""
+    profiles, login pages, tracking redirectors, root-only URLs, image/CDN
+    links and similar non-source links."""
     if not url:
         return True
     u = url.lower()
     if any(frag in u for frag in _JUNK_URL_FRAGMENTS):
+        return True
+    if any(m in u for m in _IMAGE_PATH_MARKERS):
+        return True
+    if urlparse(u).path.lower().endswith(_IMAGE_EXTENSIONS):
         return True
     # Reject root-only URLs: a press release should have a path. We accept
     # any URL whose path has more than just "/". This filter catches
@@ -186,6 +203,16 @@ def _is_mirror(domain: str, mirror_hosts: list[str]) -> bool:
     return False
 
 
+def _same_site(candidate_domain: str, article_domain_norm: str) -> bool:
+    """True when the candidate is the article's own site INCLUDING its
+    subdomains (media.ixbt.com vs ixbt.com). The old exact-equality check let
+    a site's own CDN/media subdomain through as an 'external' primary."""
+    n = _normalise_domain(candidate_domain)
+    return (n == article_domain_norm
+            or n.endswith("." + article_domain_norm)
+            or article_domain_norm.endswith("." + n))
+
+
 def detect_primary_source(
     *,
     article_url: str,
@@ -214,7 +241,12 @@ def detect_primary_source(
     # Tier 0 — article itself is a press release / whitelist source.
     if _press_release_host(article_domain, cues.press_release_hosts):
         return article_url, domain_of(article_url), "high"
-    if article_domain in whitelist_norm:
+    if (article_domain in whitelist_norm
+            and article_domain not in _REDISTRIBUTION_HOSTS):
+        # Whitelist here means "editor-trusted PRIMARY" (zr.ru tests, autostat
+        # own research). Redistribution hosts can be fetch-whitelisted too,
+        # but a repost must never self-certify as the primary source (the
+        # naavtotrasse case: primary=self at HIGH masked the real source).
         return article_url, domain_of(article_url), "high"
 
     # Filter out mirror posts AND junk URLs from candidates.
@@ -228,7 +260,7 @@ def detect_primary_source(
     # Tier 1 — press-release host in outbound links.
     for link in outbound_links:
         d = domain_of(link)
-        if _normalise_domain(d) == article_domain:
+        if _same_site(d, article_domain):
             continue
         if _press_release_host(d, cues.press_release_hosts):
             return link, d, "high"
@@ -241,9 +273,9 @@ def detect_primary_source(
             article_domain in _REDISTRIBUTION_HOSTS:
         for link in outbound_links:
             d = domain_of(link)
-            nd = _normalise_domain(d)
-            if nd == article_domain:
+            if _same_site(d, article_domain):
                 continue
+            nd = _normalise_domain(d)
             if nd in _PREFERRED_PRIMARY_HOSTS or d in _PREFERRED_PRIMARY_HOSTS:
                 return link, d, "high"
 
@@ -260,7 +292,7 @@ def detect_primary_source(
     # Tier 3 — brand-owned domain, brand not textually confirmed.
     for link in outbound_links:
         d = domain_of(link)
-        if _normalise_domain(d) == article_domain:
+        if _same_site(d, article_domain):
             continue
         if _matches_brand(d, brands):
             return link, d, "medium"

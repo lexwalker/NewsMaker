@@ -465,3 +465,56 @@ def test_bare_twitter_profile_falls_back_to_real_article() -> None:
     )
     assert "twitter.com" not in url
     assert url == "https://www.cnbc.com/2026/06/16/rivian-layoffs.html"
+
+
+# --------- jul-02 primary-source fixes (editor complaints batch) ----------
+
+def _brands_min():
+    from news_agent.core.config_loader import BrandDomainEntry
+    return [BrandDomainEntry(brand="Voyt", domains=["voyt.ru"], aliases=[])]
+
+
+def _cues_min():
+    from news_agent.core.config_loader import PrimarySourceCues
+    return PrimarySourceCues(phrases={"ru": ["сообщает"]}, press_release_hosts=[],
+                             mirror_hosts=[])
+
+
+def test_own_cdn_subdomain_never_primary() -> None:
+    """media.ixbt.com (the article site's own CDN subdomain + an image-resize
+    URL) was promoted to primary with medium confidence — both filters must
+    reject it now."""
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://www.ixbt.com/news/2026/07/01/voyt.html",
+        body="Российский электрокроссовер Voyt, сообщает пресс-служба.",
+        title="Voyt показан в движении",
+        outbound_links=[
+            "https://media.ixbt.com/fit-in/1110x/https://www.ixbt.com/img/x.jpg",
+        ],
+        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
+    )
+    assert conf == "low" and "ixbt.com" in dom  # fell back to self, honest low
+
+
+def test_image_links_are_junk() -> None:
+    from news_agent.core.primary_source import _is_junk_link
+    assert _is_junk_link("https://cdn.site.com/fit-in/1110x/pic")
+    assert _is_junk_link("https://site.com/uploads/photo.jpg")
+    assert _is_junk_link("https://site.com/img/banner.webp")
+    assert not _is_junk_link("https://voyt.ru/press/new-model-2026")
+
+
+def test_redistribution_host_does_not_self_certify_via_whitelist() -> None:
+    """naavtotrasse is fetch-whitelisted, but a repost must never become its
+    own primary source at HIGH confidence (it masked the real source)."""
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://naavtotrasse.ru/auto-news/shtrafy.html",
+        body="Штрафы выросли, пишет Autonews.ru.",
+        title="Штрафы в I полугодии",
+        outbound_links=[],
+        brands=_brands_min(), cues=_cues_min(),
+        whitelist_domains={"naavtotrasse.ru"},
+    )
+    assert conf == "low"  # NOT high — self-certification blocked
