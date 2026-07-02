@@ -794,6 +794,26 @@ def _apply_llm_editor_pass(
                 continue
             if ev.is_cross_run_dup:
                 stats["cross_run_dups"] += 1
+                # This verdict is already PAID FOR (part of the same LLM-editor
+                # call) but used to be discarded here — a story the model
+                # confidently recognised as "уже было" (pushed 2-3 days ago
+                # under a different URL/headline, so the exact archive gate and
+                # the event-signature hint both missed it) sailed into the
+                # clean feed. Carry it as the standard "возможно дубль" hint:
+                # the cluster packing keeps any member's hint and the push
+                # DIVERTS it to the review tab (reversible — editor decides).
+                # PREPENDED so the [:400] reason cap can never amputate it.
+                hint = "возможно дубль: уже публиковалось" + (
+                    f" — {ev.cross_run_match_url}" if ev.cross_run_match_url
+                    else " в недавнем прогоне")
+                for row_id in ev.member_rows:
+                    a = by_row.get(row_id)
+                    if a is None:
+                        continue
+                    rsn = a.get("llm_reason") or ""
+                    if "возможно дуб" not in rsn.lower():
+                        a["llm_reason"] = (
+                            hint + (f" | {rsn}" if rsn else ""))[:400]
             if len(ev.member_rows) < 2:
                 continue
             target_articles = [by_row[r] for r in ev.member_rows
@@ -850,9 +870,21 @@ def _apply_llm_editor_pass(
             # are filtered out (e.g. "LCV market stats" should NOT
             # merge with "Esteo MX production" just because they're
             # both Russian industry news).
+            #
+            # Sort by normalised title BEFORE chunking: no-brand dups of
+            # the same story (the утильсбор case — vesti + kommersant on
+            # one FCS announcement, no brand token, <2 shared proper
+            # nouns, so every lexical gate correctly skips them) used to
+            # land in DIFFERENT chunks in sheet order, so the LLM never
+            # saw them side by side. Lexical sorting co-locates same-topic
+            # titles in one chunk; the merge decision stays with the LLM
+            # + _llm_merge_corroborated (fuzz>=50) — the deliberately
+            # strict lexical gauntlet is NOT loosened.
+            chunk_src = sorted(
+                brand_articles, key=lambda a: a.get("normalised") or "")
             chunks = [
-                brand_articles[i:i + UNKNOWN_CHUNK_SIZE]
-                for i in range(0, len(brand_articles),
+                chunk_src[i:i + UNKNOWN_CHUNK_SIZE]
+                for i in range(0, len(chunk_src),
                                 UNKNOWN_CHUNK_SIZE)
             ]
             for i, chunk in enumerate(chunks):
