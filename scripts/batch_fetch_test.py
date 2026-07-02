@@ -175,6 +175,14 @@ CONSEC_LLM_ERRORS_ABORT = 5
 # dedup gate is degraded — a state that has silently occurred 3 times.
 ARCHIVE_URLS_FLOOR = 1000
 ARCHIVE_TITLES_FLOOR = 20
+# Per-source wall-clock budget. One slow source used to eat 26+ min (the
+# thekoreancarblog case: every article ran the full impersonate→playwright
+# fallback chain) and the team's workaround was disabling Playwright wholesale.
+# The budget bounds ANY slow source: once exceeded, remaining article links are
+# skipped and the truncation is recorded in r.error (so slow sources SURFACE in
+# the report instead of hiding). This is the prerequisite for re-enabling
+# Playwright safely. 0 disables the budget.
+SOURCE_BUDGET_S = float(os.environ.get("SOURCE_BUDGET_S", "90") or 0)
 FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # legacy fallback (ad-hoc runs)
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
 STATE_PATH = Path(os.environ.get("RUN_STATE_PATH", "./data/state.json"))
@@ -975,7 +983,8 @@ def process_source(
             r.detected_type = "rss"
             r.feed_url = url
             r.articles_attempted = len(entries)
-            _fill_from_rss_entries(client, entries, r, source_idx, article_rows)
+            _fill_from_rss_entries(client, entries, r, source_idx, article_rows,
+                                   t0=t0)
             r.elapsed_ms = int((time.monotonic() - t0) * 1000)
             return r
 
@@ -990,7 +999,8 @@ def process_source(
                 r.detected_type = "rss"
                 r.feed_url = feed_url
                 r.articles_attempted = len(entries)
-                _fill_from_rss_entries(client, entries, r, source_idx, article_rows)
+                _fill_from_rss_entries(client, entries, r, source_idx,
+                                       article_rows, t0=t0)
                 r.elapsed_ms = int((time.monotonic() - t0) * 1000)
                 return r
         except httpx.HTTPError:
@@ -1001,9 +1011,25 @@ def process_source(
     links = _discover_article_links(url, html, _items_cap_for(url))
     r.articles_attempted = len(links)
     for idx, link in enumerate(links, start=1):
+        if _source_budget_exceeded(r, t0, idx - 1, len(links)):
+            break
         _fetch_and_score(client, link, r, source_idx, idx, article_rows)
     r.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return r
+
+
+def _source_budget_exceeded(r: SourceResult, t0: float, done: int, total: int) -> bool:
+    """True once the per-source wall clock is spent — record the truncation
+    in r.error so the report shows WHICH sources are slow (they used to hide
+    behind a silently long run)."""
+    if SOURCE_BUDGET_S <= 0:
+        return False
+    elapsed = time.monotonic() - t0
+    if elapsed <= SOURCE_BUDGET_S:
+        return False
+    note = f"budget-exceeded {elapsed:.0f}s at {done}/{total} links"
+    r.error = (r.error + " | " + note)[:200] if r.error else note
+    return True
 
 
 def _rss_pub_date(entry) -> datetime | None:  # type: ignore[no-untyped-def]
@@ -1054,8 +1080,13 @@ def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
     result: SourceResult,
     source_idx: int,
     article_rows: list[ArticleRow],
+    *,
+    t0: float | None = None,
 ) -> None:
     for idx, entry in enumerate(entries, start=1):
+        if t0 is not None and _source_budget_exceeded(
+                result, t0, idx - 1, len(entries)):
+            break
         link = (entry.get("link") or "").strip()
         if not link:
             continue

@@ -44,16 +44,15 @@ function Stage($name, $argList) {
 }
 
 Write-Output "run_prog start $ts  (NoPush=$NoPush)  log=$log"
-# --no-playwright: keeps this unattended run bounded. Playwright DOES have
-# per-navigation timeouts (goto 20-30s, launch ~30s), so it can't hang forever
-# -- the jun-18 "26 min stall" was a newly-live high-volume source
-# (thekoreancarblog, ~35 articles) where EACH article ran the full
-# impersonate->playwright fallback chain, summing up. Disabling the per-article
-# browser step caps that. Cost: JS-only SPA listing pages yield nothing without
-# a browser. PROPER fix (TODO): a per-source wall-clock budget (cap each source
-# at ~90s, log + move on) bounds ANY slow source AND surfaces which to fix,
-# letting us re-enable Playwright safely. httpx + curl_cffi cover the rest.
-Stage "1/3 fetch+classify"        @('scripts/batch_fetch_test.py','--no-playwright')
+# Playwright RE-ENABLED (jul-02): the per-source wall-clock budget
+# (SOURCE_BUDGET_S, default 90s) now bounds ANY slow source -- once spent,
+# remaining links are skipped and the truncation is recorded in the source's
+# error column, so slow sources SURFACE in the report instead of hiding.
+# That was the precondition for turning the browser back on: --no-playwright
+# had silently zero-yielded the 5 playwright_domains every scheduled run
+# (the jun-18 "26 min stall" was an unbounded per-article fallback chain,
+# not Playwright itself).
+Stage "1/3 fetch+classify"        @('scripts/batch_fetch_test.py')
 Stage "2/3 cluster (LLM-editor)"  @('scripts/build_news_clusters.py','--use-llm-editor')
 if ($NoPush) {
   Write-Output "STOP before push (-NoPush). Review clusters, then run: python scripts\build_news_sheet.py" | Tee-Object -FilePath $log -Append
