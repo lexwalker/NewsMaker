@@ -131,6 +131,18 @@ def load_http_quirks() -> HttpQuirks:
     )
 
 
+def load_brand_newsrooms() -> dict[str, str]:
+    """brand (lowercase, matches event_signature.brand) → official newsroom
+    URL. Applied to weak-primary sales_stat/financial rows so brand figures
+    are attributed to the brand's own press (editor requirement)."""
+    data = _read_yaml(CONFIG_DIR / "brand_newsrooms.yaml") or {}
+    return {
+        str(k).strip().lower(): str(v).strip()
+        for k, v in (data.get("brand_newsrooms") or {}).items()
+        if k and v
+    }
+
+
 def load_blacklist() -> Blacklist:
     data = _read_yaml(CONFIG_DIR / "blacklist.yaml") or {}
     return Blacklist(

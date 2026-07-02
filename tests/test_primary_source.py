@@ -517,4 +517,44 @@ def test_redistribution_host_does_not_self_certify_via_whitelist() -> None:
         brands=_brands_min(), cues=_cues_min(),
         whitelist_domains={"naavtotrasse.ru"},
     )
-    assert conf == "low"  # NOT high — self-certification blocked
+    assert conf != "high"                    # self-certification blocked
+    assert dom == "autonews.ru" and conf == "medium"  # tier-5 text attribution
+
+
+def test_text_mentioned_source_on_redistributor() -> None:
+    """naavtotrasse has NO outbound hrefs; the body credits the source in
+    TEXT — tier 5 must attribute it (root URL, medium)."""
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://naavtotrasse.ru/auto-news/shtrafy-vyrosli.html",
+        body="В I полугодии штрафы выросли, сообщает Autonews.ru со ссылкой на ГИБДД.",
+        title="Штрафы в I полугодии выросли",
+        outbound_links=[],
+        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
+    )
+    assert dom == "autonews.ru" and conf == "medium"
+
+
+def test_slug_named_source_on_redistributor() -> None:
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://naavtotrasse.ru/auto-news/autonews-ru-v-i-polugodii-2026.html",
+        body="Средний штраф вырос на четверть.",
+        title="Штрафы выросли",
+        outbound_links=[],
+        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
+    )
+    assert dom == "autonews.ru" and conf == "medium"
+
+
+def test_text_mention_ignored_on_normal_sites() -> None:
+    """Tier 5 is GATED on redistribution hosts — a normal site keeps the
+    old fallback behaviour even when its text credits someone."""
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://example-blog.com/post/shtrafy.html",
+        body="Штрафы выросли, сообщает Autonews.ru.",
+        title="Штрафы", outbound_links=[],
+        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
+    )
+    assert dom == "example-blog.com" and conf == "low"

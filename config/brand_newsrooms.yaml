@@ -1,0 +1,34 @@
+# Brand -> official newsroom/IR page. Used ONLY for accepted rows whose
+# event_type is sales_stat/financial and whose detected primary is weak
+# (low / corpus-guess): the editor requires brand sales & financial figures
+# to be attributed to the brand's OFFICIAL press («нужен оф пресс-релиз с
+# официального сайта компании» — 8 complaints in one markup, 01.07).
+# The URL points a HUMAN to the newsroom (it does not need to pass our
+# fetcher's anti-bot). Keys match the LLM event_signature brand (lowercase).
+brand_newsrooms:
+  li auto: https://ir.lixiang.com/en/news-releases
+  geely: https://global.geely.com/en/news
+  zeekr: https://ir.zeekrlife.com/news-releases
+  gwm: https://www.gwm-global.com/news/
+  great wall: https://www.gwm-global.com/news/
+  leapmotor: https://www.leapmotor.com/en-hk/news
+  byd: https://www.byd.com/en/news
+  xpeng: https://ir.xiaopeng.com/news-releases
+  nio: https://ir.nio.com/news-events/news-releases
+  hyundai: https://www.hyundai.com/worldwide/en/newsroom
+  kia: https://worldwide.kia.com/int/newsroom
+  honda: https://global.honda/en/newsroom/
+  nissan: https://global.nissannews.com/en
+  toyota: https://global.toyota/en/newsroom/
+  lexus: https://global.toyota/en/newsroom/lexus/
+  volkswagen: https://www.volkswagen-newsroom.com/en
+  bmw: https://www.press.bmwgroup.com/global
+  mercedes-benz: https://group-media.mercedes-benz.com
+  ford: https://media.ford.com
+  general motors: https://news.gm.com
+  gm: https://news.gm.com
+  tesla: https://ir.tesla.com
+  chery: https://www.cheryinternational.com/news
+  lynk & co: https://press.lynkco.com
+  changan: https://www.globalchangan.com/news
+  stellantis: https://www.media.stellantis.com

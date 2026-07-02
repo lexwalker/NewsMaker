@@ -1445,6 +1445,44 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     return {"aborted": aborted}
 
 
+def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
+    """Attribute weak-primary brand SALES/FINANCIAL rows to the brand's
+    OFFICIAL newsroom (config/brand_newsrooms.yaml).
+
+    The editor requires brand figures to carry the brand's own press as the
+    primary («нужен пресс-релиз с официального сайта компании» — 8 complaints
+    in the 01.07 markup alone: Li Auto/Geely/GWM/Zeekr/Hyundai deliveries via
+    aggregators). Runs AFTER the corpus pass: an official newsroom beats a
+    corpus-earlier aggregator guess for these rows; a HIGH-confidence primary
+    (real press-release link) is never overridden."""
+    try:
+        from news_agent.core.config_loader import load_brand_newsrooms
+        newsrooms = load_brand_newsrooms()
+    except Exception as e:  # noqa: BLE001 — attribution is best-effort
+        print(f"  brand-newsrooms load failed ({type(e).__name__}) — pass skipped")
+        return
+    if not newsrooms:
+        return
+    hit = 0
+    for r in article_rows:
+        if r.verdict not in ("Точно новость", "Возможно новость"):
+            continue
+        if r.event_type not in ("sales_stat", "financial"):
+            continue
+        if r.primary_confidence == "high":
+            continue
+        nr = newsrooms.get((r.event_brand or "").strip().lower())
+        if not nr:
+            continue
+        r.primary_url = nr
+        r.primary_domain = domain_of(nr)
+        r.primary_confidence = "medium"
+        r.primary_method = "brand-newsroom"
+        hit += 1
+    if hit:
+        print(f"Brand-newsroom attribution: {hit} sales/financial rows -> official press.")
+
+
 def _run_corpus_primary_source_pass(article_rows: list[ArticleRow]) -> None:
     """Level 2 primary-source detection.
 
@@ -2335,6 +2373,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # ------------------------------------ Primary-source level 2 (corpus-based)
     _run_corpus_primary_source_pass(article_rows)
+    # Official-press attribution for brand sales/financial figures (after the
+    # corpus pass: official newsroom beats a corpus-earlier aggregator guess).
+    _apply_brand_newsroom_primary(article_rows)
 
     # Persist the URL hashes + full classification into the SQLite cache
     # BEFORE the network writes. The cache store is local (no network, can't
