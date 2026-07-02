@@ -1232,10 +1232,13 @@ Reject on-topic items that carry no concrete happening:
    any foreign-market event: Other news, region=Global. Editor (30.06):
    "Trump signed a right-to-repair memorandum" -> Other news (Global), NOT
    Местные.
- - A vehicle RECALL is ALWAYS Other news (Другие) - even when the recalled
-   vehicles are pickups/vans/LCV bodies. The LCV body-type rule does NOT apply
-   to recalls. Editor (01.07): "Ford recalls 741,195 pickups (rollaway risk)"
-   -> Other news, Global - NOT LCV news.
+ - A PASSENGER-vehicle recall (cars, SUVs, pickups, vans) is ALWAYS Other news
+   (Другие) - the LCV body-type rule does NOT apply to recalls. Editor (01.07):
+   "Ford recalls 741,195 pickups (rollaway risk)" -> Other news, Global - NOT
+   LCV news. This example routes the SECTION only - it does NOT rescue
+   off-topic subjects: a recall of RVs/motorhomes/campers/trailers/buses/heavy
+   equipment is STILL rejected at STEP 1 («не наша тема»: Airstream, Jayco,
+   Tiffin, Winnebago, Forest River -> reject, никогда не публикуем).
 
 ============================================================
 DECISION RULE
