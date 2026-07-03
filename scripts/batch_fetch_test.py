@@ -1450,14 +1450,21 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
     OFFICIAL newsroom (config/brand_newsrooms.yaml).
 
     The editor requires brand figures to carry the brand's own press as the
-    primary («нужен пресс-релиз с официального сайта компании» — 8 complaints
-    in the 01.07 markup alone: Li Auto/Geely/GWM/Zeekr/Hyundai deliveries via
-    aggregators). Runs AFTER the corpus pass: an official newsroom beats a
-    corpus-earlier aggregator guess for these rows; a HIGH-confidence primary
-    (real press-release link) is never overridden."""
+    primary («все финансовые отчёты компаний нужно брать с их сайтов» — Olga,
+    03.07, on a Nio-deliveries story cited from cnevpost). Runs AFTER the
+    corpus pass.
+
+    Override policy: for sales_stat/financial we override EVEN a high-
+    confidence journalistic primary (cnevpost, carnewschina…) — the editor
+    wants the company's OWN site, an aggregator is only a fallback «когда с
+    ВПН уже сайт не работает». We do NOT override when the primary is already
+    on an official brand-owned domain (a specific press release beats the
+    generic newsroom index — that IS the company's site)."""
     try:
         from news_agent.core.config_loader import load_brand_newsrooms
+        from news_agent.core.primary_source import _matches_brand
         newsrooms = load_brand_newsrooms()
+        brands = BRANDS or []
     except Exception as e:  # noqa: BLE001 — attribution is best-effort
         print(f"  brand-newsrooms load failed ({type(e).__name__}) — pass skipped")
         return
@@ -1469,13 +1476,16 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
             continue
         if r.event_type not in ("sales_stat", "financial"):
             continue
-        if r.primary_confidence == "high":
-            continue
         nr = newsrooms.get((r.event_brand or "").strip().lower())
         if not nr:
             continue
+        nr_dom = domain_of(nr)
+        # Already on an official brand domain (real press release or the
+        # newsroom itself) → keep it, it's already the company's own site.
+        if r.primary_domain == nr_dom or _matches_brand(r.primary_domain, brands):
+            continue
         r.primary_url = nr
-        r.primary_domain = domain_of(nr)
+        r.primary_domain = nr_dom
         r.primary_confidence = "medium"
         r.primary_method = "brand-newsroom"
         hit += 1
