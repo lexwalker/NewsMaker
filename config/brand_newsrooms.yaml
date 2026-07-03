@@ -32,3 +32,10 @@ brand_newsrooms:
   lynk & co: https://press.lynkco.com
   changan: https://www.globalchangan.com/news
   stellantis: https://www.media.stellantis.com
+  # jul-03: gaps found in the sales_stat/financial rows of recent runs
+  rivian: https://rivian.com/newsroom
+  smart: https://www.smart.com/en/newsroom
+  avatr: https://www.avatr.com/news
+  # NOTE: avtovaz deliberately NOT mapped — its RU sales/production figures
+  # usually come from АВТОСТАТ/АЕБ (industry bodies), not the company's own
+  # site; needs an editor call before mapping to lada.ru. (9 rows/run.)
