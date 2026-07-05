@@ -517,59 +517,32 @@ def test_redistribution_host_does_not_self_certify_via_whitelist() -> None:
         brands=_brands_min(), cues=_cues_min(),
         whitelist_domains={"naavtotrasse.ru"},
     )
-    assert conf != "high"                    # self-certification blocked
-    assert dom == "autonews.ru" and conf == "medium"  # tier-5 text attribution
+    assert conf == "low"  # self-certification blocked; falls back to self
 
 
-def test_text_mentioned_source_on_redistributor() -> None:
-    """naavtotrasse has NO outbound hrefs; the body credits the source in
-    TEXT — tier 5 must attribute it (root URL, medium)."""
-    from news_agent.core.primary_source import detect_primary_source
-    url, dom, conf = detect_primary_source(
-        article_url="https://naavtotrasse.ru/auto-news/shtrafy-vyrosli.html",
-        body="В I полугодии штрафы выросли, сообщает Autonews.ru со ссылкой на ГИБДД.",
-        title="Штрафы в I полугодии выросли",
-        outbound_links=[],
-        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
-    )
-    assert dom == "autonews.ru" and conf == "medium"
 
 
-def test_slug_named_source_on_redistributor() -> None:
-    from news_agent.core.primary_source import detect_primary_source
-    url, dom, conf = detect_primary_source(
-        article_url="https://naavtotrasse.ru/auto-news/autonews-ru-v-i-polugodii-2026.html",
-        body="Средний штраф вырос на четверть.",
-        title="Штрафы выросли",
-        outbound_links=[],
-        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
-    )
-    assert dom == "autonews.ru" and conf == "medium"
-
-
-def test_text_mention_ignored_on_normal_sites() -> None:
-    """Tier 5 is GATED on redistribution hosts — a normal site keeps the
-    old fallback behaviour even when its text credits someone."""
-    from news_agent.core.primary_source import detect_primary_source
-    url, dom, conf = detect_primary_source(
-        article_url="https://example-blog.com/post/shtrafy.html",
-        body="Штрафы выросли, сообщает Autonews.ru.",
-        title="Штрафы", outbound_links=[],
-        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
-    )
-    assert dom == "example-blog.com" and conf == "low"
-
-
-def test_marked_source_link_used_even_if_root() -> None:
-    """auto.mail credits «источник: rg.ru» as a bare domain root — the outbound
-    junk filter drops root URLs, so the explicit source hint must win."""
+def test_marked_source_root_link_NOT_used() -> None:
+    """A bare domain-root source credit («источник: rg.ru/») is useless — the
+    editor needs a DEEP article link, so a root hint must be ignored."""
     from news_agent.core.primary_source import detect_primary_source
     url, dom, conf = detect_primary_source(
         article_url="https://auto.mail.ru/article/126272-expert-said.html",
-        body="Эксперт рассказал, какие ОС в машинах уязвимы.",
-        title="Эксперт рассказал",
+        body="Эксперт рассказал.", title="Эксперт",
+        outbound_links=[], source_hint_url="https://rg.ru/",
+        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
+    )
+    assert dom != "rg.ru"  # root NOT promoted
+
+
+def test_marked_source_deep_link_used() -> None:
+    """A DEEP source credit (points at the actual article) IS used at high."""
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://auto.mail.ru/article/126272-expert-said.html",
+        body="Эксперт рассказал.", title="Эксперт",
         outbound_links=[],
-        source_hint_url="https://rg.ru/",
+        source_hint_url="https://rg.ru/2026/07/03/ekspert-nazval-os.html",
         brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
     )
     assert dom == "rg.ru" and conf == "high"

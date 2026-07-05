@@ -254,6 +254,24 @@ def _is_mirror(domain: str, mirror_hosts: list[str]) -> bool:
     return False
 
 
+def _is_deep_url(url: str) -> bool:
+    """True when the URL points at a specific article, not an outlet homepage
+    or a shallow section index. «rg.ru/» / «rg.ru/news» → shallow;
+    «rg.ru/2026/07/03/some-slug.html» → deep. The editor wants the article."""
+    p = urlparse(url)
+    path = (p.path or "").rstrip("/")
+    if not path or path == "":
+        return False
+    segs = [s for s in path.split("/") if s]
+    if not segs:
+        return False
+    last = segs[-1]
+    # a slug (hyphens) or a date/id path, or ≥2 path segments = article-deep;
+    # a single short word ("news", "auto") is a section index, not an article.
+    return ("-" in last or last.isdigit() or last.endswith((".html", ".htm"))
+            or len(segs) >= 2 or len(last) >= 16)
+
+
 def _same_site(candidate_domain: str, article_domain_norm: str) -> bool:
     """True when the candidate is the article's own site INCLUDING its
     subdomains (media.ixbt.com vs ixbt.com). The old exact-equality check let
@@ -295,11 +313,12 @@ def detect_primary_source(
         return article_url, domain_of(article_url), "high"
 
     # Tier 0.5 — the article EXPLICITLY marks its source (an «Источник:» link
-    # or a source-marker attribute). The editor's recurring «первоисточник
-    # указан в статье» — auto.mail credits e.g. «источник: rg.ru». We trust
-    # this even when it's a bare domain root (the outbound junk filter would
-    # drop it), as long as it's a different site than the article's own.
-    if source_hint_url:
+    # or a source-marker attribute) AND that link is DEEP (points at the actual
+    # source article, not just the outlet's homepage). Editor (04.07): a bare
+    # «rg.ru/» is useless — she needs «rg.ru/2026/…/article». Most RU
+    # aggregators (auto.mail) only credit the domain root, so this fires rarely
+    # — the honest gate, not a fake root attribution.
+    if source_hint_url and _is_deep_url(source_hint_url):
         hd = domain_of(source_hint_url)
         if hd and not _same_site(hd, article_domain) and not _is_mirror(hd, cues.mirror_hosts):
             return source_hint_url, hd, "high"
@@ -367,17 +386,13 @@ def detect_primary_source(
                 continue
             return link, d, "medium"
 
-    # Tier 5 — redistribution portal naming its source in TEXT or URL SLUG
-    # (naavtotrasse has NO outbound hrefs at all: «сообщает Autonews.ru» in
-    # the body, or the slug itself /autonews-ru-…). Only for known
-    # redistributors, so every other domain keeps prior behaviour. The root
-    # URL is for the EDITOR (attribution), not for our fetcher.
-    if (_normalise_domain(article_domain) in _REDISTRIBUTION_HOSTS
-            or article_domain in _REDISTRIBUTION_HOSTS):
-        src = (_text_mentioned_source(body, article_domain)
-               or _slug_named_source(article_url, article_domain))
-        if src:
-            return f"https://{src}/", src, "medium"
+    # (A former Tier 5 attributed a redistributor's TEXT/SLUG-named source as a
+    # DOMAIN ROOT — «сообщает Autonews.ru» -> autonews.ru/. Removed 04.07: the
+    # editor needs a DEEP link to the actual article, and a bare domain root is
+    # useless. A text mention only yields the outlet name, never the article
+    # URL, so it cannot satisfy that — the deep link, when it exists, comes from
+    # the body-link tiers above or the corpus-earliest pass, i.e. from actually
+    # crawling the original outlet ourselves.)
 
     # Fallback — the article itself is the primary source.
     return article_url, domain_of(article_url), "low"
