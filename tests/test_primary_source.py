@@ -585,3 +585,45 @@ def test_pick_marked_source_ignores_share_widgets() -> None:
             'class="share-source-btn">Поделиться</a></article>')
     soup = BeautifulSoup(html, "lxml")
     assert _pick_marked_source(soup, "https://site.ru/x") == ""
+
+
+def test_corpus_hint_prefers_credited_outlet_deep_url() -> None:
+    """auto.mail credits «источник: rg.ru» (homepage only). If rg.ru's actual
+    article is in our corpus, the corpus pass returns its DEEP url — even
+    without an earlier timestamp — because the credit is authoritative."""
+    from datetime import datetime, timezone
+    from news_agent.core.primary_source import (
+        CorpusEntry, detect_earliest_in_corpus)
+    t = datetime(2026, 7, 3, 10, tzinfo=timezone.utc)
+    corpus = [
+        CorpusEntry(url="https://rg.ru/2026/07/03/ekspert-nazval-uyazvimye-os.html",
+                    title="Эксперт назвал уязвимые ОС в автомобилях",
+                    published_at=t, domain="rg.ru"),
+        CorpusEntry(url="https://irrelevant.ru/x", title="Совсем другое",
+                    published_at=t, domain="irrelevant.ru"),
+    ]
+    res = detect_earliest_in_corpus(
+        article_url="https://auto.mail.ru/article/126272-ekspert.html",
+        article_title="Эксперт назвал уязвимые ОС в машинах",
+        article_published_at=t,          # SAME time — earlier-gate would fail
+        corpus=corpus, source_hint_domain="rg.ru",
+    )
+    assert res is not None
+    url, dom, conf = res
+    assert dom == "rg.ru" and url.endswith(".html") and conf == "high"
+
+
+def test_corpus_hint_no_match_falls_through() -> None:
+    from datetime import datetime, timezone
+    from news_agent.core.primary_source import (
+        CorpusEntry, detect_earliest_in_corpus)
+    t = datetime(2026, 7, 3, 10, tzinfo=timezone.utc)
+    # hint domain not in corpus → hint shortcut yields nothing; no earlier
+    # entry either → None
+    corpus = [CorpusEntry(url="https://other.ru/a", title="Эксперт назвал ОС",
+                          published_at=t, domain="other.ru")]
+    res = detect_earliest_in_corpus(
+        article_url="https://auto.mail.ru/article/x.html",
+        article_title="Эксперт назвал уязвимые ОС в машинах",
+        article_published_at=t, corpus=corpus, source_hint_domain="rg.ru")
+    assert res is None

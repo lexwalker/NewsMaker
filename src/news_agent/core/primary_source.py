@@ -441,6 +441,7 @@ def detect_earliest_in_corpus(
     press_release_hosts: list[str] | None = None,
     mirror_hosts: list[str] | None = None,
     similarity_threshold: float = 0.72,
+    source_hint_domain: str = "",
 ) -> tuple[str, str, Confidence] | None:
     """Find the earliest article in ``corpus`` whose title fuzzy-matches.
 
@@ -466,6 +467,26 @@ def detect_earliest_in_corpus(
     press_hosts = set((press_release_hosts or []))
 
     mirror_set = mirror_hosts or []
+
+    # Credited-source shortcut: the article EXPLICITLY named an outlet
+    # («источник: rg.ru») but linked only its homepage. If that outlet's
+    # actual article is in our corpus (we crawled it too), use its DEEP url —
+    # the credit is authoritative for WHICH outlet, so we ignore the
+    # earlier-timestamp gate here and just require a strong title match.
+    hint = _normalise_domain(source_hint_domain) if source_hint_domain else ""
+    if hint and not _same_site(hint, _normalise_domain(target_domain)):
+        best_hint: tuple[CorpusEntry, float] | None = None
+        for entry in corpus:
+            if entry.url == article_url:
+                continue
+            if not _same_site(entry.domain, hint):
+                continue
+            ratio = fuzz.token_set_ratio(target_norm, normalise_title(entry.title))
+            if ratio >= threshold and (best_hint is None or ratio > best_hint[1]):
+                best_hint = (entry, ratio)
+        if best_hint is not None:
+            e = best_hint[0]
+            return e.url, e.domain, "high"
     candidates: list[tuple[CorpusEntry, float]] = []
     for entry in corpus:
         if entry.url == article_url or entry.domain == target_domain:

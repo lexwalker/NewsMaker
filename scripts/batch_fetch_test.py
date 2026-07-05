@@ -324,6 +324,7 @@ class ArticleRow:
     primary_domain: str = ""
     primary_confidence: str = ""  # "high" / "medium" / "low"
     primary_method: str = ""      # "body-link" / "corpus-earlier" / "self"
+    source_hint_domain: str = ""  # outlet the article credits («источник: X»)
     # Reconstructed from SQLite cache on a repeat run — skip the LLM pass.
     from_cache: bool = False
     # Phase-1 model-launch lifecycle tracking (heuristic, no LLM)
@@ -1559,6 +1560,7 @@ def _run_corpus_primary_source_pass(article_rows: list[ArticleRow]) -> None:
             whitelist_domains=WHITELIST,
             press_release_hosts=press_hosts,
             mirror_hosts=PRIMARY_CUES.mirror_hosts if PRIMARY_CUES else [],
+            source_hint_domain=r.source_hint_domain,
         )
         if found is None:
             continue
@@ -1908,6 +1910,8 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             whitelist_domains=WHITELIST,
             source_hint_url=getattr(article, "source_hint_url", ""),
         )
+        _hint = getattr(article, "source_hint_url", "")
+        row.source_hint_domain = domain_of(_hint) if _hint else ""
         row.primary_url = p_url
         row.primary_domain = p_dom
         row.primary_confidence = p_conf
