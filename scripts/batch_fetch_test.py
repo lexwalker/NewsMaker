@@ -1906,6 +1906,7 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             brands=BRANDS,
             cues=PRIMARY_CUES,
             whitelist_domains=WHITELIST,
+            source_hint_url=getattr(article, "source_hint_url", ""),
         )
         row.primary_url = p_url
         row.primary_domain = p_dom

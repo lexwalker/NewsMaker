@@ -166,6 +166,7 @@ def extract_article(
 
     image_url, images = _pick_images(soup, url)
     outbound = _pick_outbound_links(soup, url)
+    source_hint = _pick_marked_source(soup, url)
 
     return RawArticle(
         url=url,
@@ -176,6 +177,7 @@ def extract_article(
         image_url=image_url,
         images=images,
         outbound_links=outbound,
+        source_hint_url=source_hint,
         source_name=source_name,
         source_url=source_url,
         source_language=source_language,
@@ -518,6 +520,42 @@ def _pick_images(soup: BeautifulSoup, page_url: str) -> tuple[str | None, list[s
     if primary is None and inline:
         primary = inline[0]
     return primary, inline
+
+
+# An aggregator that credits its source explicitly does it in one of two ways:
+#   • a source-marker attribute on the anchor — auto.mail.ru uses
+#     data-qa-detail="ArticleSourceLink"; others use rel="source" / class~=source;
+#   • a plain «Источник:» / «По материалам» label right before the <a>.
+# The credited URL is often just the source's DOMAIN ROOT (rg.ru/), which the
+# outbound junk filter drops — so we capture it separately and unfiltered.
+_SOURCE_MARK_ATTR_RE = re.compile(r"source", re.I)
+_SOURCE_LABEL_RE = re.compile(r"источник|по материалам|first (?:reported|published)|source:", re.I)
+
+
+def _pick_marked_source(soup: BeautifulSoup, page_url: str) -> str:
+    host = urlparse(page_url).netloc
+    for a in soup.find_all("a", href=True):
+        absolute = urljoin(page_url, str(a.get("href")))
+        p = urlparse(absolute)
+        if p.scheme not in ("http", "https") or not p.netloc or p.netloc == host:
+            continue
+        # (a) explicit source-marker attribute on the anchor (NOT a share
+        #     widget). auto.mail: data-qa-detail="ArticleSourceLink".
+        marker = " ".join(
+            str(a.get(k, "")) for k in ("data-qa-detail", "data-qa", "rel", "class")
+        ).lower()
+        if _SOURCE_MARK_ATTR_RE.search(marker) and "share" not in marker:
+            return absolute
+        # (b) an «Источник:»-style label immediately before the anchor. Look at
+        #     the text of the anchor's parent up to the link — cheap and local.
+        parent_txt = ""
+        if a.parent is not None:
+            full = a.parent.get_text(" ", strip=True)
+            link_txt = a.get_text(" ", strip=True)
+            parent_txt = full.split(link_txt)[0] if link_txt else full
+        if len(parent_txt) < 80 and _SOURCE_LABEL_RE.search(parent_txt):
+            return absolute
+    return ""
 
 
 def _pick_outbound_links(soup: BeautifulSoup, page_url: str) -> list[str]:

@@ -273,6 +273,7 @@ def detect_primary_source(
     brands: list[BrandDomainEntry],
     cues: PrimarySourceCues,
     whitelist_domains: set[str] | None = None,
+    source_hint_url: str = "",
 ) -> tuple[str, str, Confidence]:
     """Return (primary_url, primary_domain, confidence).
 
@@ -292,6 +293,16 @@ def detect_primary_source(
     # Tier 0 — article itself is a press release / whitelist source.
     if _press_release_host(article_domain, cues.press_release_hosts):
         return article_url, domain_of(article_url), "high"
+
+    # Tier 0.5 — the article EXPLICITLY marks its source (an «Источник:» link
+    # or a source-marker attribute). The editor's recurring «первоисточник
+    # указан в статье» — auto.mail credits e.g. «источник: rg.ru». We trust
+    # this even when it's a bare domain root (the outbound junk filter would
+    # drop it), as long as it's a different site than the article's own.
+    if source_hint_url:
+        hd = domain_of(source_hint_url)
+        if hd and not _same_site(hd, article_domain) and not _is_mirror(hd, cues.mirror_hosts):
+            return source_hint_url, hd, "high"
     if (article_domain in whitelist_norm
             and article_domain not in _REDISTRIBUTION_HOSTS):
         # Whitelist here means "editor-trusted PRIMARY" (zr.ru tests, autostat

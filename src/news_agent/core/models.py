@@ -36,6 +36,11 @@ class RawArticle(BaseModel):
     image_url: str | None = None
     images: list[str] = Field(default_factory=list)
     outbound_links: list[str] = Field(default_factory=list)
+    # A link the article EXPLICITLY marks as its source («источник: <a…>», or
+    # a source-marker attribute like auto.mail's data-qa-detail="…SourceLink").
+    # Kept separate from outbound_links because it must bypass the root-only
+    # junk filter (aggregators often credit just the source's domain root).
+    source_hint_url: str = ""
     source_name: str
     source_url: str
     source_language: str | None = None

@@ -558,3 +558,57 @@ def test_text_mention_ignored_on_normal_sites() -> None:
         brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
     )
     assert dom == "example-blog.com" and conf == "low"
+
+
+def test_marked_source_link_used_even_if_root() -> None:
+    """auto.mail credits «источник: rg.ru» as a bare domain root — the outbound
+    junk filter drops root URLs, so the explicit source hint must win."""
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://auto.mail.ru/article/126272-expert-said.html",
+        body="Эксперт рассказал, какие ОС в машинах уязвимы.",
+        title="Эксперт рассказал",
+        outbound_links=[],
+        source_hint_url="https://rg.ru/",
+        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
+    )
+    assert dom == "rg.ru" and conf == "high"
+
+
+def test_marked_source_same_site_ignored() -> None:
+    from news_agent.core.primary_source import detect_primary_source
+    url, dom, conf = detect_primary_source(
+        article_url="https://auto.mail.ru/article/x.html",
+        body="text", title="t", outbound_links=[],
+        source_hint_url="https://auto.mail.ru/tag/news",  # same site
+        brands=_brands_min(), cues=_cues_min(), whitelist_domains=set(),
+    )
+    assert dom != "auto.mail.ru" or conf == "low"  # not promoted
+
+
+def test_pick_marked_source_by_attribute() -> None:
+    from bs4 import BeautifulSoup
+    from news_agent.adapters.fetchers.html import _pick_marked_source
+    html = ('<main><p>текст</p>'
+            '<div>источник: <a href="https://rg.ru/" '
+            'data-qa-detail="ArticleSourceLink">Российская газета</a></div>'
+            '</main>')
+    soup = BeautifulSoup(html, "lxml")
+    assert _pick_marked_source(soup, "https://auto.mail.ru/a") == "https://rg.ru/"
+
+
+def test_pick_marked_source_by_label() -> None:
+    from bs4 import BeautifulSoup
+    from news_agent.adapters.fetchers.html import _pick_marked_source
+    html = '<article>Источник: <a href="https://www.gazeta.ru/">Газета</a></article>'
+    soup = BeautifulSoup(html, "lxml")
+    assert _pick_marked_source(soup, "https://kolesa.ru/x") == "https://www.gazeta.ru/"
+
+
+def test_pick_marked_source_ignores_share_widgets() -> None:
+    from bs4 import BeautifulSoup
+    from news_agent.adapters.fetchers.html import _pick_marked_source
+    html = ('<article>text <a href="https://vk.com/share?url=x" '
+            'class="share-source-btn">Поделиться</a></article>')
+    soup = BeautifulSoup(html, "lxml")
+    assert _pick_marked_source(soup, "https://site.ru/x") == ""
