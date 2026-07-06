@@ -82,12 +82,7 @@ _ALIAS_MAP: dict[str, str] = _build_alias_map()
 _ALIASES_SORTED: list[str] = sorted(_ALIAS_MAP.keys(), key=len, reverse=True)
 
 
-def reload_aliases() -> None:
-    """Force-reload from YAML (testing / hot-config edits)."""
-    global _ALIAS_MAP, _ALIASES_SORTED
-    _ALIAS_MAP = _build_alias_map()
-    _ALIASES_SORTED = sorted(_ALIAS_MAP.keys(), key=len, reverse=True)
-    canonicalize_brand.cache_clear()
+# (Removed jul-06 cost-audit: reload_aliases() was dead — 0 callers, no test.)
 
 
 # Word boundary that handles Cyrillic + Latin both. We can't rely on

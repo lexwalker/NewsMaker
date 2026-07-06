@@ -102,58 +102,11 @@ _OFFICIAL_PRIMARY_HOSTS: frozenset[str] = frozenset({
     "pravo.gov.ru", "minpromtorg.gov.ru",
 })
 
-# jul-03: redistribution portals often name their source in TEXT ONLY
-# («сообщает Autonews.ru», «по данным Автостата») or in the URL SLUG
-# (naavtotrasse: /auto-news/autonews-ru-shtrafy…) with NO outbound href —
-# the link-based tiers can't see it. Known publication names → domain.
-_TEXT_SOURCE_MENTIONS: dict[str, str] = {
-    "autonews.ru": "autonews.ru", "autonews": "autonews.ru",
-    "автостат": "autostat.ru", "autostat": "autostat.ru",
-    "коммерсант": "kommersant.ru", "kommersant": "kommersant.ru",
-    "ведомост": "vedomosti.ru",
-    "тасс": "tass.ru",
-    "риа новости": "ria.ru",
-    "за рулём": "zr.ru", "за рулем": "zr.ru",
-    "известия": "iz.ru",
-    "интерфакс": "interfax.ru",
-    "нбки": "nbki.ru",
-    "carscoops": "carscoops.com",
-    "carnewschina": "carnewschina.com",
-    "cnevpost": "cnevpost.com",
-    "reuters": "reuters.com", "рейтер": "reuters.com",
-    "bloomberg": "bloomberg.com", "блумберг": "bloomberg.com",
-    "automotive news": "autonews.com",
-    "autocar india": "autocarindia.com",
-}
-_SOURCE_CUE_RE = re.compile(
-    r"(?:сообщает|сообщил[аио]?|пишет|по данным|по информации|"
-    r"со ссылкой на|источник[:\s]|цитирует)\s+[«\"']?"
-    r"([a-zа-яё][a-zа-яё0-9 .\-]{2,28})",
-    re.I,
-)
-
-
-def _text_mentioned_source(body: str, article_domain_norm: str) -> str:
-    """Domain of a publication the body TEXT credits as the source, or ""."""
-    for m in _SOURCE_CUE_RE.finditer(body[:4000]):
-        cand = m.group(1).strip().lower()
-        for name, dom in _TEXT_SOURCE_MENTIONS.items():
-            if cand.startswith(name) and not _same_site(dom, article_domain_norm):
-                return dom
-    return ""
-
-
-def _slug_named_source(article_url: str, article_domain_norm: str) -> str:
-    """Domain encoded at the start of the article's URL slug
-    (…/autonews-ru-v-i-polugodii… → autonews.ru), or ""."""
-    slug = urlparse(article_url).path.rsplit("/", 1)[-1].lower()
-    for dom in set(_TEXT_SOURCE_MENTIONS.values()):
-        if slug.startswith(dom.replace(".", "-")) and \
-                not _same_site(dom, article_domain_norm):
-            return dom
-    return ""
-
-
+# (Removed jul-06 cost-audit: the TEXT/SLUG source-mention machinery —
+# _TEXT_SOURCE_MENTIONS, _SOURCE_CUE_RE, _text_mentioned_source,
+# _slug_named_source — was dead code. It fed the former Tier-5 that attributed
+# a redistributor's named source as a DOMAIN ROOT; Tier-5 was dropped 04.07
+# because roots are useless, and nothing has referenced these since.)
 def _normalise_domain(d: str) -> str:
     return _SUBDOMAIN_STRIP.sub("", d.lower())
 
@@ -456,11 +409,8 @@ def detect_primary_source(
 
 
 # --- Level 2: earliest appearance in our own corpus ------------------------
-
-# Common title suffix noise we want to strip before fuzzy-matching:
-#   "… - SMMT"          "… | Geely Russia"
-#   "… - Korean Car Blog"  "… — CarNewsChina.com"
-_TITLE_SUFFIX_RE = re.compile(r"\s*[–—\-|]\s+[^|–—\-]+$")
+# (Removed jul-06 cost-audit: _TITLE_SUFFIX_RE was dead — the real title-suffix
+# stripping lives in fuzzy_match._TRAILING_SOURCE_RE.)
 
 
 class CorpusEntry:

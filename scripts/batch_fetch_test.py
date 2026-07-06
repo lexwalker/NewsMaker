@@ -74,11 +74,6 @@ from news_agent.core.config_loader import (  # noqa: E402
     load_source_quality,
     load_whitelist_domains,
 )
-from news_agent.core.dedup import (  # noqa: E402
-    published_dup_hint,
-    recent_event_dup_hint,
-    recent_model_dup_hint,
-)
 from news_agent.core.freshness import is_fresh, is_in_window  # noqa: E402
 from news_agent.core.sheets_util import clamp_cells  # noqa: E402
 from news_agent.core.run_state import RunState, RunWindow  # noqa: E402
