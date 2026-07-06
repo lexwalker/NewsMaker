@@ -36,6 +36,8 @@ brand_newsrooms:
   rivian: https://rivian.com/newsroom
   smart: https://www.smart.com/en/newsroom
   avatr: https://www.avatr.com/news
-  # NOTE: avtovaz deliberately NOT mapped — its RU sales/production figures
-  # usually come from АВТОСТАТ/АЕБ (industry bodies), not the company's own
-  # site; needs an editor call before mapping to lada.ru. (9 rows/run.)
+  # NOTE: avtovaz deliberately NOT mapped. Editor decision (06.07): AvtoVAZ
+  # and RU-market sales figures come from АВТОСТАТ/АЕБ, NOT lada.ru — so they
+  # must NOT be forced to the automaker's own site. Instead autostat.ru +
+  # aebrus.ru are preferred primaries in primary_source.py, so a deep link to
+  # their article wins when an aggregator cites it.

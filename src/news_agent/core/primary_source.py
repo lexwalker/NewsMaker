@@ -73,9 +73,12 @@ _PREFERRED_PRIMARY_HOSTS: frozenset[str] = frozenset({
     "carnewschina.com", "cnevpost.com",
     "autoevolution.com", "electrek.co",
     "carsdirect.com", "autocarindia.com",
-    # official / industry bodies
+    # official / industry bodies. RU sales/market statistics: the editor
+    # (06.07) wants AvtoVAZ + RU-market figures attributed to АВТОСТАТ / АЕБ,
+    # NOT the automaker's own site — so both are preferred primaries here (a
+    # redistributor linking to an autostat/aeb article promotes it).
     "ancap.com.au", "euroncap.com",
-    "aebrus.ru", "nhtsa.gov",
+    "aebrus.ru", "autostat.ru", "nhtsa.gov",
 })
 
 # jul-03: redistribution portals often name their source in TEXT ONLY
