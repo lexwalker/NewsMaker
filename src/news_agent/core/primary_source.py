@@ -79,6 +79,27 @@ _PREFERRED_PRIMARY_HOSTS: frozenset[str] = frozenset({
     # redistributor linking to an autostat/aeb article promotes it).
     "ancap.com.au", "euroncap.com",
     "aebrus.ru", "autostat.ru", "nhtsa.gov",
+    # jul-06 editor: RU regulatory/official documents must be attributed to the
+    # government source itself, not the aggregator that reported it
+    # («Первоисточник publication.pravo.gov.ru/document/…» on a news.drom.ru
+    # row; «Первоисточник minpromtorg.gov.ru/docs/…» on naavtotrasse). These
+    # serve documents off deep subdomains (publication.pravo.gov.ru), so the
+    # Tier-1.5 match below is subdomain-aware — see _is_preferred_primary.
+    "pravo.gov.ru", "minpromtorg.gov.ru",
+})
+
+# The subset of preferred hosts that are OFFICIAL / regulatory bodies (as
+# opposed to journalistic outlets). A deep link to one of these IS the source
+# no matter who reports it — nobody files a government decree or an NHTSA
+# recall report under «читайте также» — so these are promoted from ANY article
+# (Tier 1.4), not only from redistribution portals. Journalistic preferreds
+# (carscoops, electrek…) stay redistribution-gated because outlets link to each
+# other in related-reading blocks that are NOT the source. MUST be a subset of
+# _PREFERRED_PRIMARY_HOSTS.
+_OFFICIAL_PRIMARY_HOSTS: frozenset[str] = frozenset({
+    "nhtsa.gov", "ancap.com.au", "euroncap.com",
+    "aebrus.ru", "autostat.ru",
+    "pravo.gov.ru", "minpromtorg.gov.ru",
 })
 
 # jul-03: redistribution portals often name their source in TEXT ONLY
@@ -285,6 +306,24 @@ def _same_site(candidate_domain: str, article_domain_norm: str) -> bool:
             or article_domain_norm.endswith("." + n))
 
 
+def _is_preferred_primary(candidate_domain: str) -> bool:
+    """True when the candidate is an editor-named preferred primary, matching a
+    listed host OR any subdomain of it (publication.pravo.gov.ru → the listed
+    pravo.gov.ru). gov.ru agencies serve documents off deep subdomains, so an
+    exact-set membership check would miss them. The suffix is anchored on '.'
+    so a listed 'pravo.gov.ru' never matches 'pravo.gov.ru.evil.com'."""
+    n = _normalise_domain(candidate_domain)
+    return any(n == h or n.endswith("." + h) for h in _PREFERRED_PRIMARY_HOSTS)
+
+
+def _is_official_primary(candidate_domain: str) -> bool:
+    """True for an official/regulatory body (gov, АЕБ, autostat, NHTSA, NCAP) —
+    subdomain-aware, same anti-spoof anchoring as _is_preferred_primary. These
+    are promoted from ANY article, so the check is deliberately narrow."""
+    n = _normalise_domain(candidate_domain)
+    return any(n == h or n.endswith("." + h) for h in _OFFICIAL_PRIMARY_HOSTS)
+
+
 def detect_primary_source(
     *,
     article_url: str,
@@ -349,6 +388,22 @@ def detect_primary_source(
         if _press_release_host(d, cues.press_release_hosts):
             return link, d, "high"
 
+    # Tier 1.4 — official/regulatory body linked DEEP from ANY article. A
+    # government decree (publication.pravo.gov.ru/document/…), an NHTSA recall
+    # report, or an АЕБ/АВТОСТАТ statistics page is the primary regardless of
+    # who reports it (editor 06.07: «Первоисточник publication.pravo.gov.ru…»
+    # on a news.drom.ru row — drom is a real outlet, not a redistributor, so
+    # the redistribution-gated Tier 1.5 below never fires for it). Deep-gated
+    # so a bare homepage link (nhtsa.gov, autostat.ru) is not mistaken for an
+    # article; narrow official whitelist so this never over-promotes a
+    # related-reading link the way the full preferred set could.
+    for link in outbound_links:
+        d = domain_of(link)
+        if _same_site(d, article_domain):
+            continue
+        if _is_official_primary(d) and _is_deep_url(link):
+            return link, d, "high"
+
     # Tier 1.5 — Plan P2-A: redistribution host → promote a recognised
     # journalistic / official primary that the body links to. Gated on
     # article_domain being a known redistributor, so this is a no-op for
@@ -359,8 +414,7 @@ def detect_primary_source(
             d = domain_of(link)
             if _same_site(d, article_domain):
                 continue
-            nd = _normalise_domain(d)
-            if nd in _PREFERRED_PRIMARY_HOSTS or d in _PREFERRED_PRIMARY_HOSTS:
+            if _is_preferred_primary(d):
                 return link, d, "high"
 
     # Tier 2 — brand-owned domain, brand mentioned in article.
