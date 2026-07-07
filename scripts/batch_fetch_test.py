@@ -1918,6 +1918,14 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
 def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
     soup = BeautifulSoup(html, "lxml")
     host = urlparse(index_url).netloc
+    # www./m./amp.-tolerant same-site check. The exact-netloc comparison
+    # silently ZERO-yielded any source whose page links use a www variant of
+    # the listed domain: the source sheet says "carscoops.com" but every
+    # article href on the page is "www.carscoops.com/…" → all 50+ links
+    # dropped, source reported healthy-but-0-links. 23 editor pubs from
+    # carscoops alone were missed in the 23.06–07.07 window (top S2 domain in
+    # the miss-funnel). Same normalisation as _same_site in primary_source.
+    host_norm = _re.sub(r"^(?:www|m|amp)\.", "", host.lower())
     seen: set[str] = set()
     out: list[str] = []
     for a in soup.find_all("a", href=True):
@@ -1932,7 +1940,7 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
         # matters for article identity.
         absolute = urldefrag(absolute)[0]
         p = urlparse(absolute)
-        if p.netloc != host:
+        if _re.sub(r"^(?:www|m|amp)\.", "", p.netloc.lower()) != host_norm:
             continue
         if _looks_like_article(absolute) and absolute not in seen:
             seen.add(absolute)
