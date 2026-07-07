@@ -1217,6 +1217,13 @@ Reject on-topic items that carry no concrete happening:
    -> Local), NOT for off-topic / vague items (those still reject). Editor (25.06):
    VW selling a subsidiary, Toyota cutting overseas output, AGR halting Solaris,
    Nissan abandoning an EV -> Rumors.
+ - A HYPOTHETICAL / interrogative framing — "Could VW be spun off?", "Может ли
+   X…", "Is Toyota about to…", an analyst weighing whether a move MIGHT happen —
+   is opinion / speculation -> REJECT, NOT Rumors. The Rumors rule above is ONLY
+   for a move reported as actually underway or already decided but not yet
+   officially confirmed (VW IS selling X; Nissan IS abandoning the EV). A
+   question mark or "could / может ли / might" is the tell. Editor (06.07):
+   "Could Volkswagen be spun off from Volkswagen Group" -> нет.
  - Beyond a teaser: a brand's confirmed market LAUNCH / sales-start of a specific
    model is Confirmed (Факты), not Rumors and not merely Local (a large Russian
    SUV market launch -> Confirmed).
