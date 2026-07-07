@@ -146,15 +146,38 @@ _HIGH_VOLUME_DOMAINS = frozenset({
 })
 ITEMS_PER_SOURCE_HIGH_VOLUME = 35
 
+# Pure-automotive portals whose index page exposes 40-60 FRESH auto articles —
+# the flat 35 cap was silently truncating their tail every run (measured
+# jul-08 via the prod extractor: auto.ru/mag 55, naavtotrasse 56, carscoops 53,
+# electrek 52, ixbt 47, zr.ru 44). Those dropped 20 articles/fetch are a real
+# chunk of the S2 miss-funnel (auto.ru alone = 18 missed editor pubs / 2wk).
+# Deepen the cap for THESE only. General-news portals (ria/lenta/vedomosti/
+# kommersant/rbc/rg/tass/iz) expose 150-200 links that are MOSTLY non-auto, so
+# a deep cap there just burns fetches the cheap relevance heuristic drops before
+# the LLM — they stay at 35. The 90s per-source wall-clock budget bounds either.
+_DEEP_INDEX_DOMAINS = frozenset({
+    "carscoops.com", "electrek.co", "auto.ru", "zr.ru", "autostat.ru",
+    "naavtotrasse.ru", "auto.mail.ru", "ixbt.com", "carnewschina.com",
+    "cnevpost.com", "motor1.com", "motortrend.com", "bmwblog.com",
+    "drom.ru", "kolesa.ru", "motorpage.ru", "autoreview.ru", "abreview.ru",
+    "autonews.ru", "motor.ru", "autoevolution.com", "thekoreancarblog.com",
+    "cleantechnica.com",
+})
+ITEMS_PER_SOURCE_DEEP = 60
+
 
 def _items_cap_for(url: str) -> int:
-    """Per-source item cap. High-volume domains get 35, others 15."""
+    """Per-source item cap: pure-auto deep-index portals 60, other high-volume
+    domains 35, everything else 15. Matches by domain incl. subdomains."""
     host = domain_of(url)
-    if host in _HIGH_VOLUME_DOMAINS:
+
+    def _member(pool: frozenset[str]) -> bool:
+        return host in pool or any(host.endswith("." + d) for d in pool)
+
+    if _member(_DEEP_INDEX_DOMAINS):
+        return ITEMS_PER_SOURCE_DEEP
+    if _member(_HIGH_VOLUME_DOMAINS):
         return ITEMS_PER_SOURCE_HIGH_VOLUME
-    for hv in _HIGH_VOLUME_DOMAINS:
-        if host.endswith("." + hv):
-            return ITEMS_PER_SOURCE_HIGH_VOLUME
     return ITEMS_PER_SOURCE
 HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # press rooms) need more patience. Retries are still
