@@ -416,6 +416,53 @@ def _cluster_priority(
     return (tier, pub)
 
 
+def _cluster_official_primary(
+    members: list[dict],
+    *,
+    press_release_hosts: set[str],
+) -> tuple[str, str] | None:
+    """Rescue an authoritative per-article primary a multi-source cluster would
+    otherwise discard.
+
+    A multi-source cluster normally shows the canonical MEMBER's own article URL
+    (a member's isolated primary_source can be junk — e.g. a linked tweet). But
+    when a member resolved a HIGH-confidence primary that is a source the editor
+    actually asks for — an official/regulatory body (NHTSA, gov, АЕБ, АВТОСТАТ,
+    NCAP), an OEM/brand press host, or a press-release host — that IS the real
+    first source and must not be replaced by the aggregator article. Losing
+    these was the editor's recurring "нужен первоисточник" on recalls / official
+    docs (Cadillac recall: a member resolved the NHTSA PDF, but the cluster
+    showed thedrive.com). Junk primaries (a tweet, an aggregator self-cite) are
+    none of those tiers, so the canonical article still wins for them.
+
+    ``members`` is priority-sorted (canonical first); returns the first
+    qualifying ``(primary_url, primary_dom)`` or ``None``.
+    """
+    from news_agent.core.brand_canonical import canonicalize_brand
+    from news_agent.core.primary_source import _is_official_primary
+    from news_agent.core.source_priority import domain_tier
+
+    for a in members:
+        pd = (a.get("primary_dom") or "").strip().lower()
+        pu = (a.get("primary_url") or "").strip()
+        pc = (a.get("primary_conf") or "").lower()
+        if not pd or not pu or not pc.startswith("high"):
+            continue
+        is_press = pd in press_release_hosts or any(
+            pd.endswith("." + h) for h in press_release_hosts)
+        brand_hint = ((a.get("launch_brand_model") or "")[:120]
+                      or (a.get("title") or "")[:120]).strip()
+        brand = canonicalize_brand(brand_hint)
+        # tier <= 2 == OEM-for-brand / regulator / generic OEM press.
+        # Journalistic (3), whitelist (4), RU industry/aggregator (5-6) and
+        # social (7) do NOT override the canonical — same guard the old rule
+        # relied on, just applied to the primary domain instead of the article.
+        if _is_official_primary(pd) or is_press or \
+                domain_tier(pd, brand_canonical=brand) <= 2:
+            return pu, pd
+    return None
+
+
 def _outside_time_window(a_pub, b_pub) -> bool:
     """True iff both timestamps exist AND differ by more than TIME_WINDOW.
 
@@ -1108,6 +1155,16 @@ def main() -> int:
         )
         section_final = llm_section or canonical["section"]
 
+        # Multi-source clusters: rescue an authoritative primary (official body /
+        # OEM press / press-release host) that any member resolved at HIGH
+        # confidence, before falling back to the canonical article URL. See
+        # _cluster_official_primary — this is the Cadillac-recall fix (we
+        # detected the NHTSA PDF but showed thedrive.com).
+        official_primary = (
+            _cluster_official_primary(grp_sorted,
+                                      press_release_hosts=press_release_hosts)
+            if len(grp_sorted) > 1 else None)
+
         cluster = {
             "size": len(grp),
             "canonical_title": canonical["title"],
@@ -1120,23 +1177,29 @@ def main() -> int:
             "published": canonical["published"],
             "image_url": canonical["image_url"],
             # primary_url/domain:
+            # • An authoritative member primary (NHTSA/gov/OEM press) wins
+            #   outright — see official_primary above.
             # • Singleton cluster — use the per-article primary_source
             #   detection (it may point at a deep press URL the body
             #   linked to). Article URL is a fallback.
-            # • Multi-source cluster — the CANONICAL member's URL IS
-            #   the primary. The per-article primary_source field was
-            #   set in isolation during editorial_review and can pick
-            #   silly things like twitter.com if the body links to a
-            #   tweet. With siblings to compare against, we know the
-            #   best-tier member (now canonical) is the real primary.
-            "primary_domain": (canonical["domain"] if len(grp_sorted) > 1
-                                else (canonical["primary_dom"]
-                                       or canonical["domain"])),
-            "primary_url": (canonical["url"] if len(grp_sorted) > 1
-                             else (canonical["primary_url"]
-                                    or canonical["url"])),
-            "primary_conf": ("high (cluster canonical)" if len(grp_sorted) > 1
-                              else canonical["primary_conf"]),
+            # • Multi-source cluster with no authoritative primary — the
+            #   CANONICAL member's URL IS the primary. The per-article
+            #   primary_source field was set in isolation during
+            #   editorial_review and can pick silly things like twitter.com
+            #   if the body links to a tweet; with siblings to compare
+            #   against, the best-tier member (now canonical) is the primary.
+            "primary_domain": (
+                official_primary[1] if official_primary
+                else (canonical["domain"] if len(grp_sorted) > 1
+                      else (canonical["primary_dom"] or canonical["domain"]))),
+            "primary_url": (
+                official_primary[0] if official_primary
+                else (canonical["url"] if len(grp_sorted) > 1
+                      else (canonical["primary_url"] or canonical["url"]))),
+            "primary_conf": (
+                "high (official primary)" if official_primary
+                else ("high (cluster canonical)" if len(grp_sorted) > 1
+                      else canonical["primary_conf"])),
             "launch_stage": launch_stage,
             "launch_brand_model": launch_brand_model,
             "llm_reason": llm_reason,
