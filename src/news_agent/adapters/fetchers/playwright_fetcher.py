@@ -66,6 +66,24 @@ DEFAULT_PW_UA = (
     "Chrome/126.0.0.0 Safari/537.36"
 )
 
+# JS anti-bot interstitials (DDoS-Guard, "Checking your browser"). New-headless
+# clears them, but the first response is the challenge shell — fetch() polls
+# for the real content when it sees one of these markers.
+_CHALLENGE_MARKERS = (
+    "Проверка браузера перед переходом",
+    "ddos-guard.net",
+    "DDOS-GUARD",
+    "Checking your browser before accessing",
+    "could not verify your browser",
+)
+_CHALLENGE_POLLS = 7        # × poll interval ≈ 14s max wait
+_CHALLENGE_POLL_MS = 2000
+
+
+def _looks_like_challenge(html: str) -> bool:
+    head = html[:4000]
+    return any(m in head for m in _CHALLENGE_MARKERS)
+
 
 class PlaywrightFetcher:
     """Lazy-initialised Chromium wrapper.
@@ -100,11 +118,20 @@ class PlaywrightFetcher:
         # string. ``--disable-blink-features=AutomationControlled`` hides
         # the webdriver flag from ``navigator.webdriver`` without needing
         # stealth. Cheap insurance for the non-stealth path.
+        # New-headless (--headless=new) instead of the legacy headless mode.
+        # New-headless uses the full-fidelity render path and clears JS anti-bot
+        # challenges (DDoS-Guard) that reject the legacy HeadlessChrome, while
+        # staying windowless (no desktop needed). Verified on iz.ru: legacy
+        # headless stays stuck on "could not verify your browser"; new-headless
+        # clears the challenge in ~4s and renders 63 article links.
+        # headless=False only stops Playwright injecting the legacy --headless
+        # flag; the explicit --headless=new arg keeps the browser invisible.
         launch_args = [
+            "--headless=new",
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
         ]
-        self._browser = self._pw.chromium.launch(headless=True, args=launch_args)
+        self._browser = self._pw.chromium.launch(headless=False, args=launch_args)
         self._context = self._browser.new_context(
             user_agent=self.user_agent,
             locale="ru-RU",
@@ -169,6 +196,18 @@ class PlaywrightFetcher:
                 # the DOM is usually populated by now.
                 pass
             html = page.content()
+            # DDoS-Guard / JS anti-bot interstitial: the initial response is a
+            # 403 "Проверка браузера" shell; the real page loads only after the
+            # challenge script clears (~3-6s), which sets a __ddg cookie on this
+            # context so subsequent same-site fetches skip the wait. Poll for
+            # the real content instead of returning the challenge shell.
+            if _looks_like_challenge(html):
+                for _ in range(_CHALLENGE_POLLS):
+                    page.wait_for_timeout(_CHALLENGE_POLL_MS)
+                    html = page.content()
+                    if not _looks_like_challenge(html):
+                        status = 200  # challenge cleared → real content
+                        break
             return status, html
         finally:
             try:

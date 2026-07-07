@@ -214,6 +214,13 @@ playwright_domains:
   - media.jaguar.com           # 13
   - int-media.peugeot.com      # 17
   - hongqi.ru                  # 6
+  # jul-08: iz.ru sits fully behind DDoS-Guard (httpx AND legacy-headless both
+  # get the 403 "Проверка браузера" shell — earlier audit called it unfetchable
+  # and "proxy needed"). The new-headless switch + challenge-poll in
+  # PlaywrightFetcher clears it: iz.ru/rubric/auto renders 63 article links in
+  # ~4s, and the __ddg cookie persists on the context so article pages load
+  # fast. 10 editor-pub misses/2wk (RU: Jeland localization, Deepal cert).
+  - iz.ru
   # NOT here (Playwright renders them but finds 0 links — cross-host/selector,
   # needs link-extract work, not a browser): media.vw.com, media.mercedes-benz.com,
   # media.stellantisnorthamerica.com, www.globalsuzuki.com, en.kg-mobility.com,
