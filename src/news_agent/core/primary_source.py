@@ -86,6 +86,10 @@ _PREFERRED_PRIMARY_HOSTS: frozenset[str] = frozenset({
     # serve documents off deep subdomains (publication.pravo.gov.ru), so the
     # Tier-1.5 match below is subdomain-aware — see _is_preferred_primary.
     "pravo.gov.ru", "minpromtorg.gov.ru",
+    # jul-08 editor: «Первоисточник https://atommedia.online/press-release…»
+    # — the official press site of Atom (RU EV brand); their releases must win
+    # over the aggregator that reported them.
+    "atommedia.online",
 })
 
 # The subset of preferred hosts that are OFFICIAL / regulatory bodies (as
@@ -100,7 +104,31 @@ _OFFICIAL_PRIMARY_HOSTS: frozenset[str] = frozenset({
     "nhtsa.gov", "ancap.com.au", "euroncap.com",
     "aebrus.ru", "autostat.ru",
     "pravo.gov.ru", "minpromtorg.gov.ru",
+    # Atom's own press site — brand-official, a deep release link IS the source
+    # regardless of who reports it (editor 08.07).
+    "atommedia.online",
 })
+
+# Path-scoped official primaries. Some editor-designated primaries live on a
+# host that must NOT be whitelisted wholesale (t.me is a redistribution host,
+# but t.me/sergtselikov is Автостат head Sergey Tselikov's channel — editor
+# 08.07: RU-market stats «это статистика Автостат или Целикова, только от
+# них», «Первоисточник https://t.me/sergtselikov/1747»). Matched as a URL
+# prefix; a trailing post-id is required (the bare channel root is not an
+# article). Keep this list SHORT and editor-named only.
+_OFFICIAL_PRIMARY_URL_PREFIXES: tuple[str, ...] = (
+    "t.me/sergtselikov/",
+)
+
+
+def _matches_official_prefix(link: str) -> bool:
+    """True for a deep post under a path-scoped official primary
+    (https://t.me/sergtselikov/1747 → yes; t.me/sergtselikov → no)."""
+    bare = re.sub(r"^https?://(?:www\.)?", "", link.lower())
+    return any(
+        bare.startswith(pfx) and len(bare) > len(pfx)
+        for pfx in _OFFICIAL_PRIMARY_URL_PREFIXES
+    )
 
 # (Removed jul-06 cost-audit: the TEXT/SLUG source-mention machinery —
 # _TEXT_SOURCE_MENTIONS, _SOURCE_CUE_RE, _text_mentioned_source,
@@ -355,6 +383,10 @@ def detect_primary_source(
         if _same_site(d, article_domain):
             continue
         if _is_official_primary(d) and _is_deep_url(link):
+            return link, d, "high"
+        # Path-scoped officials (t.me/sergtselikov/<post>) — the host alone is
+        # a redistribution host, so this must match the URL prefix, not d.
+        if _matches_official_prefix(link):
             return link, d, "high"
 
     # Tier 1.5 — Plan P2-A: redistribution host → promote a recognised
