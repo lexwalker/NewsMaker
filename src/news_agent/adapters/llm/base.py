@@ -1117,6 +1117,17 @@ Reject on-topic items that carry no concrete happening:
  - incidents (fires, single-owner faults) UNLESS they cause a recall.
  - supplier financial results & battery-vs-automaker profit comparisons;
    supplier-switching.
+ - routine share-PRICE movement (stock rises / falls N%, hits a low/high,
+   market-cap swings) - «акции не постим»: reject even for major brands.
+   Editor (21.05/08.07): "Leapmotor shares plunge to 2-month low" -> REJECT;
+   "Rivian stock falls 18%, little detail" -> REJECT. BUT a brand actually
+   SELLING a stake / issuing shares as a concrete strategic or refinancing
+   deal WITH details stays publishable (financial).
+ - an executive DEFENDING / explaining a past decision, "opens the door to" /
+   possibility-talk, or an overview piece with no new concrete fact -
+   «нет конкретики, ни о чем». Editor (10.06/14.06): "Ford defends sedan
+   discontinuation" -> REJECT; "BMW opens door to more US wagons" -> REJECT;
+   "AvtoVAZ CEO speaks at Expert Council" (speech, no figures) -> REJECT.
  - limited/special editions with no new tech and no anniversary; trivial
    single-feature stories.
  - grey-import / single-dealer classified listings - «серый импорт не постим».
@@ -1163,8 +1174,11 @@ Reject on-topic items that carry no concrete happening:
    reject); scrappage-fee (утильсбор) policy even cross-border; option-packages /
    special trims backed by brand press; generic engine/platform technology;
    single-foreign-market reports (low confidence).
-5) Motorshow - a MULTI-model OEM line-up at a show. A single model at a show ->
-   Confirmed.
+5) Motorshow - a MULTI-model OEM line-up at a MAJOR auto show (an
+   Innoprom / Shanghai / Munich-scale salon). A single model at a show ->
+   Confirmed. A brand's own event / small venue showing 1-2 concepts is NOT
+   Motorshow -> route as Confirmed/Facts («в выставки постим только крупные
+   автосалоны», 30.06; Peugeot two concepts at a brand event 08.07 -> Факты).
 6) Test-drive - manufacturer's OWN test, or a trusted outlet (За рулём / zr.ru).
    Other journalist tests -> reject (step 1).
 7) Dealer news / Promo - a NEW RF dealership opening, RF dealer-network expansion
