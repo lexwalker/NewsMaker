@@ -2159,11 +2159,12 @@ def _health_check(
                 f"archive urls shrank {prev_urls} → {len(PUBLISHED_URLS)} "
                 f"(>10% — archive read decaying?)"
             )
-        # Archive FRESHNESS — counts pass while the export silently stops
-        # updating (jul-10: newest row was 30.06, TEN days stale; everything
-        # the portal published since was invisible to the anti-dup and the
-        # editors were flooded with «было уже» marks). Count floors cannot
-        # see this; the newest-row date can.
+        # Archive FRESHNESS — count floors pass even when the export stops
+        # updating; only the newest-row date can see a stall. The normal
+        # export cadence is a ~1-2 day lag (verified jul-10: current through
+        # 08.07 — an earlier "stale since 30.06" reading was a string-max
+        # analysis bug, see published_archive.py), so the threshold is 3+
+        # days: it fires on a genuine stall, not on the routine lag.
         arch_dt = published_archive.LAST_ARCHIVE_MAX_DT
         if arch_dt is not None:
             age_d = (datetime.now(timezone.utc) - arch_dt).days

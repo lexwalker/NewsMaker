@@ -23,10 +23,15 @@ from news_agent.core.published_dedup import MIN_TITLE_TOKENS, url_key
 PUB_TAB = "Опубликованные (все)"
 
 # Freshness telemetry set by load_published_index: the newest «Начало
-# активности» seen in the archive. jul-10 incident: the export silently
-# stopped on 30.06 — 10 days of portal publications invisible to the anti-dup,
-# editors flooded with «было уже» while every count-based floor passed.
-# The run's health check surfaces staleness via this value.
+# активности» seen in the archive. NB (jul-10): a first analysis claimed the
+# export "stopped on 30.06" — that was a STRING-max bug over dd.mm.yyyy dates
+# ("30.06…" > "08.07…" lexicographically); the export was in fact current
+# through 08.07. The REAL, verified situation: the export runs with a ~1-2 day
+# lag, so portal publications of the last day-or-two are structurally
+# invisible to the anti-dup (26/26 of the editors' «было уже» marks on 10.07
+# were portal stories from 09-10.07 — absent from the archive even at fuzzy
+# 85). The health check warns only at >=3 days, i.e. above the normal
+# cadence: it guards against a genuine stall, not the routine lag.
 LAST_ARCHIVE_MAX_DT: datetime | None = None
 
 
