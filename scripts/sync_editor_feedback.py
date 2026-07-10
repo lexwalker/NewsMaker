@@ -117,6 +117,13 @@ P_WRONG_PRIMARY = (
     r"нужен\s+пресс",
     r"нужен\s+(?:первоисточник|оригин)",
     r"был\s+пресс\b",
+    # jul-10 red-mark audit: the editor's dominant wordings were invisible to
+    # the old patterns (23 red-J marks vs 1 text-detected wrong_primary).
+    r"ссылк[аи]\s+не\s+т[ае]",
+    r"источник\s+не\s+тот",
+    r"неверн\w*\s+источник",
+    r"источник\s+нужен\s+друг",
+    r"нужно\s+искать\s+на",
 )
 P_NEEDS_TRANS = (
     r"нужен\s+англ",
@@ -297,6 +304,47 @@ def _pull_sheet(max_row: int = 700) -> list[list]:
     return rows
 
 
+# Editors also mark problems with a RED CELL FILL, often WITHOUT any text
+# (jul-10 audit of the top-300 feed rows: 101 red-marked rows — 81 on B
+# (title = не нужно/было), 23 on J (первоисточник = ссылка не та) — while
+# the text-only sync had caught just 1 wrong_primary). Read the fill colour
+# so those marks become labels too.
+_RED_COL_LETTERS = {1: "B", 3: "D", 9: "J", 12: "M"}  # cols we interpret
+
+
+def _is_red(bg: dict | None) -> bool:
+    if not bg:
+        return False
+    return (bg.get("red", 0) > 0.75 and bg.get("green", 0) < 0.65
+            and bg.get("blue", 0) < 0.65)
+
+
+def _pull_red_marks(max_row: int = 700) -> dict[int, list[str]]:
+    """1-based sheet row -> list of red-filled column letters (subset we map:
+    B=title, D=section, J=primary URL, M=source URLs)."""
+    svc, editor_id = _get_svc()
+    try:
+        resp = svc.spreadsheets().get(
+            spreadsheetId=editor_id, ranges=[f"'{TAB}'!A1:P{max_row}"],
+            fields="sheets(data(rowData(values("
+                   "effectiveFormat.backgroundColor))))",
+        ).execute()
+        row_data = resp["sheets"][0]["data"][0].get("rowData", [])
+    except Exception as e:  # noqa: BLE001 — formatting read is best-effort
+        print(f"  ! red-mark read failed: {type(e).__name__} {str(e)[:60]}")
+        return {}
+    out: dict[int, list[str]] = {}
+    for ri, row in enumerate(row_data, start=1):
+        cols = []
+        for ci, cell in enumerate(row.get("values", [])[:16]):
+            if ci in _RED_COL_LETTERS and _is_red(
+                    (cell.get("effectiveFormat") or {}).get("backgroundColor")):
+                cols.append(_RED_COL_LETTERS[ci])
+        if cols:
+            out[ri] = cols
+    return out
+
+
 def main() -> int:
     # UTF-8 stdout for Windows console — must NOT run at import time
     # (breaks pytest capture). Safe to call here.
@@ -313,6 +361,8 @@ def main() -> int:
 
     rows = _pull_sheet()
     print(f"Sheet rows pulled: {len(rows)}")
+    red_marks = _pull_red_marks()
+    print(f"Red-marked rows: {len(red_marks)}")
 
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
     new_entries: list[dict] = []
@@ -323,7 +373,7 @@ def main() -> int:
         "publish_true": 0, "publish_false": 0, "publish_none": 0,
         "section_correction": 0, "dup_within": 0, "dup_cross": 0,
         "wrong_primary": 0, "needs_trans": 0, "soft": 0,
-        "ref_url": 0,
+        "ref_url": 0, "red_only": 0,
     }
 
     for i, r in enumerate(rows, 1):
@@ -339,9 +389,15 @@ def main() -> int:
         section = str(r[3] if len(r) > 3 else "").strip()
         url = str(r[9] if len(r) > 9 else "").strip()
         comment = str(r[15] if len(r) > 15 else "").strip()
+        reds = red_marks.get(i, [])
 
-        if not comment:
+        if not comment and not reds:
             continue
+        if not comment and reds:
+            # Red fill with no text is still a verdict — synthesize a stable
+            # pseudo-comment so the row gets an entry + dedup key.
+            comment = f"[красная метка: {','.join(reds)}]"
+            stats["red_only"] += 1
         # Skip the markers we wrote ourselves during dup-merge
         if comment.startswith("🔁") and "дубль строки" in comment:
             stats["auto_merged_marker"] += 1
@@ -355,6 +411,16 @@ def main() -> int:
         stats["new"] += 1
 
         parsed = parse_comment(comment)
+        # Overlay red-fill signals on top of (or instead of) text labels:
+        # J/M = «ссылка не та» -> wrong_primary; B = title marked bad ->
+        # reject unless the text explicitly approves («ок, но…» keeps True).
+        if reds:
+            parsed["red_cols"] = reds
+            if "J" in reds or "M" in reds:
+                parsed["label_wrong_primary"] = True
+            if "B" in reds and parsed.get("label_publish") is not False:
+                if not parsed.get("raw_signals", {}).get("approved"):
+                    parsed["label_publish"] = False
         entry = {
             "id": _row_id(title, comment),
             "title": title,
