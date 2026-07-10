@@ -1028,6 +1028,33 @@ def process_source(
     # HTML index mode
     r.detected_type = "html"
     links = _discover_article_links(url, html, _items_cap_for(url))
+    if not links:
+        # Anti-bot SHELL VARIANCE (jul-10 root cause of silent 0-yield runs):
+        # some sources intermittently serve a JS-shell instead of the real
+        # server-rendered page — same URL, same 200, no article links.
+        # Measured on auto.ru/mag/theme/news: 1 of 6 fetches returns a 13KB
+        # shell, the rest the 77KB real page; 13 sources flip-flopped between
+        # the last two runs this way (auto.ru x2, iz.ru, lada.ru, kia.ru,
+        # cadillac/chevrolet/renault media, minfin, banki.ru). The 10.07 run
+        # lost BOTH auto.ru sources to it. One immediate refetch recovers
+        # ~5/6 of these at the cost of a single extra GET on 0-link sources.
+        # An IMMEDIATE refetch often hits the same CDN edge and gets the shell
+        # again (verified live) — a short pause before each retry lets the
+        # edge rotate. 2 attempts x 2s: worst case +4s per genuinely-empty
+        # source, well inside the 90s source budget.
+        for _attempt in (1, 2):
+            time.sleep(2.0)
+            try:
+                resp_retry = _http_get(client, url)
+                resp_retry.raise_for_status()
+                links = _discover_article_links(
+                    url, resp_retry.text, _items_cap_for(url))
+            except Exception:  # noqa: BLE001
+                continue
+            if links:
+                note = f"shell-retry#{_attempt} recovered {len(links)} links"
+                r.error = (r.error + " | " + note)[:200] if r.error else note
+                break
     r.articles_attempted = len(links)
     for idx, link in enumerate(links, start=1):
         if _source_budget_exceeded(r, t0, idx - 1, len(links)):
