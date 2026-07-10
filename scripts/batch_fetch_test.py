@@ -2159,6 +2159,21 @@ def _health_check(
                 f"archive urls shrank {prev_urls} → {len(PUBLISHED_URLS)} "
                 f"(>10% — archive read decaying?)"
             )
+        # Archive FRESHNESS — counts pass while the export silently stops
+        # updating (jul-10: newest row was 30.06, TEN days stale; everything
+        # the portal published since was invisible to the anti-dup and the
+        # editors were flooded with «было уже» marks). Count floors cannot
+        # see this; the newest-row date can.
+        arch_dt = published_archive.LAST_ARCHIVE_MAX_DT
+        if arch_dt is not None:
+            age_d = (datetime.now(timezone.utc) - arch_dt).days
+            if age_d >= 3:
+                warns.append(
+                    f"published-archive STALE: newest row "
+                    f"{arch_dt.strftime('%d.%m')} ({age_d} days old) — "
+                    f"portal dups of the last {age_d} days are INVISIBLE to "
+                    f"dedup. Нужна свежая выгрузка «Опубликованные (все)»."
+                )
 
     # 3. Fetch mass-failure signal (informational unless widespread).
     err_sources = sum(1 for s in results if s.error)

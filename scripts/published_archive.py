@@ -22,6 +22,13 @@ from news_agent.core.published_dedup import MIN_TITLE_TOKENS, url_key
 
 PUB_TAB = "Опубликованные (все)"
 
+# Freshness telemetry set by load_published_index: the newest «Начало
+# активности» seen in the archive. jul-10 incident: the export silently
+# stopped on 30.06 — 10 days of portal publications invisible to the anti-dup,
+# editors flooded with «было уже» while every count-based floor passed.
+# The run's health check surfaces staleness via this value.
+LAST_ARCHIVE_MAX_DT: datetime | None = None
+
 
 def _parse_date(s: str) -> datetime | None:
     s = (s or "").strip()
@@ -80,6 +87,7 @@ def load_published_index(
     cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
     pub_urls: set[str] = set()
     pub_titles: set[str] = set()
+    max_dt: datetime | None = None
 
     def cell(r, i):
         return str(r[i]).strip() if len(r) > i and r[i] is not None else ""
@@ -91,10 +99,14 @@ def load_published_index(
             if k:
                 pub_urls.add(k)
         dt = _parse_date(cell(r, 5))
+        if dt is not None and (max_dt is None or dt > max_dt):
+            max_dt = dt
         if dt is None or dt < cutoff:
             continue
         for ti in (cell(r, 3), cell(r, 4)):
             nt = normalise_title(ti)
             if len([t for t in nt.split() if t]) >= MIN_TITLE_TOKENS:
                 pub_titles.add(nt)
+    global LAST_ARCHIVE_MAX_DT
+    LAST_ARCHIVE_MAX_DT = max_dt
     return pub_urls, pub_titles
