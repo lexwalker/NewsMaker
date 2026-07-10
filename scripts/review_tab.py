@@ -134,35 +134,65 @@ def apply_formatting(svc, spreadsheet_id: str, sheet_id: int) -> None:
         pass
 
 
-def _existing(svc, spreadsheet_id: str) -> list[list]:
-    """Data rows below the header (row 1 = instructions, row 2 = header)."""
-    return svc.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range=f"'{REVIEW_TAB}'!A3:G5000",
-        valueRenderOption="UNFORMATTED_VALUE",
+def _seen_hashes(svc, spreadsheet_id: str) -> set[str]:
+    """url_hash values already on the tab (column F, below the header).
+    Read-only — used only for dedup. Existing rows are never read back and
+    re-written (that read-modify-write cycle used to clobber editor edits)."""
+    vals = svc.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range=f"'{REVIEW_TAB}'!F3:F",
     ).execute().get("values", [])
+    return {str(r[0]).strip() for r in vals if r and str(r[0]).strip()}
 
 
 def append_batch(svc, spreadsheet_id: str, rows: list[dict],
                  run_label: str) -> int:
     """Prepend a new batch (separator + rows) above existing data, skipping
     any url_hash already present. rows: dicts with keys title, context,
-    type, url_hash, url. Returns the number of NEW rows written."""
+    type, url_hash, url. Returns the number of NEW rows written.
+
+    HOW (jul-10 rewrite, editor bug report): insertDimension + write ONLY
+    the inserted rows. The old implementation re-wrote the WHOLE tab from A1
+    on every push (read A3:G5000 → prepend → update everything back). That
+    (a) silently dropped anything beyond row 5000 and every editor note
+    beyond column G — comments in H stayed at their absolute cell positions
+    while their rows shifted down, landing on the WRONG news; (b) raced with
+    the editor typing mid-push; (c) mangled values via the
+    UNFORMATTED_VALUE→USER_ENTERED round-trip; (d) rebuilt every run
+    separator each time. insertRows shifts existing rows down ATOMICALLY
+    with ALL their columns, notes and formatting intact — editor data is
+    never read, moved cell-by-cell, or overwritten."""
     sheet_id = ensure_tab(svc, spreadsheet_id)
-    existing = _existing(svc, spreadsheet_id)
-    seen = {str(r[5]).strip() for r in existing if len(r) > 5 and r[5]}
+    seen = _seen_hashes(svc, spreadsheet_id)
     fresh = [r for r in rows if r.get("url_hash") and r["url_hash"] not in seen]
     if not fresh:
         return 0
     sep = [f"━━  {run_label}  ━━", "", "", "", "", "", ""]
-    new_data = [[
+    new_data = [sep] + [[
         (r.get("title") or "")[:300], (r.get("context") or "")[:300],
         r.get("type", ""), "", "", r.get("url_hash", ""), r.get("url", ""),
     ] for r in fresh]
-    body = [[INSTRUCTIONS, "", "", "", "", "", ""], HEADER, sep] \
-        + new_data + existing
+    # 1) Atomically open a gap right below the frozen instructions+header
+    #    (rows 1-2 → 0-based startIndex 2). Existing rows shift down whole.
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": [{"insertDimension": {
+            "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                      "startIndex": 2, "endIndex": 2 + len(new_data)},
+            "inheritFromBefore": False}}]},
+    ).execute()
+    # 2) Fill ONLY the freshly inserted blank rows. RAW so titles like
+    #    "=X" / "+7…" are never reinterpreted as formulas or numbers.
     svc.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id, range=f"'{REVIEW_TAB}'!A1",
-        valueInputOption="USER_ENTERED", body={"values": body},
+        spreadsheetId=spreadsheet_id,
+        range=f"'{REVIEW_TAB}'!A3:G{2 + len(new_data)}",
+        valueInputOption="RAW", body={"values": new_data},
+    ).execute()
+    # 3) Refresh the instructions + header band (confined to rows 1-2 —
+    #    covers a brand-new tab and legacy tabs created before this text).
+    svc.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id, range=f"'{REVIEW_TAB}'!A1:G2",
+        valueInputOption="RAW",
+        body={"values": [[INSTRUCTIONS, "", "", "", "", "", ""], HEADER]},
     ).execute()
     apply_formatting(svc, spreadsheet_id, sheet_id)
     return len(fresh)
