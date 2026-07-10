@@ -149,7 +149,10 @@ _JUNK_URL_FRAGMENTS = (
     "twitter.com/intent/", "twitter.com/share",
     "t.me/share", "vk.com/share",
     "linkedin.com/share", "pinterest.com/pin/create",
-    "wa.me/", "api.whatsapp.com/send",
+    "wa.me/", "api.whatsapp.com/send", "web.whatsapp.com/send",
+    # personal-profile pages are never a primary (jul-10 red-mark audit:
+    # a Waymo story shipped with primary=linkedin.com/in/<journalist>)
+    "linkedin.com/in/",
     "ok.ru/share", "reddit.com/submit",
     "addtoany.com", "/add_to/", "sharethis.com", "addthis.com",
     # Print / email-this widgets

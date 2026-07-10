@@ -594,6 +594,12 @@ def _looks_like_article(url: str) -> bool:
     path = p.path.lower()
     if not path or path == "/":
         return False
+    # API / infrastructure endpoints are never articles, whatever their path
+    # shape (jul-10: motor.ru/api/unity-id-sdk/v1/auth-controller passed the
+    # >=2-segments test and shipped to the feed twice as "Authentication
+    # controller").
+    if "/api/" in path or path.startswith("/api"):
+        return False
     if any(seg in path for seg in _ARTICLE_HINTS):
         return True
     # Long hyphenated slug → plausibly an article. If the LAST path segment is a
