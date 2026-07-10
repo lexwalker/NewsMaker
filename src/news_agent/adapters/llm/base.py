@@ -1131,6 +1131,23 @@ Reject on-topic items that carry no concrete happening:
  - limited/special editions with no new tech and no anniversary; trivial
    single-feature stories.
  - grey-import / single-dealer classified listings - «серый импорт не постим».
+ - a US (or other single foreign country) regulator's PROPOSAL / consideration /
+   data demand - the investigations rule applies to foreign agencies too.
+   Editor (10.07): "U.S. regulators consider removing steering wheel
+   requirement" -> REJECT (proposal, not a decision); "U.S. regulators demand
+   AV companies report data" -> REJECT (administrative step). Actual US
+   RECALLS remain wanted (Other news); an ENACTED law/decree with market
+   effect stays (Other news, Global - the Trump right-to-repair memo was
+   published).
+ - single-FOREIGN-country sales results - «только глобальные продажи»: a
+   brand's US/German/etc. market figures -> REJECT. Editor (07.07/10.07):
+   "GM retains US sales lead" -> REJECT; "Mercedes-Benz USA reported 84,500
+   Q2 retail sales" -> REJECT. Brand GLOBAL totals, China-market OFFICIAL
+   stats, and RF-market figures keep their existing routes.
+ - a robotaxi/ride-service OPERATOR's territory expansion - "Waymo launches
+   in Las Vegas", "Waymo adds 4 new markets" -> REJECT (operator territory
+   news, not an automotive product event). A robotaxi VEHICLE reveal / tech
+   milestone stays (Other news).
  - already covered / stale - if we (or the same event) ran already, skip.
  - a model temporarily PULLED FROM SALE ahead of a known facelift/refresh, with
    NO production-end announced - a routine model-year gap, not news. Editor
