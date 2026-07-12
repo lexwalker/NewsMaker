@@ -1131,6 +1131,23 @@ Reject on-topic items that carry no concrete happening:
  - limited/special editions with no new tech and no anniversary; trivial
    single-feature stories.
  - grey-import / single-dealer classified listings - «серый импорт не постим».
+ - single-model RF availability MINUTIAE: a model spotted in the registration
+   database («встал на учёт в РФ»), "first buyers found", dealers CLAIM a
+   shortage/deficit, a car appearing on / vanishing from a dealer or brand
+   site, arriving at showrooms ahead of launch -> REJECT. Editor
+   (18.06-06.07): "Tenet T9 встал на учет", "SKM нашли первых покупателей",
+   "дилеры заявили о дефиците Changan Uni-S", "BYD Linghui M9 прибыл в салоны
+   до официального запуска" -> нет. This is RETAIL-availability noise ONLY —
+   it does not reroute anything else: official market launches, sales starts,
+   production events, model/concept reveals and teasers all keep whatever
+   route the other rules give them.
+ - CARSHARING operator promos: discounts, loyalty points / bonuses, fuel
+   cashback, drop-off-zone tweaks -> REJECT even for major operators. Editor
+   (06.07): «VORON новые зоны», «Ситидрайв баллы за заправку», «BelkaCar
+   повысил бонусы», «скидка 20% у Яндекс Драйва» -> не нужно. A city LAUNCH,
+   fleet addition (Delimobil added Vesta -> Local) and carsharing MARKET
+   stats stay Local specifics; an AUTOMAKER's promo/cashback stays Dealer
+   news/Promo.
  - a US (or other single foreign country) regulator's PROPOSAL / consideration /
    data demand - the investigations rule applies to foreign agencies too.
    Editor (10.07): "U.S. regulators consider removing steering wheel
