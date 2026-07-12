@@ -2220,6 +2220,13 @@ def main(argv: list[str] | None = None) -> int:
     global RUN_WINDOW
     args = _parse_cli(argv)
     state = RunState(args.state_path)
+    # A fresh run supersedes any pending LLM-abort recovery hint (it re-covers
+    # the same window anyway) — drop it so a stale hint can never hijack a
+    # future retry invocation.
+    try:
+        (args.state_path.parent / "llm_abort_recovery.json").unlink(missing_ok=True)
+    except OSError:
+        pass
     if args.no_window:
         RUN_WINDOW = None
         print(
@@ -2631,6 +2638,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Run log appended: {args.runs_log}")
     except Exception as e:  # noqa: BLE001
         print(f"WARNING: failed to append run log: {e}", file=sys.stderr)
+
+    # LLM-abort auto-recovery hint. When the ONLY alarm is an aborted LLM pass
+    # the fetch itself completed — classification is the sole missing piece, so
+    # run_prog.ps1 can recover with retry_failed_llm instead of a ~1.5h full
+    # re-fetch (jul-10: a transient API 403 cost a whole re-run). state.json
+    # deliberately still points at the LAST healthy tab, so the aborted run's
+    # tab travels via this hint file; retry consumes it and advances the state
+    # itself on full success. Any other alarm class (archive floors, stuck
+    # rows) is NOT retryable — no hint, chain stays aborted.
+    if (alarms and RUN_WINDOW is not None
+            and all(a.startswith("LLM pass aborted") for a in alarms)):
+        hint_path = args.state_path.parent / "llm_abort_recovery.json"
+        try:
+            hint_path.write_text(json.dumps({
+                "articles_tab": articles_tab,
+                "run_at": run_at_dt.isoformat(timespec="seconds"),
+                "window_start": RUN_WINDOW.since.isoformat(timespec="seconds"),
+                "articles": len(article_rows),
+                "cost_usd": round(total_cost, 4),
+            }, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"Recovery hint written ({hint_path.name}): retry_failed_llm "
+                  f"can finish tab '{articles_tab}' without a re-fetch.")
+        except Exception as e:  # noqa: BLE001 — hint is best-effort
+            print(f"WARNING: recovery hint write failed: {e}", file=sys.stderr)
 
     # Exit 3 = degraded: run_prog.ps1's Stage() aborts the chain on non-zero,
     # so a truncated/undeduped feed is never pushed silently.

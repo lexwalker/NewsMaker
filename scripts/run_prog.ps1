@@ -52,7 +52,26 @@ Write-Output "run_prog start $ts  (NoPush=$NoPush)  log=$log"
 # had silently zero-yielded the 5 playwright_domains every scheduled run
 # (the jun-18 "26 min stall" was an unbounded per-article fallback chain,
 # not Playwright itself).
-Stage "1/3 fetch+classify"        @('scripts/batch_fetch_test.py')
+# Stage 1 with LLM-abort auto-recovery (jul-10). A transient API 403 used to
+# abort the whole chain and cost a ~1.5h full re-fetch on relaunch. When the
+# ONLY problem was the aborted LLM pass, batch_fetch_test writes
+# data\llm_abort_recovery.json (the fetch itself completed) -- then
+# retry_failed_llm finishes the classification on the SAME tab in ~20 min,
+# advances the state itself, and the chain continues. Any other exit-3 cause
+# (archive floors, stuck rows) has no hint file -> chain aborts as before.
+Write-Output "=== 1/3 fetch+classify  $(Get-Date -Format HH:mm:ss) ===" | Tee-Object -FilePath $log -Append
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& python scripts/batch_fetch_test.py 2>&1 | Tee-Object -FilePath $log -Append
+$code = $LASTEXITCODE
+$ErrorActionPreference = $prevEAP
+if ($code -eq 3 -and (Test-Path (Join-Path $root "data\llm_abort_recovery.json"))) {
+  Write-Output "LLM pass aborted mid-run -- auto-recovering via retry_failed_llm (no re-fetch)." | Tee-Object -FilePath $log -Append
+  Stage "1R/3 retry LLM (recovery)" @('scripts/retry_failed_llm.py')
+} elseif ($code -ne 0) {
+  Write-Output "ABORT: '1/3 fetch+classify' exited $code -- chain stopped (nothing downstream ran)." | Tee-Object -FilePath $log -Append
+  exit $code
+}
 Stage "2/3 cluster (LLM-editor)"  @('scripts/build_news_clusters.py','--use-llm-editor')
 if ($NoPush) {
   Write-Output "STOP before push (-NoPush). Review clusters, then run: python scripts\build_news_sheet.py" | Tee-Object -FilePath $log -Append

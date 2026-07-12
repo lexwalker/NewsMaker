@@ -81,19 +81,66 @@ def _get(r: list[str], i: int) -> str:
     return r[i] if i < len(r) else ""
 
 
+HINT_PATH = ROOT / "data" / "llm_abort_recovery.json"
+
+
+def _load_hint() -> dict | None:
+    """Recovery handoff written by an LLM-aborted batch run (see
+    batch_fetch_test): carries the aborted run's tab + window so this script
+    can finish the classification and advance the state itself. state.json
+    still points at the LAST healthy tab on abort — by design — so without
+    the hint we would retry the WRONG tab."""
+    if not HINT_PATH.exists():
+        return None
+    try:
+        import json
+        return json.loads(HINT_PATH.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! recovery hint unreadable ({e}) — ignoring", file=sys.stderr)
+        return None
+
+
+def _consume_hint(hint: dict, cost_usd: float) -> None:
+    """Full recovery succeeded: advance state to the recovered run (merge —
+    RunState.save replaces the file, and the archive baselines written by the
+    batch must survive), point the stage handoff at the recovered tab, drop
+    the hint."""
+    import json
+    from news_agent.core.run_state import RunState
+    st = RunState(ROOT / "data" / "state.json")
+    data = st.load()
+    data.update({
+        "articles_tab": hint["articles_tab"],
+        "last_run_at": hint["run_at"],
+        "last_run_status": "ok",
+        "last_run_window_start": hint["window_start"],
+        "last_run_articles": int(hint.get("articles", 0)),
+        "last_run_cost_usd": round(float(hint.get("cost_usd", 0)) + cost_usd, 4),
+    })
+    st.save(data)
+    HINT_PATH.unlink(missing_ok=True)
+    print(f"  state advanced to recovered run (tab '{hint['articles_tab']}'); "
+          f"hint consumed — cluster/push will pick this tab up.")
+
+
 def main() -> int:
     svc = _svc()
-    # Tab: explicit argv override, else the EXPLICIT handoff pointer from the
-    # last healthy batch run (state.json articles_tab); newest-vN only as a
-    # warned fallback (see tab_handoff — kills the I9 "newest tab wins"
-    # poisoning and the hard-coded v18 last resort). Auto-resolve also avoids
-    # passing a Cyrillic tab name on argv (Windows/PowerShell mangles it).
-    tab = resolve_articles_tab(
-        svc, SHEET_ID,
-        state_path=ROOT / "data" / "state.json",
-        argv_tab=sys.argv[1] if len(sys.argv) > 1 else "",
-    )
-    print(f"  tab: {tab}")
+    hint = _load_hint()
+    if hint and len(sys.argv) <= 1:
+        tab = hint["articles_tab"]
+        print(f"  tab: {tab}  (from LLM-abort recovery hint)")
+    else:
+        # Tab: explicit argv override, else the EXPLICIT handoff pointer from
+        # the last healthy batch run (state.json articles_tab); newest-vN only
+        # as a warned fallback (see tab_handoff — kills the I9 "newest tab
+        # wins" poisoning and the hard-coded v18 last resort). Auto-resolve
+        # also avoids Cyrillic argv (Windows/PowerShell mangles it).
+        tab = resolve_articles_tab(
+            svc, SHEET_ID,
+            state_path=ROOT / "data" / "state.json",
+            argv_tab=sys.argv[1] if len(sys.argv) > 1 else "",
+        )
+        print(f"  tab: {tab}")
     settings = get_settings()
     sections = load_sections()
     budget = BudgetTracker(getattr(settings, "max_cost_usd", 5.0))
@@ -188,6 +235,8 @@ def main() -> int:
             targets.append((i, r))
     print(f"Found {len(targets)} rows needing retry.")
     if not targets:
+        if hint:
+            _consume_hint(hint, 0.0)  # nothing broken -> run is whole
         return 0
 
     updates: list[dict] = []
@@ -195,6 +244,7 @@ def main() -> int:
     portal_country = "Russia"  # RU portal hard-coded for now
     rejected_count = 0
     consec_errors = 0  # circuit breaker — parity with the main run's LLM pass
+    aborted_early = False  # any break below = PARTIAL recovery, chain must stop
     for idx, (sheet_row, r) in enumerate(targets, start=1):
         url = _get(r, COL_URL)
         title = _get(r, COL_TITLE)
