@@ -71,6 +71,7 @@ from news_agent.core.config_loader import (  # noqa: E402
     load_brand_domains,
     load_http_quirks,
     load_primary_source_cues,
+    load_hot_sources,
     load_source_quality,
     load_whitelist_domains,
 )
@@ -2025,6 +2026,16 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
              "daily cadence the window is ~24h, so this only binds after a gap.",
     )
     p.add_argument(
+        "--hot", action="store_true",
+        help="HOT lane: poll only the fast-rotating sources from "
+             "config/hot_sources.yaml (index churn beats the full-run "
+             "cadence). Uses its OWN tab family ('… (гор) vN') so the full "
+             "chain's tab handoff is never poisoned; run it with "
+             "RUN_STATE_PATH=data/state_hot.json so the two lanes keep "
+             "independent windows. No NHTSA seed, no LLM-abort recovery "
+             "hint (a hot re-run costs minutes, not hours).",
+    )
+    p.add_argument(
         "--no-window", action="store_true",
         help="Disable scheduled-run mode and use legacy FRESHNESS_HOURS instead. "
              "Useful for ad-hoc backfill runs that should NOT touch state.json.",
@@ -2330,6 +2341,16 @@ def main(argv: list[str] | None = None) -> int:
         print("NHTSA recalls source enabled "
               f"(lookback {NHTSA_RECALL_LOOKBACK_DAYS}d, cap {NHTSA_RECALL_MAX_ITEMS}).")
     urls = TELEGRAM_SEED_URLS + nhtsa_seed + read_active_sources(svc, NUM_SOURCES)
+    if args.hot:
+        # HOT lane: fast-rotating sources only (config/hot_sources.yaml),
+        # own tab family. Everything else (cache, dedup, breaker, health)
+        # is shared with the full run by construction.
+        global REPORT_TAB_BASE, ARTICLES_TAB_BASE
+        REPORT_TAB_BASE = REPORT_TAB_BASE + " (гор)"
+        ARTICLES_TAB_BASE = ARTICLES_TAB_BASE + " (гор)"
+        urls = load_hot_sources()
+        print(f"HOT lane: {len(urls)} fast-rotating sources "
+              f"(state: {args.state_path}).")
     if not urls:
         print("No active sources found in the sheet.", file=sys.stderr)
         return 2
@@ -2647,7 +2668,7 @@ def main(argv: list[str] | None = None) -> int:
     # tab travels via this hint file; retry consumes it and advances the state
     # itself on full success. Any other alarm class (archive floors, stuck
     # rows) is NOT retryable — no hint, chain stays aborted.
-    if (alarms and RUN_WINDOW is not None
+    if (alarms and RUN_WINDOW is not None and not args.hot
             and all(a.startswith("LLM pass aborted") for a in alarms)):
         hint_path = args.state_path.parent / "llm_abort_recovery.json"
         try:

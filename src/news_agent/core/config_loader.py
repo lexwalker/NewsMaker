@@ -143,6 +143,14 @@ def load_brand_newsrooms() -> dict[str, str]:
     }
 
 
+def load_hot_sources() -> list[str]:
+    """URLs for the HOT fetch lane (`batch_fetch_test.py --hot`) — the
+    fast-rotating sources polled every few hours between full runs. Selection
+    criterion is index churn, not auto-share (see config/hot_sources.yaml)."""
+    data = _read_yaml(CONFIG_DIR / "hot_sources.yaml") or {}
+    return [str(u).strip() for u in (data.get("hot_sources") or []) if u]
+
+
 def load_blacklist() -> Blacklist:
     data = _read_yaml(CONFIG_DIR / "blacklist.yaml") or {}
     return Blacklist(

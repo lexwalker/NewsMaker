@@ -1,0 +1,44 @@
+# HOT lane sources — polled every few hours by `batch_fetch_test.py --hot`
+# (scripts/run_hot.ps1), between the two daily FULL runs.
+#
+# Selection criterion is INDEX CHURN, not auto-share (user decision 13.07):
+# a source whose index rotates faster than the full-run cadence loses stories
+# in the gap — that includes the general-news portals (ria/lenta/kommersant
+# publish ~100 items/day, an auto story lives ~10h on their index) even
+# though most of their items are non-auto (the local heuristics drop those
+# before the LLM, so polling them often is cheap).
+#
+# Measured jul-13 from the local cache (articles/day, no API):
+#   naavtotrasse 123 (disabled), ria 96, lenta 96, ixbt 80, kommersant 74,
+#   iz 55, vedomosti 50, zr 50, rg 50, t.me 49.
+#
+# NHTSA is NOT here: its adapter has its own dedup-based freshness and the
+# agency itself lags 3-5 days — 4h polling buys nothing.
+hot_sources:
+  # auto-dense, fast-rotating
+  - https://www.ixbt.com/
+  - https://zr.ru
+  - https://iz.ru/rubric/auto
+  - https://iz.ru/rubric/ekonomika
+  - https://iz.ru/rubric/obshchestvo
+  - https://auto.ru/mag/
+  - https://auto.ru/mag/theme/news/
+  - https://carscoops.com
+  - https://cnevpost.com/
+  - https://carnewschina.com/
+  - https://autostat.ru
+  - https://www.autostat.ru/news/rss/3/
+  - https://auto.mail.ru
+  # general high-churn portals (auto stories scroll off in hours)
+  - https://ria.ru/lenta/
+  - https://lenta.ru
+  - https://kommersant.ru
+  - https://www.kommersant.ru/theme/88
+  - https://vedomosti.ru
+  - https://rg.ru/tema/ekonomika
+  - https://tass.ru/rss/v2.xml
+  - https://tass.ru/ekonomika
+  - https://www.interfax.ru/
+  # high-churn telegram primaries
+  - https://t.me/chinamashina_news
+  - https://t.me/sergtselikov

@@ -290,7 +290,10 @@ def _latest_articles_tab(svc) -> str:
     from news_agent.core.tab_handoff import resolve_articles_tab
     return resolve_articles_tab(
         svc, SHEET_ID,
-        state_path=ROOT / "data" / "state.json",
+        # RUN_STATE_PATH lets the HOT lane (run_hot.ps1) hand off ITS tab via
+        # its own state file without touching the full chain's state.json.
+        state_path=Path(os.environ.get("RUN_STATE_PATH",
+                                       str(ROOT / "data" / "state.json"))),
     )
 
 

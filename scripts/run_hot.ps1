@@ -1,0 +1,55 @@
+# run_hot.ps1 -- HOT lane: poll the ~24 fast-rotating sources
+# (config/hot_sources.yaml) every few hours between the two daily FULL runs.
+# Whole chain takes ~5-10 min and costs cents: the cross-lane SQLite cache
+# already holds everything the full runs classified, so the LLM only sees
+# genuinely-new items.
+#
+# Isolation from the full chain (do not remove):
+#   * RUN_STATE_PATH=data\state_hot.json  -- own run-window AND own
+#     articles-tab handoff pointer; the full chain's state.json is never
+#     touched, so neither lane shrinks the other's window or steals its tab.
+#   * batch --hot writes its own tab family "ТЕСТ статьи (гор) vN".
+#   * MUTEX: skips silently when any batch_fetch_test.py is already running
+#     (the full run has priority; the next hot tick catches up).
+#
+# Scheduled via the 'NewsMakerHot' task (every 4h). Manual run:
+#   powershell -ExecutionPolicy Bypass -File scripts\run_hot.ps1
+
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot
+Set-Location $root
+$env:PYTHONUNBUFFERED = "1"
+$env:RUN_STATE_PATH = Join-Path $root "data\state_hot.json"
+
+# MUTEX: another batch run (full or hot) in progress -> skip this tick.
+$busy = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -like "*batch_fetch_test*" -or $_.CommandLine -like "*build_news_*" }
+if ($busy) {
+  Write-Output "HOT skip: another prog run is active (PID $($busy[0].ProcessId))."
+  exit 0
+}
+
+$ts  = Get-Date -Format "yyyyMMdd_HHmmss"
+if (-not (Test-Path (Join-Path $root "logs"))) { New-Item -ItemType Directory (Join-Path $root "logs") | Out-Null }
+$log = Join-Path $root "logs\run_hot_$ts.log"
+
+function Stage($name, $argList) {
+  Write-Output "=== $name  $(Get-Date -Format HH:mm:ss) ===" | Tee-Object -FilePath $log -Append
+  # Same stderr rationale as run_prog.ps1: python warnings on stderr must not
+  # become terminating NativeCommandErrors under EAP=Stop.
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  & python @argList 2>&1 | Tee-Object -FilePath $log -Append
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $prevEAP
+  if ($code -ne 0) {
+    Write-Output "ABORT: '$name' exited $code -- hot chain stopped." | Tee-Object -FilePath $log -Append
+    exit $code
+  }
+}
+
+Write-Output "run_hot start $ts  log=$log"
+Stage "1/3 hot fetch+classify"    @('scripts/batch_fetch_test.py','--hot')
+Stage "2/3 cluster (LLM-editor)"  @('scripts/build_news_clusters.py','--use-llm-editor')
+Stage "3/3 push to editor feed"   @('scripts/build_news_sheet.py')
+Write-Output "run_hot DONE $(Get-Date -Format HH:mm:ss)  log=$log"

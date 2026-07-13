@@ -40,7 +40,8 @@ from googleapiclient.discovery import build  # noqa: E402
 
 SHEET_ID = os.environ["SPREADSHEET_ID"]
 SA_PATH = ROOT / os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].lstrip("./")
-FAMILIES = ("ТЕСТ прогон v", "ТЕСТ статьи v")
+FAMILIES = ("ТЕСТ прогон v", "ТЕСТ статьи v",
+            "ТЕСТ прогон (гор) v", "ТЕСТ статьи (гор) v")
 
 
 def _svc():
