@@ -1032,7 +1032,9 @@ story written with different headlines / in EN vs RU collapses to ONE:
   • brand: canonical brand, lowercase, English/translit ("jaguar",
     "avtovaz", "geely"). "" if no single brand.
   • model: canonical model, lowercase, no brand prefix ("type 01",
-    "skm m7", "coolray"). "" if the news is not about one model.
+    "skm m7", "coolray"). Several models in ONE event -> list them ALL,
+    space-separated, alphabetical ("cyber go!") — never "" when specific
+    models are named; "" only when the news names no specific model at all.
   • event_type: EXACTLY one of —
       launch          first market launch / sales start of a model
       reveal          official unveil/debut/presentation of a model
@@ -1043,7 +1045,8 @@ story written with different headlines / in EN vs RU collapses to ONE:
       facelift        refresh / mid-cycle update / new generation
       production_end  end of production / discontinuation
       partnership     JV / supply / cooperation / stake deals
-      motorshow       multi-model line-up at a show
+      motorshow       a show's line-up as such; a specific model's
+                      debut AT a show is 'reveal', not motorshow
       pricing         price-list / pricing announcement for a model
       dealer          dealership opening / network expansion / promo
       tech            engine/platform/battery/software technology
