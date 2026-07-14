@@ -345,3 +345,19 @@ def test_event_hint_subset_requires_same_brand_and_type():
     assert recent_event_dup_hint("mg", "go", "launch", _recent_entry(),
                                  "https://b.example/2") is None
 
+def test_event_hint_reveal_motorshow_compatible():
+    # MG-Goodwood forensics: same debut typed reveal by one write-up and
+    # motorshow by another must still match (with subset model fallback too).
+    recent = {"mg|go!|reveal": ("2026-07-10T01:29:00+00:00",
+                                "https://a.example/1", "MG Go! concept")}
+    h = recent_event_dup_hint("mg", "go! and cyber", "motorshow", recent,
+                              "https://b.example/2")
+    assert h is not None
+
+
+def test_event_hint_other_types_not_folded():
+    recent = {"mg|go!|launch": ("2026-07-10T01:29:00+00:00",
+                                "https://a.example/1", "MG Go! sales")}
+    assert recent_event_dup_hint("mg", "go!", "reveal", recent,
+                                 "https://b.example/2") is None
+

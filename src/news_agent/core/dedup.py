@@ -93,7 +93,20 @@ def recent_event_dup_hint(
     et = (event_type or "").strip().lower()
     if not (eb and em and et and et != "other"):
         return None
-    hit = recent.get(f"{eb}|{em}|{et}")
+    # Compatible event types (jul-14, the MG-Goodwood 4x dup forensics): the
+    # SAME reveal got type='reveal' from one write-up and type='motorshow'
+    # from another (a show debut IS both), so exact-type matching let it
+    # through repeatedly. Only this one well-motivated pair is folded —
+    # wider type-equivalence would inflate the false-divert rate the review
+    # tab already shows.
+    _COMPAT = {"reveal": ("reveal", "motorshow"),
+               "motorshow": ("motorshow", "reveal")}
+    types = _COMPAT.get(et, (et,))
+    hit = None
+    for _t in types:
+        hit = recent.get(f"{eb}|{em}|{_t}")
+        if hit is not None:
+            break
     if hit is None:
         # Token-subset fallback (jul-14): two write-ups of the SAME event
         # normalise the model differently when several models share the stage
@@ -106,11 +119,14 @@ def recent_event_dup_hint(
         my = {w for w in em.split() if w not in _CONNECTORS}
         if my:
             prefix = f"{eb}|"
-            suffix = f"|{et}"
+            suffixes = tuple(f"|{_t}" for _t in types)
             for key, val in recent.items():
-                if not (key.startswith(prefix) and key.endswith(suffix)):
+                if not key.startswith(prefix):
                     continue
-                other_model = key[len(prefix):-len(suffix)]
+                sfx = next((s for s in suffixes if key.endswith(s)), None)
+                if sfx is None:
+                    continue
+                other_model = key[len(prefix):-len(sfx)]
                 if not other_model or other_model == em:
                     continue
                 theirs = {w for w in other_model.split() if w not in _CONNECTORS}
