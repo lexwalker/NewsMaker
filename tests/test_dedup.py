@@ -301,3 +301,47 @@ def test_dedup_store_recent_event_keys(tmp_path) -> None:
     assert list(out.keys()) == ["jaguar|type 01|spy_shot"]
     assert out["jaguar|type 01|spy_shot"][2] == "jaguar type 01 (spy_shot)"
     assert store.recent_event_keys("KZ", days=30) == {}
+
+# --- token-subset fallback (jul-14): multi-model reveals normalise the model
+#     differently across write-ups ("go" vs "go and cyber" — the Goodwood MG
+#     story ran 4 times). Same brand+type + token containment ⇒ same event.
+
+def _recent_entry(display="MG GO! reveal"):
+    return {"mg|go and cyber|reveal": ("2026-07-13T10:00:00+00:00",
+                                       "https://a.example/1", display)}
+
+
+def test_event_hint_model_token_subset_matches():
+    h = recent_event_dup_hint("mg", "go", "reveal", _recent_entry(),
+                              "https://b.example/2")
+    assert h is not None and "возможно дубль" in h
+
+
+def test_event_hint_superset_direction_matches():
+    recent = {"mg|go|reveal": ("2026-07-13T10:00:00+00:00",
+                               "https://a.example/1", "MG Go")}
+    h = recent_event_dup_hint("mg", "go and cyber", "reveal", recent,
+                              "https://b.example/2")
+    assert h is not None
+
+
+def test_event_hint_different_models_do_not_match():
+    recent = {"tesla|model 3|launch": ("2026-07-13T10:00:00+00:00",
+                                       "https://a.example/1", "Model 3")}
+    assert recent_event_dup_hint("tesla", "model y", "launch", recent,
+                                 "https://b.example/2") is None
+
+
+def test_event_hint_token_prefix_is_not_subset():
+    recent = {"byd|sealion|launch": ("2026-07-13T10:00:00+00:00",
+                                     "https://a.example/1", "Sealion")}
+    assert recent_event_dup_hint("byd", "seal", "launch", recent,
+                                 "https://b.example/2") is None
+
+
+def test_event_hint_subset_requires_same_brand_and_type():
+    assert recent_event_dup_hint("zeekr", "go", "reveal", _recent_entry(),
+                                 "https://b.example/2") is None
+    assert recent_event_dup_hint("mg", "go", "launch", _recent_entry(),
+                                 "https://b.example/2") is None
+

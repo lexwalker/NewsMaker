@@ -95,6 +95,29 @@ def recent_event_dup_hint(
         return None
     hit = recent.get(f"{eb}|{em}|{et}")
     if hit is None:
+        # Token-subset fallback (jul-14): two write-ups of the SAME event
+        # normalise the model differently when several models share the stage
+        # — a Goodwood MG story ran 4 times because one row keyed "go" and
+        # another "go and cyber". Same brand + same event_type + one model's
+        # token set contained in the other's ⇒ treat as the same event.
+        # Token-level containment keeps different models apart: {model,3} vs
+        # {model,y} is not a subset either way, "seal" ≠ "sealion".
+        _CONNECTORS = {"and", "&", "и", "+", ","}
+        my = {w for w in em.split() if w not in _CONNECTORS}
+        if my:
+            prefix = f"{eb}|"
+            suffix = f"|{et}"
+            for key, val in recent.items():
+                if not (key.startswith(prefix) and key.endswith(suffix)):
+                    continue
+                other_model = key[len(prefix):-len(suffix)]
+                if not other_model or other_model == em:
+                    continue
+                theirs = {w for w in other_model.split() if w not in _CONNECTORS}
+                if theirs and (my <= theirs or theirs <= my):
+                    hit = val
+                    break
+    if hit is None:
         return None
     last_seen_iso, prev_url, display = hit
     if prev_url and current_url and prev_url == current_url:
