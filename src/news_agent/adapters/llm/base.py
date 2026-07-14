@@ -1165,6 +1165,24 @@ Reject on-topic items that carry no concrete happening:
    in Las Vegas", "Waymo adds 4 new markets" -> REJECT (operator territory
    news, not an automotive product event). A robotaxi VEHICLE reveal / tech
    milestone stays (Other news).
+ - RF driver-procedure / insurance MECHANICS changes - how a payout or
+   repair-expense is CALCULATED, penalty-procedure tweaks, fuel-grade
+   labelling, and «что изменится с 1 числа» multi-topic digests -> REJECT.
+   Editor (02-14.07, repeatedly): «правила определения расходов на ремонт по
+   ОСАГО», «отменили двойное наказание», «потолок выплат ОСАГО», «Евро-3
+   станут помечать», «ОСАГО и права: что изменится с 1 июля» -> нет. This
+   does NOT touch: fine-INCREASE bills and fine STATISTICS («в Думе
+   предложили увеличить штраф», «сколько водители тратят на штрафы» -> Ок),
+   insurance-market statistics, or market-wide regulation (утильсбор /
+   пошлины stay publishable per rule 4).
+ - factory TOUR reportage / production-process and capacity trivia - a
+   journalist's plant excursion, «устройство завода», plant-capacity
+   descriptions lifted from a feature, a single internal QA/process step ->
+   REJECT. Editor (30.06-14.07): «экскурсия по заводу Jeland», «мощности
+   АГР рассчитаны на 100 000», «АвтоВАЗ внедрил проверку герметичности» ->
+   нет. A NEW production start / new line for a NEW model («Avtotor launched
+   welding line for SWM production») and RF production starts keep their
+   existing routes.
  - already covered / stale - if we (or the same event) ran already, skip.
  - a model temporarily PULLED FROM SALE ahead of a known facelift/refresh, with
    NO production-end announced - a routine model-year gap, not news. Editor
