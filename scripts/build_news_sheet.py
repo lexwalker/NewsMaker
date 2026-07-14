@@ -195,6 +195,15 @@ def _is_junk_cluster(c: dict) -> bool:
         "Sustainability Report",
         "Корпоративный профиль",
         "Главная страница",
+        # extraction-failure artifacts that must never reach the editor
+        # (jul-14: "Unable to process — no article headline or body provided"
+        # shipped to the feed as row 43 — the translate model's refusal text
+        # became the title; same family as the motor.ru "Authentication
+        # controller" API row)
+        "Unable to process",
+        "Невозможно обработать",
+        "no article headline",
+        "Auth-controller", "Authentication controller",
     )
     if any(p.lower() in title.lower() for p in junk_patterns):
         return True
