@@ -64,9 +64,23 @@ def _parse_date(s: str) -> datetime | None:
 
 def load_published_index(
     svc, spreadsheet_id: str, recent_days: int = 21
-) -> tuple[set[str], set[str]]:
-    """(pub_urls, pub_recent_titles). Columns: D Название(EN) | E
-    Заголовок локализованный(RU) | F Начало активности | L Outer Link."""
+) -> tuple[set[str], set[str], set[str]]:
+    """(pub_urls, pub_recent_titles, pub_all_titles). Columns: A Раздел |
+    D Название(EN) | E Заголовок локализованный(RU) | F Начало активности |
+    L Outer Link.
+
+    ``pub_all_titles`` is the FULL-archive title set (no recency gate) minus
+    the Test-drive section — the anti-repost cache the editor asked for
+    (jul-15: «новости без даты, которые постились давным-давно, всплывают»).
+    An undated repost, or one an aggregator re-dates to today, passes the
+    freshness filter and the 21-day title window; the all-time set catches it.
+    Test-drive is excluded because the SAME model is legitimately re-featured
+    (277 rows; «changan cs35 max test» ×11) and this set feeds a HARD path in
+    some callers. Numbers are kept by normalise_title, so recurring stats that
+    differ by a figure do NOT collide (measured false-collision rate 1.5%,
+    and those are true re-posts). ``pub_recent_titles`` is unchanged so the
+    existing hard-reject stays on the safe 21-day window; the all-time set is
+    for the ADVISORY dup-hint (divert-to-review, reversible)."""
     try:
         # A:R (NOT A1:R6000): the archive outgrew 6000 rows (jun-2026: 6077),
         # and a hard row cap silently TRUNCATES the most-recent publications —
@@ -87,11 +101,12 @@ def load_published_index(
             f"{str(e)[:200]}) — archive dedup is EMPTY this run.",
             file=sys.stderr,
         )
-        return set(), set()
+        return set(), set(), set()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
     pub_urls: set[str] = set()
     pub_titles: set[str] = set()
+    pub_all_titles: set[str] = set()
     max_dt: datetime | None = None
 
     def cell(r, i):
@@ -106,12 +121,17 @@ def load_published_index(
         dt = _parse_date(cell(r, 5))
         if dt is not None and (max_dt is None or dt > max_dt):
             max_dt = dt
-        if dt is None or dt < cutoff:
-            continue
+        section = cell(r, 0).lower()
+        is_testdrive = "test-drive" in section or section == "test drive"
+        recent = dt is not None and dt >= cutoff
         for ti in (cell(r, 3), cell(r, 4)):
             nt = normalise_title(ti)
-            if len([t for t in nt.split() if t]) >= MIN_TITLE_TOKENS:
-                pub_titles.add(nt)
+            if len([t for t in nt.split() if t]) < MIN_TITLE_TOKENS:
+                continue
+            if recent:
+                pub_titles.add(nt)          # hard-reject set (21d, unchanged)
+            if not is_testdrive:
+                pub_all_titles.add(nt)      # advisory all-time set
     global LAST_ARCHIVE_MAX_DT
     LAST_ARCHIVE_MAX_DT = max_dt
-    return pub_urls, pub_titles
+    return pub_urls, pub_titles, pub_all_titles

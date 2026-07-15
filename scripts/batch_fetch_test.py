@@ -257,7 +257,8 @@ PROXY_DIRECT: set[str] = set()
 # Editor's published archive (loaded fresh each run in main): url_keys of
 # every published source + normalised titles of recently-published items.
 PUBLISHED_URLS: set[str] = set()
-PUBLISHED_TITLES: set[str] = set()
+PUBLISHED_TITLES: set[str] = set()  # recent 21d — hard-reject gate
+PUBLISHED_ALL_TITLES: set[str] = set()  # all-time (minus test-drive) — advisory dup-hint
 BLACKLIST = None  # type: ignore[assignment]  # set to a Blacklist instance in main()
 BRANDS: list = []  # type: ignore[type-arg]  # BrandDomainEntry list from config
 DEDUP_STORE = None  # type: ignore[assignment]  # DedupStore instance in main()
@@ -1397,7 +1398,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 event_type=r.event_type,
                 launch_brand_model=r.launch_brand_model,
                 canon_url=canonicalise(r.article_url),
-                pub_titles=PUBLISHED_TITLES,
+                pub_titles=PUBLISHED_ALL_TITLES,
                 recent_ev=recent_ev,
                 recent_bm=recent_bm,
             )
@@ -2225,7 +2226,7 @@ def _health_check(
 # ------------------------------------------------------------- main
 def main(argv: list[str] | None = None) -> int:
     global WHITELIST, SEEN_FINAL_URLS, BLACKLIST, BRANDS, DEDUP_STORE, PREVIOUSLY_SEEN
-    global PUBLISHED_URLS, PUBLISHED_TITLES
+    global PUBLISHED_URLS, PUBLISHED_TITLES, PUBLISHED_ALL_TITLES
     global PRIMARY_CUES, PW_FETCHER, PW_ALLOWLIST, IMP_FETCHER, IMP_ALLOWLIST
     global PROXY_URL, PROXY_DIRECT
     global RUN_WINDOW
@@ -2312,7 +2313,7 @@ def main(argv: list[str] | None = None) -> int:
         # dead. Read from EDITOR_SPREADSHEET_ID.
         _editor_id = os.environ.get(
             "EDITOR_SPREADSHEET_ID", "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
-        PUBLISHED_URLS, PUBLISHED_TITLES = published_archive.load_published_index(
+        PUBLISHED_URLS, PUBLISHED_TITLES, PUBLISHED_ALL_TITLES = published_archive.load_published_index(
             svc, _editor_id)
         print(f"Published-archive dedup: {len(PUBLISHED_URLS)} source URLs + "
               f"{len(PUBLISHED_TITLES)} recent titles loaded "

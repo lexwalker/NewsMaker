@@ -164,9 +164,9 @@ def main() -> int:
         _editor_id = os.environ.get(
             "EDITOR_SPREADSHEET_ID",
             "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
-        _pub_urls, pub_titles = published_archive.load_published_index(
+        _pub_urls, _pub_recent, pub_titles = published_archive.load_published_index(
             svc, _editor_id)
-        print(f"  published-archive dedup: {len(pub_titles)} recent titles loaded")
+        print(f"  published-archive dedup: {len(pub_titles)} all-time titles loaded")
     except Exception as e:  # noqa: BLE001 — never break recovery over the gate
         pub_titles = set()
         print(f"  !!! published-archive load FAILED (paraphrase dedup OFF this "
