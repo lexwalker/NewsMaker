@@ -24,7 +24,7 @@ import ssl
 import sys
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -78,6 +78,7 @@ from news_agent.core.config_loader import (  # noqa: E402
 from news_agent.core.freshness import is_fresh, is_in_window  # noqa: E402
 from news_agent.core.sheets_util import clamp_cells  # noqa: E402
 from news_agent.core.run_state import RunState, RunWindow  # noqa: E402
+from news_agent.core import fetch_checkpoint  # noqa: E402
 from news_agent.core.primary_source import (  # noqa: E402
     CorpusEntry,
     arbitration_candidates,
@@ -241,6 +242,14 @@ NHTSA_RECALL_MAX_ITEMS = int(os.environ.get("NHTSA_RECALL_MAX_ITEMS", "50") or 5
 # jeland.ru bug). Fires rarely (contested reposts only), result is cached with
 # the row. Disable with LLM_PRIMARY_PICK=0.
 PRIMARY_LLM_PICK = os.environ.get("LLM_PRIMARY_PICK", "1").strip() != "0"
+
+# Resumable fetch: checkpoint each source's rows so a mid-fetch crash (power
+# outage) resumes from where it stopped instead of re-parsing all ~340 sources
+# (jul-15 outage killed a run at 173/341). Disable with FETCH_RESUME=0. A
+# checkpoint older than FETCH_RESUME_MAX_AGE_H is treated as an abandoned run
+# (stale window) and discarded → clean full fetch.
+FETCH_RESUME = os.environ.get("FETCH_RESUME", "1").strip() != "0"
+FETCH_RESUME_MAX_AGE_H = float(os.environ.get("FETCH_RESUME_MAX_AGE_H", "12") or 12)
 
 USER_AGENT = os.environ.get("USER_AGENT", "NewsMakerBot/0.1 (+test)")
 
@@ -2419,19 +2428,112 @@ def main(argv: list[str] | None = None) -> int:
         print("No active sources found in the sheet.", file=sys.stderr)
         return 2
 
-    report_tab, articles_tab = allocate_new_tabs(svc)
-    print(f"New tabs allocated for this run:")
-    print(f"  summary  : {report_tab}")
-    print(f"  articles : {articles_tab}")
+    # ---- Resumable fetch: adopt a prior crashed run's progress if it matches --
+    # The fetch loop below accumulates rows in memory; a crash (power outage)
+    # otherwise loses them and re-parses every source on restart. When a
+    # checkpoint from a crashed run matches THIS run's fingerprint, restore its
+    # fetched rows + tabs + window and skip the sources it already did.
+    _ckpt_path = fetch_checkpoint.checkpoint_path(args.state_path)
+    _ckpt_fp: str | None = None
+    _ckpt_loaded = None
+    _ckpt_done: set[int] = set()  # source indices restored from a checkpoint
+    results: list[SourceResult] = []
+    article_rows: list[ArticleRow] = []
+    if FETCH_RESUME and RUN_WINDOW is not None:
+        _ckpt_fp = fetch_checkpoint.fingerprint(
+            classifier_version=CLASSIFIER_VERSION,
+            previous_run_at=RUN_WINDOW.previous_run_at,
+            urls=urls, max_lookback_hours=args.max_lookback_hours,
+            overlap_minutes=args.since_overlap_minutes,
+            max_articles=MAX_ARTICLES, hot=args.hot)
+        try:
+            _ckpt_loaded = fetch_checkpoint.load(
+                _ckpt_path, _ckpt_fp, max_age_hours=FETCH_RESUME_MAX_AGE_H)
+        except Exception as _e:  # noqa: BLE001 — resume must never break a run
+            print(f"fetch-resume: checkpoint load skipped ({type(_e).__name__}: {_e})")
+            _ckpt_loaded = None
 
-    run_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _adopted = False
+    if _ckpt_loaded is not None:
+        # Reconstruct the crashed run's state. Guarded: a checkpoint written by
+        # an older code version whose ArticleRow/SourceResult shape has since
+        # changed (without a classifier_version bump, so the fingerprint still
+        # matched) would make Cls(**d) raise — which must NOT crash the run.
+        # On any failure, discard the checkpoint and fall through to a clean
+        # full fetch (the module's degrade-to-no-checkpoint contract).
+        try:
+            h = _ckpt_loaded.header
+            # Adopt the crashed run's window so freshness for the REMAINING
+            # sources matches the rows already fetched (faithful continuation,
+            # not a fresh window with a later `now`).
+            _rw = RunWindow(
+                since=datetime.fromisoformat(h.since_iso),
+                now=datetime.fromisoformat(h.now_iso),
+                using_fallback=h.using_fallback,
+                previous_run_at=(datetime.fromisoformat(h.previous_run_at_iso)
+                                 if h.previous_run_at_iso else None),
+            )
+            _restored_rows = [ArticleRow(**d) for d in _ckpt_loaded.rows]
+            _restored_results = [SourceResult(**d) for d in _ckpt_loaded.results]
+        except Exception as _e:  # noqa: BLE001 — schema drift must not break a run
+            print(f"fetch-resume: checkpoint incompatible ({type(_e).__name__}: "
+                  f"{_e}) — discarding, starting a clean full fetch.")
+            fetch_checkpoint.clear(_ckpt_path)
+            _ckpt_loaded = None
+        else:
+            report_tab, articles_tab = h.report_tab, h.articles_tab
+            run_ts = h.run_ts
+            RUN_WINDOW = _rw
+            article_rows = _restored_rows
+            results = _restored_results
+            # Skip by SET MEMBERSHIP, not a threshold. append_source is
+            # best-effort (swallowed on failure), so done_idx can have a HOLE
+            # (source K fetched but its append failed). Skipping i<=max(done_idx)
+            # would jump the hole and silently drop K's rows — they only ever
+            # lived in the crashed run's memory. Membership re-fetches ONLY the
+            # gaps and keeps every source that WAS persisted.
+            _ckpt_done = set(_ckpt_loaded.done_idx)
+            # Re-seed the within-run cross-source final-URL dedup set from the
+            # restored rows (it starts empty each process), so a URL fetched
+            # before the crash isn't emitted again by a post-resume source.
+            for _r in article_rows:
+                if _r.article_url:
+                    SEEN_FINAL_URLS.add(canonicalise(_r.article_url))
+            _gaps = sorted(
+                set(range(1, (max(_ckpt_done) if _ckpt_done else 0) + 1)) - _ckpt_done)
+            print(
+                f"\n*** RESUMING crashed fetch ***  {len(_ckpt_done)}/{len(urls)} "
+                f"sources restored ({len(article_rows)} rows) from "
+                f"{_ckpt_path.name}.\n  Reusing tab '{articles_tab}', window "
+                f"{h.since_iso} → {h.now_iso}."
+                + (f"\n  Re-fetching {len(_gaps)} un-persisted gap source(s): "
+                   f"{_gaps[:20]}" if _gaps else "")
+            )
+            _adopted = True
+
+    if not _adopted:
+        report_tab, articles_tab = allocate_new_tabs(svc)
+        run_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        print(f"New tabs allocated for this run:")
+        print(f"  summary  : {report_tab}")
+        print(f"  articles : {articles_tab}")
+        if FETCH_RESUME and RUN_WINDOW is not None and _ckpt_fp is not None:
+            try:
+                fetch_checkpoint.begin(
+                    _ckpt_path, fingerprint=_ckpt_fp, run_ts=run_ts,
+                    report_tab=report_tab, articles_tab=articles_tab,
+                    since=RUN_WINDOW.since, now=RUN_WINDOW.now,
+                    using_fallback=RUN_WINDOW.using_fallback,
+                    previous_run_at=RUN_WINDOW.previous_run_at,
+                    total_sources=len(urls))
+            except Exception as _e:  # noqa: BLE001 — never break a run over the checkpoint
+                print(f"fetch-resume: checkpoint init skipped ({type(_e).__name__}: {_e})")
+
     print(f"Run: {run_ts}")
     print(f"Sources to test: {len(urls)}")
     for i, u in enumerate(urls, start=1):
         print(f"  {i:2d}. {u}")
 
-    results: list[SourceResult] = []
-    article_rows: list[ArticleRow] = []
     total_t0 = time.monotonic()
 
     # Playwright context — only spun up if the allowlist has entries AND the
@@ -2494,12 +2596,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with make_client() as client:
             for i, u in enumerate(urls, start=1):
+                if i in _ckpt_done:
+                    continue  # persisted by the crashed run, restored from checkpoint
                 if len(article_rows) >= MAX_ARTICLES:
                     print(
                         f"\nReached MAX_ARTICLES={MAX_ARTICLES}, stopping at "
                         f"source {i - 1}/{len(urls)}"
                     )
                     break
+                _rows_before = len(article_rows)
                 print(f"\n[{i}/{len(urls)}] {u}  (articles so far: {len(article_rows)})")
                 try:
                     r = process_source(client, u, i, article_rows)
@@ -2513,6 +2618,16 @@ def main(argv: list[str] | None = None) -> int:
                     f"is_article={r.passed_is_article:2}  "
                     f"auto={r.passed_auto_topic:2}  elapsed={r.elapsed_ms} ms"
                 )
+                # Persist this source's rows so a crash resumes here, not from 0.
+                # Append-only + fsync; any failure is swallowed (a checkpoint
+                # must never break the run it is protecting).
+                if FETCH_RESUME and _ckpt_fp is not None:
+                    try:
+                        fetch_checkpoint.append_source(
+                            _ckpt_path, src_idx=i, source_result=asdict(r),
+                            rows=[asdict(x) for x in article_rows[_rows_before:]])
+                    except Exception:  # noqa: BLE001
+                        pass
     finally:
         if pw_cm is not None:
             try:
@@ -2645,6 +2760,16 @@ def main(argv: list[str] | None = None) -> int:
                what="write_articles")
     print(f"Report written to tabs: {report_tab!r}, {articles_tab!r}")
     print(f"Detailed article rows: {len(article_rows)}")
+
+    # Fetch rows are now durable in Sheets — drop the resume checkpoint so a
+    # later crash (formatting / health / state-advance) can never double-write
+    # them on the next run. Past this point the SQLite cache is the recovery
+    # path, not the fetch checkpoint.
+    if FETCH_RESUME and _ckpt_fp is not None:
+        try:
+            fetch_checkpoint.clear(_ckpt_path)
+        except Exception:  # noqa: BLE001
+            pass
 
     # Apply conditional formatting (colours + frozen header) to the new articles tab
     try:
