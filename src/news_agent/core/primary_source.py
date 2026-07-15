@@ -123,8 +123,12 @@ _OFFICIAL_PRIMARY_URL_PREFIXES: tuple[str, ...] = (
 
 def _matches_official_prefix(link: str) -> bool:
     """True for a deep post under a path-scoped official primary
-    (https://t.me/sergtselikov/1747 → yes; t.me/sergtselikov → no)."""
+    (https://t.me/sergtselikov/1747 → yes; t.me/sergtselikov → no).
+    telegram.me is Telegram's own alias of t.me — normalise it, else an
+    editor's «первоисточник telegram.me/sergtselikov/…» is missed (jul-15
+    zr.ru: the marked Автостат/Целиков link was extracted but not promoted)."""
     bare = re.sub(r"^https?://(?:www\.)?", "", link.lower())
+    bare = re.sub(r"^telegram\.me/", "t.me/", bare)
     return any(
         bare.startswith(pfx) and len(bare) > len(pfx)
         for pfx in _OFFICIAL_PRIMARY_URL_PREFIXES
@@ -344,6 +348,11 @@ def detect_primary_source(
     # «rg.ru/» is useless — she needs «rg.ru/2026/…/article». Most RU
     # aggregators (auto.mail) only credit the domain root, so this fires rarely
     # — the honest gate, not a fake root attribution.
+    if source_hint_url and _matches_official_prefix(source_hint_url):
+        # An editor-designated official channel marked as the source wins even
+        # when its host is a generic "mirror/social" (t.me): sergtselikov IS
+        # the Автостат primary, not a repost. Must precede the mirror gate.
+        return source_hint_url, domain_of(source_hint_url), "high"
     if source_hint_url and _is_deep_url(source_hint_url):
         hd = domain_of(source_hint_url)
         if hd and not _same_site(hd, article_domain) and not _is_mirror(hd, cues.mirror_hosts):
