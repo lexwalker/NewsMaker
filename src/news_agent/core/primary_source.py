@@ -21,6 +21,7 @@ Output from both levels: (url, domain, confidence).
 from __future__ import annotations
 
 import re
+from collections import Counter
 from datetime import datetime
 from typing import Iterable, Literal
 from urllib.parse import urlparse
@@ -304,6 +305,43 @@ def _is_preferred_primary(candidate_domain: str) -> bool:
     return any(n == h or n.endswith("." + h) for h in _PREFERRED_PRIMARY_HOSTS)
 
 
+# Pure infrastructure hosts — domain registrars / web hosting. These appear
+# in site footers ("сделано на …", "хостинг …") and are NEVER an article's
+# primary source. Deliberately minimal + unambiguous: only providers that
+# cannot be an automotive news source (no exchanges/rating agencies here —
+# those CAN be a real source for a финансовой/статистической новости).
+_INFRA_HOSTS: frozenset[str] = frozenset({
+    "reg.ru", "nic.ru", "sweb.ru", "reg.cloud", "timeweb.com", "beget.com",
+    "hostland.ru", "masterhost.ru",
+})
+
+# A domain repeated this many times across ONE article's outbound links is the
+# site's own ecosystem chrome (autonews.ru, an RBC property, links rbc.ru +
+# *.rbc.ru ~40×/page), never the article's source — a real source is cited
+# once or twice. Threshold set high so a genuinely multiply-linked source is
+# never touched; known-good primary hosts are exempt regardless (below).
+_NAV_BOILERPLATE_MIN = 8
+
+
+def _is_infra_or_nav(
+    domain: str,
+    freq: Counter[str],
+    press_release_hosts: frozenset[str] | set[str],
+) -> bool:
+    """Drop a candidate that is pure infra, or high-frequency navigation
+    boilerplate — but NEVER a known-good primary host (press-release /
+    preferred / official), which must survive whatever its frequency."""
+    nd = _normalise_domain(domain)
+    if not nd:
+        return False
+    if (_press_release_host(nd, press_release_hosts)
+            or _is_preferred_primary(nd) or _is_official_primary(nd)):
+        return False  # known-good source — never filter
+    if nd in _INFRA_HOSTS or any(nd.endswith("." + h) for h in _INFRA_HOSTS):
+        return True
+    return freq.get(nd, 0) >= _NAV_BOILERPLATE_MIN
+
+
 def _is_official_primary(candidate_domain: str) -> bool:
     """True for an official/regulatory body (gov, АЕБ, autostat, NHTSA, NCAP) —
     subdomain-aware, same anti-spoof anchoring as _is_preferred_primary. These
@@ -365,12 +403,19 @@ def detect_primary_source(
         # naavtotrasse case: primary=self at HIGH masked the real source).
         return article_url, domain_of(article_url), "high"
 
-    # Filter out mirror posts AND junk URLs from candidates.
+    # Filter out mirror posts, junk URLs, infra hosts, and navigation
+    # boilerplate (a domain repeated across the page's chrome). Frequency is
+    # counted on the RAW list before filtering so the site-ecosystem count is
+    # intact; known-good primary hosts are exempt inside _is_infra_or_nav.
+    _dom_freq: Counter[str] = Counter(
+        _normalise_domain(domain_of(link)) for link in outbound_links if link)
     outbound_links = [
         link for link in outbound_links
         if link
         and not _is_junk_link(link)
         and not _is_mirror(domain_of(link), cues.mirror_hosts)
+        and not _is_infra_or_nav(domain_of(link), _dom_freq,
+                                 cues.press_release_hosts)
     ]
 
     # Tier 1 — press-release host in outbound links.
