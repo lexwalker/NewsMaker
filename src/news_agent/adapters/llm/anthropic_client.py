@@ -13,6 +13,8 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from news_agent.adapters.llm.base import (
     CLASSIFY_SCHEMA,
     EDITORIAL_REVIEW_SCHEMA,
+    PICK_PRIMARY_SCHEMA,
+    PICK_PRIMARY_SYSTEM,
     RELEVANCE_SCHEMA,
     RELEVANCE_SYSTEM,
     TRANSLATE_SCHEMA,
@@ -153,6 +155,43 @@ class AnthropicLLMClient:
             system=TRANSLATE_SYSTEM, user=user, tool=tool, max_tokens=300
         )
         return TitlePair.model_validate(data), usage
+
+    def pick_primary_source(
+        self, *, title: str, body_excerpt: str, candidates: list[str]
+    ) -> tuple[str | None, LLMUsage]:
+        """Arbitrate the true primary among contested outbound links.
+
+        ``candidates`` is the non-empty list from
+        primary_source.arbitration_candidates. Returns (chosen_url, usage) where
+        chosen_url is one of ``candidates`` or None ("none of these / keep the
+        deterministic pick"). Anti-hallucination: the model returns a 1-based
+        INDEX; we map it back to the caller's own list, so a fabricated URL is
+        impossible and an out-of-range index degrades safely to None."""
+        if not candidates:
+            return None, LLMUsage(
+                input_tokens=0, output_tokens=0, cost_usd=0.0,
+                latency_ms=0, provider="anthropic", model=self.model)
+        numbered = "\n".join(
+            f"{i}. {url}" for i, url in enumerate(candidates, start=1))
+        user = (
+            f"Headline: {title}\n\n"
+            f"Body excerpt:\n{body_excerpt[:1800]}\n\n"
+            f"Outbound links:\n{numbered}\n\n"
+            "Which numbered link is this article's original primary source? "
+            "Answer 0 if none of them is."
+        )
+        tool = _tool(
+            "record_primary",
+            "Record which numbered outbound link is the original primary source.",
+            PICK_PRIMARY_SCHEMA,
+        )
+        data, usage = self._tool_call(
+            system=PICK_PRIMARY_SYSTEM, user=user, tool=tool, max_tokens=200
+        )
+        idx = data.get("index")
+        if not isinstance(idx, int) or not (1 <= idx <= len(candidates)):
+            return None, usage  # 0 / missing / hallucinated index → no override
+        return candidates[idx - 1], usage
 
     # --------------------------------------------------------------- private
     @_RETRY

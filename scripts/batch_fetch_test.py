@@ -80,6 +80,7 @@ from news_agent.core.sheets_util import clamp_cells  # noqa: E402
 from news_agent.core.run_state import RunState, RunWindow  # noqa: E402
 from news_agent.core.primary_source import (  # noqa: E402
     CorpusEntry,
+    arbitration_candidates,
     detect_earliest_in_corpus,
     detect_primary_source,
 )
@@ -233,6 +234,14 @@ NHTSA_RECALLS_SENTINEL = nhtsa_recalls.RECALLS_ENDPOINT
 NHTSA_RECALL_LOOKBACK_DAYS = int(os.environ.get("NHTSA_RECALL_LOOKBACK_DAYS", "10") or 10)
 NHTSA_RECALL_MAX_ITEMS = int(os.environ.get("NHTSA_RECALL_MAX_ITEMS", "50") or 50)
 
+# LLM primary-source arbitration: when a redistribution-portal repost links to
+# ≥2 plausible primaries at once, the heuristic tiers can't tell the brand's own
+# announcement from a related-reading link — a cheap targeted LLM call reads the
+# body and picks (editor: «не видит первоисточник»; the autonews→carscoops vs
+# jeland.ru bug). Fires rarely (contested reposts only), result is cached with
+# the row. Disable with LLM_PRIMARY_PICK=0.
+PRIMARY_LLM_PICK = os.environ.get("LLM_PRIMARY_PICK", "1").strip() != "0"
+
 USER_AGENT = os.environ.get("USER_AGENT", "NewsMakerBot/0.1 (+test)")
 
 # Global politeness throttle (jun-21): minimum seconds between ANY two fetches,
@@ -343,8 +352,13 @@ class ArticleRow:
     primary_url: str = ""
     primary_domain: str = ""
     primary_confidence: str = ""  # "high" / "medium" / "low"
-    primary_method: str = ""      # "body-link" / "corpus-earlier" / "self"
+    primary_method: str = ""      # "body-link" / "corpus-earlier" / "self" / "llm-pick"
     source_hint_domain: str = ""  # outlet the article credits («источник: X»)
+    # Contested outbound links for LLM primary arbitration (redistribution-host
+    # link-soup only). Non-empty → _run_llm_pass asks the LLM which is the true
+    # source. Transient (not cached): a cache hit already restores the resolved
+    # primary_url from the prior run's arbitration.
+    primary_candidates: list[str] = field(default_factory=list)
     # Reconstructed from SQLite cache on a repeat run — skip the LLM pass.
     from_cache: bool = False
     # Phase-1 model-launch lifecycle tracking (heuristic, no LLM)
@@ -1473,6 +1487,40 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                 f"translate error: {str(e)[:200]}"
 
+        # 4. Primary-source arbitration (contested link-soup only). This row is
+        # accepted for publication and the heuristic flagged ≥2 plausible
+        # first-sources it couldn't choose between (redistribution-host repost,
+        # e.g. autonews linking BOTH the brand site AND a carscoops related
+        # piece). Ask the LLM which link is THIS story's true origin. Rejected
+        # rows never reach here (they `continue` above), so the call fires only
+        # for the handful of contested published rows. Never aborts the pass; on
+        # any error the deterministic pick stands. The resolved primary_url is
+        # cached with the row, so a repeat run reuses it without re-calling.
+        if r.primary_candidates and hasattr(client, "pick_primary_source"):
+            try:
+                chosen, u = client.pick_primary_source(
+                    title=r.title,
+                    body_excerpt=r.body_excerpt or r.title,
+                    candidates=r.primary_candidates,
+                )
+                budget.record(u)
+                r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+                if chosen and chosen != r.primary_url:
+                    prev_dom = r.primary_domain or domain_of(r.primary_url)
+                    r.primary_url = chosen
+                    r.primary_domain = domain_of(chosen)
+                    r.primary_confidence = "high"
+                    r.primary_method = "llm-pick"
+                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                        f"первоисточник (LLM): {r.primary_domain} (было {prev_dom})"
+                    print(
+                        f"  [{i}/{len(candidates)}] PRIMARY→{r.primary_domain} "
+                        f"(было {prev_dom})  |  {r.title[:45]}"
+                    )
+            except Exception as e:  # noqa: BLE001
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    f"primary-pick error: {str(e)[:120]}"
+
         # Row passed both relevance + classification + translation. If it
         # came in as "Возможно новость" (yellow), promote it to "Точно
         # новость" (green) so the editor's colour view matches the LLM's
@@ -1963,6 +2011,21 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         row.primary_domain = p_dom
         row.primary_confidence = p_conf
         row.primary_method = "body-link" if p_conf != "low" else "self"
+        # Flag contested link-soup for the LLM primary picker (the redistribution
+        # -host «не видит первоисточник» class, e.g. autonews linking BOTH the
+        # brand site AND a carscoops related piece). [] on the common case, so
+        # the LLM call fires rarely; the actual arbitration runs in
+        # _run_llm_pass, where the LLM client lives.
+        if PRIMARY_LLM_PICK:
+            row.primary_candidates = arbitration_candidates(
+                article_url=article.url,
+                body=article.body,
+                title=article.title,
+                outbound_links=article.outbound_links,
+                brands=BRANDS,
+                cues=PRIMARY_CUES,
+                whitelist_domains=WHITELIST,
+            )
 
     return True
 

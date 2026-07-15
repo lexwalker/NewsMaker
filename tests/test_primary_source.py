@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from news_agent.core.config_loader import BrandDomainEntry, PrimarySourceCues
 from news_agent.core.primary_source import (
     CorpusEntry,
+    arbitration_candidates,
     detect_earliest_in_corpus,
     detect_primary_source,
     normalise_title,
@@ -627,3 +628,63 @@ def test_corpus_hint_no_match_falls_through() -> None:
         article_title="Эксперт назвал уязвимые ОС в машинах",
         article_published_at=t, corpus=corpus, source_hint_domain="rg.ru")
     assert res is None
+
+
+# --- LLM arbitration trigger (arbitration_candidates) ----------------------
+# autonews.ru is a hardcoded redistribution host; carscoops.com a preferred
+# journalistic primary. Toyota is a known brand (fixture BRANDS).
+_ARB_TITLE = "Toyota объявила о старте продаж нового кроссовера"
+_ARB_BODY = "Компания Toyota (Тойота) официально сообщает о начале продаж. " * 8
+_ARB_LINKS = [
+    "https://www.carscoops.com/2026/07/toyota-new-crossover/",  # preferred (strong)
+    "https://www.toyota.com/news/new-crossover-launch",         # brand+mentioned (strong)
+    "https://t.me/autonews_ru",                                 # mirror → filtered
+    "https://www.autonews.ru/section/market",                   # same-site → skipped
+]
+
+
+def test_arbitration_fires_on_contested_redistribution() -> None:
+    # Redistribution host + BOTH a preferred primary AND a mentioned-brand site
+    # → genuine contest → both surfaced to the LLM, junk/mirror/self excluded.
+    cands = arbitration_candidates(
+        article_url="https://www.autonews.ru/news/abc123",
+        body=_ARB_BODY, title=_ARB_TITLE, outbound_links=_ARB_LINKS,
+        brands=BRANDS, cues=CUES)
+    assert set(cands) == {
+        "https://www.carscoops.com/2026/07/toyota-new-crossover/",
+        "https://www.toyota.com/news/new-crossover-launch",
+    }
+
+
+def test_arbitration_empty_on_non_redistribution_host() -> None:
+    # A real outlet (not a redistributor) keeps 100% deterministic behaviour —
+    # the arbiter never fires, so no paid call and zero regression risk.
+    cands = arbitration_candidates(
+        article_url="https://news.drom.ru/toyota-123.html",
+        body=_ARB_BODY, title=_ARB_TITLE, outbound_links=_ARB_LINKS,
+        brands=BRANDS, cues=CUES)
+    assert cands == []
+
+
+def test_arbitration_empty_on_single_candidate() -> None:
+    # One plausible primary is not a contest — Tier 1.5 already picks it right.
+    cands = arbitration_candidates(
+        article_url="https://www.autonews.ru/news/abc123",
+        body=_ARB_BODY, title=_ARB_TITLE,
+        outbound_links=["https://www.carscoops.com/2026/07/x/",
+                        "https://t.me/x", "https://www.autonews.ru/subscribe"],
+        brands=BRANDS, cues=CUES)
+    assert cands == []
+
+
+def test_arbitration_requires_a_strong_anchor() -> None:
+    # Two deep external links but NEITHER is a known primary/brand → generic
+    # related-reading soup, not a source contest → no call.
+    cands = arbitration_candidates(
+        article_url="https://www.autonews.ru/news/abc123",
+        body="Обычная новость без упоминания брендов. " * 8,
+        title="Некое событие на авторынке",
+        outbound_links=["https://example.com/some-deep-article-1",
+                        "https://another.org/some-deep-article-2"],
+        brands=BRANDS, cues=CUES)
+    assert cands == []

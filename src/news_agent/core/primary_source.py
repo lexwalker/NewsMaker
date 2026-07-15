@@ -497,6 +497,89 @@ def detect_primary_source(
     return article_url, domain_of(article_url), "low"
 
 
+# --- LLM arbitration for contested "link-soup" primaries -------------------
+# The heuristic tiers above pick ONE source deterministically, but on a
+# redistribution portal an article often links to several plausible primaries
+# at once — e.g. autonews.ru reposts a brand story that links BOTH to the
+# brand's own site (jelandrus.ru) AND to a Western outlet's related-reading
+# piece (carscoops.com). Tier 1.5 blindly promotes the preferred journalistic
+# link; Tier 2 would have picked the brand site. Which is the TRUE primary is a
+# judgment call the heuristics can't make (editor: «не видит первоисточник»), so
+# we hand the contested candidates to a cheap LLM arbiter that reads the body
+# (AnthropicLLMClient.pick_primary_source). This helper returns the URLs worth
+# arbitrating, or [] when the pick is unambiguous — so the common case never
+# spends an LLM call. detect_primary_source itself is untouched: on every
+# non-redistribution source, and whenever this returns [], behaviour is exactly
+# as before (zero regression to the tier tests).
+def arbitration_candidates(
+    *,
+    article_url: str,
+    body: str,
+    title: str,
+    outbound_links: list[str],
+    brands: list[BrandDomainEntry],
+    cues: PrimarySourceCues,
+    whitelist_domains: set[str] | None = None,
+    max_candidates: int = 6,
+) -> list[str]:
+    """Distinct external URLs worth LLM primary-source arbitration, or [].
+
+    Fires ONLY for the genuinely-contested case: a redistribution-host article
+    that links out to ≥2 distinct *plausible* primaries, at least one of them a
+    *strong* signal (a recognised journalistic/official host, or a brand-owned
+    site for a brand the article actually discusses). A lone candidate is not a
+    contest — the deterministic tiers already pick it correctly — so it returns
+    []. Uses the SAME junk/mirror/infra/nav filtering as detect_primary_source,
+    so nav chrome and share buttons never reach the LLM. At most
+    ``max_candidates`` URLs, one (the deepest) per external domain."""
+    article_domain = _normalise_domain(domain_of(article_url))
+    # Redistribution-gated: reposts are where the "which link is the source"
+    # ambiguity lives. Real outlets keep their deterministic tier behaviour and
+    # never trigger a paid arbitration call.
+    if article_domain not in _REDISTRIBUTION_HOSTS:
+        return []
+
+    mentioned = _mentions_brand(title + "\n" + body, brands)
+    _dom_freq: Counter[str] = Counter(
+        _normalise_domain(domain_of(link)) for link in outbound_links if link)
+
+    best: dict[str, str] = {}  # domain -> deepest candidate URL for it
+    has_strong = False
+    for link in outbound_links:
+        if not link or _is_junk_link(link):
+            continue
+        d = domain_of(link)
+        nd = _normalise_domain(d)
+        if _is_mirror(d, cues.mirror_hosts):
+            continue
+        if _is_infra_or_nav(d, _dom_freq, cues.press_release_hosts):
+            continue
+        if _same_site(d, article_domain):
+            continue
+        brand = _matches_brand(d, brands)
+        strong = (
+            _is_preferred_primary(nd)
+            or _is_official_primary(nd)
+            or (brand is not None and brand.brand in mentioned)
+        )
+        # A "plausible primary" is a strong signal OR any deep external article
+        # link (the original the tiers may have overlooked). Shallow/homepage
+        # links that aren't a known brand/outlet are related-reading noise.
+        if not (strong or _is_deep_url(link)):
+            continue
+        if strong:
+            has_strong = True
+        prev = best.get(nd)
+        if prev is None or (not _is_deep_url(prev) and _is_deep_url(link)):
+            best[nd] = link
+
+    # Need a genuine contest: ≥2 distinct plausible primaries AND at least one
+    # strong anchor (a source-vs-related tension), not generic link soup.
+    if not has_strong or len(best) < 2:
+        return []
+    return list(best.values())[:max_candidates]
+
+
 # --- Level 2: earliest appearance in our own corpus ------------------------
 # (Removed jul-06 cost-audit: _TITLE_SUFFIX_RE was dead — the real title-suffix
 # stripping lives in fuzzy_match._TRAILING_SOURCE_RE.)

@@ -65,6 +65,17 @@ class LLMClient(Protocol):
         """
         ...
 
+    def pick_primary_source(
+        self, *, title: str, body_excerpt: str, candidates: list[str]
+    ) -> tuple[str | None, LLMUsage]:
+        """Arbitrate the true primary among ≥2 contested outbound links.
+
+        Called only for the link-soup cases from
+        primary_source.arbitration_candidates. Returns the chosen URL (one of
+        ``candidates``) or None ("none / keep the deterministic pick").
+        """
+        ...
+
 
 # -------------------------------------------------- shared prompt components
 RELEVANCE_SYSTEM = """\
@@ -995,6 +1006,59 @@ TRANSLATE_SCHEMA = {
         "source_language": {
             "type": "string",
             "pattern": "^[A-Z]{2}$",
+        },
+    },
+}
+
+
+# --- Primary-source arbitration (LLM «первоисточник» picker) ----------------
+# Fired ONLY for the contested link-soup cases surfaced by
+# primary_source.arbitration_candidates (a redistribution-portal repost that
+# links to ≥2 plausible primaries at once). The heuristic tiers can't tell the
+# brand's own announcement from a «читайте также» related-reading link — this
+# lightweight call reads the body and decides. Index-based output (not a URL
+# string) so the model physically cannot invent a link that wasn't offered.
+PICK_PRIMARY_SYSTEM = """\
+You identify the ORIGINAL primary source of a reposted automotive-news article.
+
+You are given: the article headline, a body excerpt, and a NUMBERED list of
+outbound links found in the article body. The article itself is a repost on an
+aggregator/portal — your job is to point at the link that is THIS story's true
+origin.
+
+Pick the single link that is the source THIS specific article is reporting from:
+  - the BRAND's own official site (manufacturer / importer) when the story is
+    that brand's own announcement — a launch, price, spec, sales start, recall
+    or official statement about that brand;
+  - a JOURNALISTIC outlet's article when the story is that outlet's original
+    reporting that this portal reposts or translates;
+  - an OFFICIAL / regulatory document (ministry, safety body, statistics
+    agency) when the story reports on that document.
+
+Return 0 (none) when NO link is the source of this specific story — e.g. every
+link is a «читайте также» / «see also» pointer to a DIFFERENT story, a category
+or tag page, a homepage, a subscribe/social/app link, or otherwise unrelated to
+the headline. Do not force a pick. When unsure between a real source and a
+related-reading link, prefer 0.
+
+Output the NUMBER of the correct link, or 0 if none qualifies."""
+
+PICK_PRIMARY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["index"],
+    "properties": {
+        "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": (
+                "1-based number of the outbound link that is THIS article's "
+                "original primary source, or 0 if none of the listed links is."
+            ),
+        },
+        "reason": {
+            "type": "string",
+            "description": "Brief justification (why this link is the source).",
         },
     },
 }

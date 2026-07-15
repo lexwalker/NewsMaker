@@ -135,6 +135,17 @@ class OpenAILLMClient:
         )
         return TitlePair.model_validate(data), usage
 
+    def pick_primary_source(
+        self, *, title: str, body_excerpt: str, candidates: list[str]
+    ) -> tuple[str | None, LLMUsage]:
+        # Not implemented for the OpenAI provider: the prog runs on Anthropic,
+        # and primary-source arbitration is an Anthropic-only refinement. A
+        # no-op keeps the LLMClient interface satisfied and degrades safely to
+        # the deterministic heuristic pick.
+        return None, LLMUsage(
+            input_tokens=0, output_tokens=0, cost_usd=0.0,
+            latency_ms=0, provider=self.provider_name, model=self.model)
+
     # --------------------------------------------------------------- private
     @_RETRY
     def _json_call(
