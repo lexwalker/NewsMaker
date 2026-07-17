@@ -400,6 +400,26 @@ def main() -> int:
                             "values": [["Точно новость"]]})
         updates.append({"range": f"'{tab}'!{_L(COL_COST)}{sheet_row}", "values": [[cost]]})
         updates.append({"range": f"'{tab}'!{_L(COL.LLM_REASON)}{sheet_row}", "values": [[reason]]})
+        # Hybrid dedup Stage 1: persist the semantic event-signature. It was
+        # already computed above (for the advisory dup hint) but never written —
+        # so every row recovered through this script reached the clustering with
+        # EMPTY event columns, and build_news_clusters (which reads COL.EVENT_*
+        # to build its cross-run event keys) had nothing to compare. jul-17: a
+        # --no-llm prog finished via this script left 64 of 76 accepted rows
+        # without signatures, silently disabling the strongest 30-day dedup for
+        # 84% of the batch — the editor then flagged 8 already-published stories
+        # («вчера писали») in one push. Parity with the main run, which writes
+        # these in write_articles.
+        # Normalised EXACTLY as the main run does (batch_fetch_test: strip →
+        # lower → 40/60/24) — the cluster builds "brand|model|type" from these
+        # and matches them against cache keys the main run wrote, so any
+        # divergence in casing/length would silently fail to match.
+        _eb = ((_es.brand if _es else "") or "").strip().lower()[:40]
+        _em = ((_es.model if _es else "") or "").strip().lower()[:60]
+        _et = ((_es.event_type if _es else "") or "").strip().lower()[:24]
+        updates.append({"range": f"'{tab}'!{_L(COL.EVENT_BRAND)}{sheet_row}", "values": [[_eb]]})
+        updates.append({"range": f"'{tab}'!{_L(COL.EVENT_MODEL)}{sheet_row}", "values": [[_em]]})
+        updates.append({"range": f"'{tab}'!{_L(COL.EVENT_TYPE)}{sheet_row}", "values": [[_et]]})
 
     if updates:
         # Apply in chunks, each retried with backoff. The LLM pass above is
