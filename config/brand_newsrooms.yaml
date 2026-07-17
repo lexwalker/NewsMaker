@@ -1,8 +1,8 @@
-# Brand -> official newsroom/IR page. Used ONLY for accepted rows whose
-# event_type is sales_stat/financial and whose detected primary is weak
-# (low / corpus-guess): the editor requires brand sales & financial figures
-# to be attributed to the brand's OFFICIAL press («нужен оф пресс-релиз с
-# официального сайта компании» — 8 complaints in one markup, 01.07).
+# Brand -> official newsroom/IR page. Used by _apply_brand_newsroom_primary
+# for accepted rows: sales_stat/financial (any primary — «нужен оф пресс-релиз
+# с официального сайта компании», 8 complaints 01.07) and reveal/partnership
+# (WEAK primary only — «нужен пресс» / «пресс есть», 16-17.07; deep
+# journalistic primaries are kept per P2-A).
 # The URL points a HUMAN to the newsroom (it does not need to pass our
 # fetcher's anti-bot). Keys match the LLM event_signature brand (lowercase).
 brand_newsrooms:
@@ -32,6 +32,10 @@ brand_newsrooms:
   lynk & co: https://press.lynkco.com
   changan: https://www.globalchangan.com/news
   stellantis: https://www.media.stellantis.com
+  # DS Automobiles is a Stellantis brand; its releases live on the group's
+  # media site (jul-17 editor: «пресс есть» on a DS N°7 reveal from autoreview).
+  ds: https://www.media.stellantis.com
+  ds automobiles: https://www.media.stellantis.com
   # jul-03: gaps found in the sales_stat/financial rows of recent runs
   rivian: https://rivian.com/newsroom
   smart: https://www.smart.com/en/newsroom

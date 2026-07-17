@@ -1559,15 +1559,27 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
     03.07, on a Nio-deliveries story cited from cnevpost). Runs AFTER the
     corpus pass.
 
-    Override policy: for sales_stat/financial we override EVEN a high-
-    confidence journalistic primary (cnevpost, carnewschina…) — the editor
-    wants the company's OWN site, an aggregator is only a fallback «когда с
-    ВПН уже сайт не работает». We do NOT override when the primary is already
-    on an official brand-owned domain (a specific press release beats the
-    generic newsroom index — that IS the company's site)."""
+    Override policy is PER EVENT TYPE:
+      • sales_stat / financial — override EVEN a high-confidence journalistic
+        primary (cnevpost, carnewschina…): the editor wants the company's OWN
+        site, an aggregator is only a fallback «когда с ВПН уже сайт не
+        работает».
+      • reveal / partnership (jul-17: «ок, но нужен пресс» on an Xpeng
+        partnership; «пресс есть» on a DS reveal) — override ONLY a WEAK
+        primary: confidence low (self-fallback, no source found) or a
+        redistribution host standing as the source. Measured on cache history
+        before shipping: a blanket override would flip 277 rows including
+        carscoops/motor1 deep links — the exact primaries P2-A tells us to
+        keep — while the weak-gate flips 152, all of the naavtotrasse/kolesa/
+        auto.mail-as-primary class. A reveal ON a preferred journalistic site
+        (cnevpost self@high) is deliberately NOT overridden yet — one editor
+        comment is not enough to reverse the P2-A doctrine (маятник).
+    We never override when the primary is already on an official brand-owned
+    domain (a specific press release beats the generic newsroom index)."""
     try:
         from news_agent.core.config_loader import load_brand_newsrooms
-        from news_agent.core.primary_source import _matches_brand
+        from news_agent.core.primary_source import (
+            _REDISTRIBUTION_HOSTS, _matches_brand, _normalise_domain)
         newsrooms = load_brand_newsrooms()
         brands = BRANDS or []
     except Exception as e:  # noqa: BLE001 — attribution is best-effort
@@ -1575,11 +1587,18 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
         return
     if not newsrooms:
         return
+
+    def _is_redis(dom: str) -> bool:
+        n = _normalise_domain(dom or "")
+        return n in _REDISTRIBUTION_HOSTS or any(
+            n.endswith("." + h) for h in _REDISTRIBUTION_HOSTS)
+
     hit = 0
     for r in article_rows:
         if r.verdict not in ("Точно новость", "Возможно новость"):
             continue
-        if r.event_type not in ("sales_stat", "financial"):
+        et = r.event_type
+        if et not in ("sales_stat", "financial", "reveal", "partnership"):
             continue
         nr = newsrooms.get((r.event_brand or "").strip().lower())
         if not nr:
@@ -1589,13 +1608,18 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
         # newsroom itself) → keep it, it's already the company's own site.
         if r.primary_domain == nr_dom or _matches_brand(r.primary_domain, brands):
             continue
+        if et in ("reveal", "partnership"):
+            weak = (r.primary_confidence == "low") or _is_redis(r.primary_domain)
+            if not weak:
+                continue  # P2-A: keep the deep journalistic primary
         r.primary_url = nr
         r.primary_domain = nr_dom
         r.primary_confidence = "medium"
         r.primary_method = "brand-newsroom"
         hit += 1
     if hit:
-        print(f"Brand-newsroom attribution: {hit} sales/financial rows -> official press.")
+        print(f"Brand-newsroom attribution: {hit} rows -> official press "
+              f"(sales/financial + weak-primary reveal/partnership).")
 
 
 def _run_corpus_primary_source_pass(article_rows: list[ArticleRow]) -> None:
