@@ -17,6 +17,7 @@ Run:  python scripts/retry_failed_llm.py          # auto-picks newest "ТЕСТ 
 from __future__ import annotations
 
 import io
+import json
 import os
 import sys
 from pathlib import Path
@@ -47,8 +48,24 @@ from news_agent.core.editorial_pass import (  # noqa: E402
 )
 from news_agent.core.models import RawArticle  # noqa: E402
 from news_agent.core.tab_handoff import resolve_articles_tab  # noqa: E402
-from news_agent.core.urls import canonicalise, domain_of  # noqa: E402
+from news_agent.core.urls import canonicalise, domain_of, url_hash  # noqa: E402
 from news_agent.settings import get_settings  # noqa: E402
+from news_agent.adapters.llm.base import EDITORIAL_REVIEW_SYSTEM  # noqa: E402
+from news_agent.core.cache_version import compute_classifier_version  # noqa: E402
+from news_agent.core import heuristic_relevance as _heuristic_mod  # noqa: E402
+
+
+def _compute_classifier_version() -> str:
+    """Same recipe as the main run — the cache rows this script writes must
+    carry a stamp a later run recognises, or they are silently re-classified."""
+    try:
+        heur_src = Path(_heuristic_mod.__file__).read_bytes()
+    except Exception:  # noqa: BLE001
+        heur_src = b""
+    return compute_classifier_version(EDITORIAL_REVIEW_SYSTEM, heur_src)
+
+
+CLASSIFIER_VERSION = _compute_classifier_version()
 
 sys.path.insert(0, str(ROOT / "scripts"))  # published_archive.py lives here
 import published_archive  # noqa: E402  reads "Опубликованные (все)" archive
@@ -70,6 +87,55 @@ COL_NOTE = COL.NOTE
 COL_VERDICT = COL.VERDICT
 COL_LLM_REL = COL.LLM_RELEVANCE
 COL_COST = COL.COST
+
+
+def _cache_entry(
+    *, row: list, url: str, title: str, verdict: str, relevance: str,
+    section: str, region: str, confidence, title_en: str, title_ru: str,
+    note: str, reason: str, eb: str, em: str, et: str, portal: str,
+) -> tuple:
+    """Build one SQLite cache entry mirroring the main run's cached_row shape.
+
+    Why this exists: the main batch deliberately does NOT cache accept-graded
+    rows the LLM never classified ("not a final state" — a --no-llm prog), and
+    this script never added them afterwards. So a prog finished through recovery
+    put NOTHING in the cache: its stories never entered recent_event_keys, and
+    the NEXT run was blind to them (jul-17: 64 stories, and the editor flagged 8
+    already-published dups in the following push).
+
+    Fields this script cannot know — the heuristic scores (is_article,
+    article_score, article_reasons, auto_topic, auto_hits) and primary_method —
+    are omitted ON PURPOSE: the restore path defaults them safely (it keeps the
+    freshly-computed score and labels the method "cached"). Everything a later
+    run actually reads back for CORRECTNESS — the classification, primary_* and
+    event_* — is supplied, primary_* read straight off the sheet row the fetch
+    already filled.
+    """
+    canon_u = canonicalise(url)
+    cached_row = {
+        "cls_ver": CLASSIFIER_VERSION,
+        "verdict": verdict,
+        "llm_relevance": relevance,
+        "llm_section": section,
+        "llm_region": region,
+        "llm_confidence": confidence,
+        "llm_title_en": (title_en or "")[:300],
+        "llm_title_ru": (title_ru or "")[:300],
+        "llm_note": note,
+        "llm_reason": (reason or "")[:300],
+        "primary_url": _get(row, COL.PRIMARY_URL),
+        "primary_domain": _get(row, COL.PRIMARY_DOM),
+        "primary_confidence": _get(row, COL.PRIMARY_CONF),
+        "launch_brand_model": _get(row, COL.LAUNCH_BRAND_MODEL),
+        "event_brand": eb,
+        "event_model": em,
+        "event_type": et,
+    }
+    return (
+        url_hash(canon_u), canon_u, (title or "")[:500], None,
+        domain_of(canon_u), portal,
+        json.dumps(cached_row, ensure_ascii=False),
+    )
 
 
 def _net_retry(fn, *, what: str = "sheets write", attempts: int = 5):
@@ -198,14 +264,15 @@ def main() -> int:
     # recovery had only the archive paraphrase. Read-only; failure → hints off.
     recent_ev: dict = {}
     recent_bm: dict = {}
+    store = None          # kept for the cache WRITE-BACK below, not just hints
+    portal = os.environ.get("DEDUP_PORTAL", "RU") or "RU"
     try:
         from news_agent.adapters.storage import DedupStore
         _sqlite = ROOT / "data" / "news_agent.sqlite"
         if _sqlite.exists():
-            _store = DedupStore(_sqlite)
-            _portal = os.environ.get("DEDUP_PORTAL", "RU") or "RU"
-            recent_ev = _store.recent_event_keys(_portal, days=30)
-            recent_bm = _store.recent_brand_models(_portal, days=30)
+            store = DedupStore(_sqlite)
+            recent_ev = store.recent_event_keys(portal, days=30)
+            recent_bm = store.recent_brand_models(portal, days=30)
             print(f"  dup hints: {len(recent_ev)} event-keys, "
                   f"{len(recent_bm)} brand-models (30d)")
     except Exception as e:  # noqa: BLE001 — advisory only
@@ -261,6 +328,7 @@ def main() -> int:
         return 0
 
     updates: list[dict] = []
+    cache_entries: list[tuple] = []  # SQLite write-back (see _cache_entry)
     section_names = {s.name for s in sections}
     portal_country = "Russia"  # RU portal hard-coded for now
     rejected_count = 0
@@ -315,17 +383,31 @@ def main() -> int:
             continue
         consec_errors = 0
         reason = (review.reason or "")[:300]
+        # Event-signature, normalised EXACTLY as the main run (strip → lower →
+        # 40/60/24). Computed BEFORE the reject branch so BOTH paths can cache
+        # it — a rejected row's key is just as useful to the next run's dedup.
+        _es = getattr(review, "event_signature", None)
+        _eb = ((_es.brand if _es else "") or "").strip().lower()[:40]
+        _em = ((_es.model if _es else "") or "").strip().lower()[:60]
+        _et = ((_es.event_type if _es else "") or "").strip().lower()[:24]
         # Reject if the model says skip, OR says publish while its own reason
         # rejects (SHARED consistency guard — same phrase list as the main
         # run). Write the reason either way so the editor sees it in the
         # rejected markup.
         if (not review.should_publish) or has_reject_directive(review.reason):
+            _note = f"LLM (retry): {reason[:120]}"
             updates.append({"range": f"'{tab}'!{col_letter(COL_VERDICT)}{sheet_row}",
                             "values": [["Отклонено LLM"]]})
             updates.append({"range": f"'{tab}'!{col_letter(COL_NOTE)}{sheet_row}",
-                            "values": [[f"LLM (retry): {reason[:120]}"]]})
+                            "values": [[_note]]})
             updates.append({"range": f"'{tab}'!{col_letter(COL.LLM_REASON)}{sheet_row}",
                             "values": [[reason]]})
+            if url:
+                cache_entries.append(_cache_entry(
+                    row=r, url=url, title=clean_title, verdict="Отклонено LLM",
+                    relevance="Нет", section="", region="", confidence="",
+                    title_en="", title_ru="", note=_note, reason=reason,
+                    eb=_eb, em=_em, et=_et, portal=portal))
             rejected_count += 1
             print(f"  [{idx}/{len(targets)}] REJECTED row {sheet_row}: {clean_title[:55]!r}")
             continue
@@ -346,12 +428,11 @@ def main() -> int:
         # Advisory dup hint — SHARED 3-tier helper, parity with the main run
         # (was: archive-paraphrase tier only). PREPENDED so the [:300] cap
         # can't amputate it; the push diverts on "возможно дуб".
-        _es = getattr(review, "event_signature", None)
         _hint = dup_hint_for(
             title=clean_title,
-            event_brand=(_es.brand if _es else "") or "",
-            event_model=(_es.model if _es else "") or "",
-            event_type=(_es.event_type if _es else "") or "",
+            event_brand=_eb,
+            event_model=_em,
+            event_type=_et,
             launch_brand_model="",
             canon_url=canonicalise(url) if url else "",
             pub_titles=pub_titles,
@@ -410,16 +491,18 @@ def main() -> int:
         # 84% of the batch — the editor then flagged 8 already-published stories
         # («вчера писали») in one push. Parity with the main run, which writes
         # these in write_articles.
-        # Normalised EXACTLY as the main run does (batch_fetch_test: strip →
-        # lower → 40/60/24) — the cluster builds "brand|model|type" from these
-        # and matches them against cache keys the main run wrote, so any
-        # divergence in casing/length would silently fail to match.
-        _eb = ((_es.brand if _es else "") or "").strip().lower()[:40]
-        _em = ((_es.model if _es else "") or "").strip().lower()[:60]
-        _et = ((_es.event_type if _es else "") or "").strip().lower()[:24]
+        # (_eb/_em/_et were normalised above, before the reject branch.)
         updates.append({"range": f"'{tab}'!{_L(COL.EVENT_BRAND)}{sheet_row}", "values": [[_eb]]})
         updates.append({"range": f"'{tab}'!{_L(COL.EVENT_MODEL)}{sheet_row}", "values": [[_em]]})
         updates.append({"range": f"'{tab}'!{_L(COL.EVENT_TYPE)}{sheet_row}", "values": [[_et]]})
+        if url:
+            cache_entries.append(_cache_entry(
+                row=r, url=url, title=clean_title,
+                verdict="Точно новость", relevance="Да",
+                section=section, region=region, confidence=dec.confidence,
+                title_en=tp.english, title_ru=tp.russian,
+                note=dec.heuristic_note or "", reason=reason,
+                eb=_eb, em=_em, et=_et, portal=portal))
 
     if updates:
         # Apply in chunks, each retried with backoff. The LLM pass above is
@@ -444,6 +527,22 @@ def main() -> int:
             f"\nDone. {n_translated} translated, {rejected_count} rejected by LLM. "
             f"Total cost: ${budget.spent_usd:.4f}"
         )
+
+    # Persist the classification to SQLite — the gap that made a recovered prog
+    # invisible to the NEXT run's dedup (and made it pay the LLM again for the
+    # same URLs). Local write, no network: done AFTER the sheet write so a
+    # Sheets failure can't skip it. Never fatal — the run's real output is
+    # already on the sheet.
+    if cache_entries and store is not None:
+        try:
+            store.mark_many_with_cache(cache_entries)
+            print(f"SQLite cache: +{len(cache_entries)} rows stored "
+                  f"(cls_ver={CLASSIFIER_VERSION}) — the next run reuses these "
+                  f"for dedup instead of re-classifying them.")
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! SQLite cache write failed ({type(e).__name__}: "
+                  f"{str(e)[:100]}) — sheet is fine, next run will re-classify.",
+                  file=sys.stderr)
     return 0
 
 
