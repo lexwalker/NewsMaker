@@ -72,6 +72,27 @@ COL_LLM_REL = COL.LLM_RELEVANCE
 COL_COST = COL.COST
 
 
+def _net_retry(fn, *, what: str = "sheets write", attempts: int = 5):
+    """Run a Sheets write, retrying transient network failures with backoff.
+
+    The classification this script writes is already PAID FOR and is not cached
+    anywhere, so an unretried blip is pure loss (see the call site)."""
+    import time as _time
+    delay = 2.0
+    for a in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 — any transport error is worth a retry
+            if a == attempts:
+                print(f"  !! {what} FAILED after {attempts} attempts: "
+                      f"{type(e).__name__}: {str(e)[:120]}")
+                raise
+            print(f"  ! {what} attempt {a}/{attempts} failed "
+                  f"({type(e).__name__}: {str(e)[:70]}) — retrying in {delay:.0f}s")
+            _time.sleep(delay)
+            delay = min(delay * 2, 30.0)
+
+
 def _svc():
     creds = Credentials.from_service_account_file(str(SA_PATH), scopes=SCOPES)
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
@@ -381,13 +402,23 @@ def main() -> int:
         updates.append({"range": f"'{tab}'!{_L(COL.LLM_REASON)}{sheet_row}", "values": [[reason]]})
 
     if updates:
-        # Apply in chunks
+        # Apply in chunks, each retried with backoff. The LLM pass above is
+        # already PAID FOR and is NOT cached anywhere (unlike the main batch,
+        # this script doesn't persist to SQLite), so a transient network blip
+        # here throws the whole spend away. jul-17: an ssl.SSLEOFError on the
+        # final batchUpdate discarded ~430 classified rows ($2.67) — the chunk
+        # loop had no retry, so one blip killed the process mid-write.
         CHUNK = 200
+        n_chunks = (len(updates) + CHUNK - 1) // CHUNK
         for i in range(0, len(updates), CHUNK):
-            svc.spreadsheets().values().batchUpdate(
-                spreadsheetId=SHEET_ID,
-                body={"valueInputOption": "USER_ENTERED", "data": updates[i:i + CHUNK]},
-            ).execute()
+            chunk = updates[i:i + CHUNK]
+            _net_retry(
+                lambda c=chunk: svc.spreadsheets().values().batchUpdate(
+                    spreadsheetId=SHEET_ID,
+                    body={"valueInputOption": "USER_ENTERED", "data": c},
+                ).execute(),
+                what=f"batchUpdate chunk {i // CHUNK + 1}/{n_chunks}",
+            )
         n_translated = len(targets) - rejected_count
         print(
             f"\nDone. {n_translated} translated, {rejected_count} rejected by LLM. "
