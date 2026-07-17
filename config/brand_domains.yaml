@@ -164,6 +164,13 @@ brands:
 - brand: Land Rover
   aliases:
   - Ленд Ровер
+  # "Range Rover" is the model line everybody actually writes — a headline says
+  # "Range Rover Sport EV revealed", never "Land Rover Range Rover". Without
+  # this alias the brand was never matched (jul-17: 7 accepted rows mentioned
+  # Rover, none matched), so brand-owned primary tiers and the cluster's
+  # brand grouping both skipped them.
+  - Range Rover
+  - Рейндж Ровер
   domains:
   - landrover.com
   - media.landrover.com
@@ -201,6 +208,10 @@ brands:
   aliases:
   - Лада
   - АвтоВАЗ
+  # Latin transliteration — EN headlines write "AvtoVAZ new engines", which the
+  # Cyrillic alias above cannot match (jul-17: 3 accepted rows, none matched).
+  - AvtoVAZ
+  - VAZ
   domains:
   - lada.ru
   - avtovaz.ru
@@ -243,6 +254,11 @@ brands:
   - geely-motors.com
   - geely-russia.ru
 - brand: Exeed
+  aliases:
+  # Exeed's premium sub-brand — headlines write "Exeed Exlantix ES" or just
+  # "Exlantix", which never matched the parent (jul-17 audit).
+  - Exlantix
+  - Экслантикс
   domains:
   - exeedauto.com
   - exeed.ru
@@ -454,6 +470,22 @@ brands:
   - Джейлэнд
   domains:
   - jeland.ru
+# jul-17: the SAME Jensen Interceptor GTX story reached the editor TWICE (from
+# carscoops and autocar) because "jensen" was in neither the brand list nor the
+# aliases — the LLM-editor cluster pass groups candidates by brand, so with no
+# group there was no merge. Adding the brand lets the grouping collapse it.
+- brand: Jensen
+  aliases:
+  - Дженсен
+  domains:
+  - jenseninternational.com
+- brand: Daihatsu
+  aliases:
+  - Дайхатсу
+  - Дайхацу
+  domains:
+  - daihatsu.com
+  - daihatsu.co.jp
 - brand: KGM
   aliases:
   - SsangYong
