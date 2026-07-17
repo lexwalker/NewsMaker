@@ -824,3 +824,46 @@ def test_brand_matches_across_a_hyphen_compound() -> None:
 def test_multiword_brand_wins_over_shorter_alternative() -> None:
     """Longest-first alternation: "Range Rover" resolves to Land Rover."""
     assert _mentions_brand("Range Rover Sport", _BB) == {"Land Rover"}
+
+
+# --- v3 matcher: RU inflections + ordinary-word capitalisation gate ----------
+# jul-17 follow-up to the word-boundary fix: a bare (?!\w) boundary LOST
+# inflected Russian mentions («новинки АвтоВАЗа», «продажи Форда») — the norm
+# in RU headlines. A closed case-ending tail restores them without resurrecting
+# Cyrillic-internal false hits («смартфон», «танкер»). Ordinary-word brand
+# names (Smart/Mini/Tank/ГАЗ…) additionally require real capitalisation:
+# measured on live rows, every lowercase «газ» hit was fuel, never the brand.
+
+_VB = [
+    BrandDomainEntry(brand="Lada", aliases=["АвтоВАЗ", "ВАЗ"], domains=["lada.ru"]),
+    BrandDomainEntry(brand="Ford", aliases=["Форд"], domains=["ford.com"]),
+    BrandDomainEntry(brand="Smart", aliases=["Смарт"], domains=["smart.com"]),
+    BrandDomainEntry(brand="Tank", aliases=["Танк"], domains=["tank.ru"]),
+    BrandDomainEntry(brand="GAZ", aliases=["ГАЗ"], domains=["azgaz.ru"]),
+]
+
+
+def test_inflected_russian_mentions_match() -> None:
+    assert "Lada" in _mentions_brand("Новинки АвтоВАЗа поступят к дилерам", _VB)
+    assert "Lada" in _mentions_brand("Двигатели АвтоВАЗом сертифицированы", _VB)
+    assert "Ford" in _mentions_brand("Продажи Форда выросли", _VB)
+    assert "Lada" in _mentions_brand("ВАЗы подорожали", _VB)
+
+
+def test_inflect_tail_does_not_resurrect_internal_hits() -> None:
+    assert "Smart" not in _mentions_brand("Новый смартфон в машине", _VB)
+    assert "Tank" not in _mentions_brand("Крупный танкер прибыл в порт", _VB)
+    assert "Lada" not in _mentions_brand("Запасы со склада выросли", _VB)
+
+
+def test_ordinary_word_brands_require_capitalisation() -> None:
+    assert "Smart" not in _mentions_brand("умное smart вождение будущего", _VB)
+    assert "Smart" in _mentions_brand("Smart #5 представлен", _VB)
+    assert "Tank" in _mentions_brand("Танк 500 вышел на рынок", _VB)
+    assert "Tank" not in _mentions_brand("топливный танк переработан", _VB)
+    # «газ» lowercase is fuel; the automaker is written ГАЗ.
+    assert "GAZ" not in _mentions_brand("цены на газ и уголь растут", _VB)
+    assert "GAZ" not in _mentions_brand("катализаторы выхлопных газов", _VB)
+    assert "GAZ" in _mentions_brand("ГАЗ представил новую Газель NN", _VB)
+    assert "Lada" not in _mentions_brand("букет из ваз на столе", _VB)
+    assert "Lada" in _mentions_brand("ВАЗ-2107 снят с производства", _VB)

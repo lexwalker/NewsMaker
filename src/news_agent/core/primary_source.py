@@ -251,6 +251,37 @@ def _matches_brand(link_domain: str, brands: list[BrandDomainEntry]) -> BrandDom
 # otherwise be ~265 substring scans per row).
 _BRAND_RE_CACHE: dict[tuple, tuple[re.Pattern[str], dict[str, str]]] = {}
 
+# Russian case endings tolerated AFTER a brand name («новинки АвтоВАЗа»,
+# «двигатели АвтоВАЗом», «ВАЗы»). A bare (?!\w) boundary rejected these —
+# measured jul-17: inflected mentions (АвтоВАЗа/Форда/Хавейла) are the NORM in
+# RU headlines, and the boundary fix silently lost them all. The tail is a
+# CLOSED list of case endings, not [а-яё]+: an open tail would resurrect the
+# Cyrillic-internal false positives («смартфон» = смарт+фон, «танкер» =
+# танк+ер — neither "фон" nor "ер" is a case ending, so both stay blocked).
+# Multi-char endings listed first so backtracking finds «ом» after «о» fails.
+_RU_INFLECT_TAIL = (
+    r"(?:ами|ями|ов|ев|ом|ем|ой|ей|ам|ям|ах|ях|[аяуюеыио])?"
+)
+
+# Brand names that are ORDINARY WORDS. On a word boundary alone, "smart
+# driving" matches Smart, "mini-SUV" matches Mini, a fuel-tank story matches
+# Tank (measured jul-17: Smart ×11, Mini ×15, Seat ×5 live false hits). For
+# these, the match must be CAPITALISED in the original text ("Smart #5",
+# "Tank 500", «Танк 500») — brand usage is; running prose is not. Known
+# accepted limit: a capitalised ordinary word at sentence start still passes.
+_AMBIGUOUS_BRAND_NAMES: frozenset[str] = frozenset({
+    "smart", "mini", "seat", "ram", "genesis", "tank", "im",
+    "смарт", "сеат", "рам", "танк",
+    # «ваз» lowercase is the genitive plural of «ваза» (vases); the brand is
+    # always written ВАЗ.
+    "ваз",
+    # «газ» lowercase is FUEL — measured on live rows, every lowercase hit was
+    # «цены на газ» / «педаль газа» / «выхлопных газов», zero brand mentions
+    # (a pre-existing substring-era false-positive class). The automaker is
+    # always written ГАЗ (an acronym).
+    "газ",
+})
+
 
 def _brand_matcher(
     brands: list[BrandDomainEntry],
@@ -268,26 +299,36 @@ def _brand_matcher(
         # if both are ever registered.
         names = sorted(name_to_brand, key=len, reverse=True)
         pat = re.compile(
-            r"(?<!\w)(" + "|".join(re.escape(n) for n in names) + r")(?!\w)")
+            r"(?<!\w)(" + "|".join(re.escape(n) for n in names) + r")"
+            + _RU_INFLECT_TAIL + r"(?!\w)",
+            re.IGNORECASE,
+        )
         cached = (pat, name_to_brand)
         _BRAND_RE_CACHE[key] = cached
     return cached
 
 
 def _mentions_brand(text: str, brands: list[BrandDomainEntry]) -> set[str]:
-    """Brands named in the text, matched on WORD BOUNDARIES.
+    """Brands named in the text: word boundaries + RU case-ending tolerance +
+    a capitalisation gate for ordinary-word brand names.
 
     Was a plain substring test, which fired on any brand name buried inside an
     unrelated word — measured jul-17 on live rows: "Lada AzIMut" matched brand
-    "IM Motors", "supercharged" matched "Charge". That feeds Tier 2
-    (brand-owned link + brand mentioned → HIGH), so one bogus hit plus that
-    brand's link anywhere on the page promotes a wrong primary — the same
-    "junk wins as the source" class as the akismet bug.
+    "IM Motors", "progRAM" matched Ram, Cyrillic «скЛАДА» matched Lada, and
+    «дилеРАМ» matched Ram. That feeds Tier 2 (brand-owned link + brand
+    mentioned → HIGH), so one bogus hit plus that brand's link anywhere on the
+    page promotes a wrong primary — the same "junk wins as the source" class
+    as the akismet bug. Matched over the ORIGINAL text (case-insensitively) so
+    the ambiguous-name gate can inspect real capitalisation.
     """
     pat, name_to_brand = _brand_matcher(brands)
     hit: set[str] = set()
-    for m in pat.finditer(text.lower()):
-        hit.add(name_to_brand[m.group(1)])
+    for m in pat.finditer(text):
+        raw = m.group(1)
+        name = raw.lower()
+        if name in _AMBIGUOUS_BRAND_NAMES and raw == name:
+            continue  # ordinary word in running prose, not a brand mention
+        hit.add(name_to_brand[name])
     return hit
 
 

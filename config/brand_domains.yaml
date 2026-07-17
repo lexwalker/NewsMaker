@@ -212,6 +212,10 @@ brands:
   # Cyrillic alias above cannot match (jul-17: 3 accepted rows, none matched).
   - AvtoVAZ
   - VAZ
+  # Cyrillic ВАЗ («ВАЗ-2107», «ВАЗы подорожали»). Case-gated in
+  # _AMBIGUOUS_BRAND_NAMES: lowercase «ваз» is the genitive plural of «ваза»
+  # (vases), so only the capitalised form counts as the brand.
+  - ВАЗ
   domains:
   - lada.ru
   - avtovaz.ru
