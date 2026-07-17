@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from news_agent.core.config_loader import BrandDomainEntry, PrimarySourceCues
 from news_agent.core.primary_source import (
+    _mentions_brand,
     CorpusEntry,
     arbitration_candidates,
     detect_earliest_in_corpus,
@@ -778,3 +779,48 @@ def test_ru_tier1_does_not_promote_deterministically() -> None:
         brands=BRANDS, cues=CUES)
     assert not (dom.endswith("kommersant.ru") and conf == "high"), (
         f"tier-1 list leaked into a deterministic tier: {dom}@{conf}")
+
+
+# --- Brand mentions must match on word boundaries ---------------------------
+# jul-17: _mentions_brand was a plain substring test. Measured on 943 live rows
+# it fired on brand names buried inside unrelated words — IM Motors x88 ("clAIM",
+# "tIMe"), Ram x75 ("progRAM"), GAZ x31 ("gaZETa"), Ford x7 ("afFORD"), Lada x4
+# (Cyrillic "скЛАДА"). It feeds Tier 2 (brand-owned link + brand mentioned →
+# HIGH), so a bogus hit plus that brand's link on the page promotes a wrong
+# primary. Switching to word boundaries dropped 240 rows' matches and ADDED
+# none — strictly stricter, so no new promotion can appear.
+
+_BB = [
+    BrandDomainEntry(brand="Ford", aliases=["Форд"], domains=["ford.com"]),
+    BrandDomainEntry(brand="Lada", aliases=["Лада", "АвтоВАЗ"], domains=["lada.ru"]),
+    BrandDomainEntry(brand="IM Motors", aliases=["IM"], domains=["immotors.com"]),
+    BrandDomainEntry(brand="Ram", domains=["ramtrucks.com"]),
+    BrandDomainEntry(brand="Land Rover", aliases=["Range Rover"], domains=["landrover.com"]),
+]
+
+
+def test_brand_not_matched_inside_a_word() -> None:
+    """The measured false positives must be gone."""
+    assert "Ford" not in _mentions_brand("These are affordable Oxford models", _BB)
+    assert "Ram" not in _mentions_brand("The program parameters changed", _BB)
+    assert "Lada" not in _mentions_brand("Запасы со склада выросли", _BB)
+    assert "IM Motors" not in _mentions_brand("KTM recalls vehicles, claim filed", _BB)
+
+
+def test_genuine_brand_mentions_still_match() -> None:
+    """Word boundaries must not cost real mentions."""
+    assert "Ford" in _mentions_brand("Ford unveils the new Mustang", _BB)
+    assert "Ford" in _mentions_brand("Ford's new engine family", _BB)       # possessive
+    assert "Ford" in _mentions_brand("НОВЫЙ FORD EXPLORER", _BB)            # all caps
+    assert "Lada" in _mentions_brand("АвтоВАЗ показал двигатели", _BB)      # Cyrillic alias
+    assert "Land Rover" in _mentions_brand("Range Rover Sport EV revealed", _BB)
+
+
+def test_brand_matches_across_a_hyphen_compound() -> None:
+    """A hyphen is a boundary, so a real hyphenated mention still counts."""
+    assert "Ford" in _mentions_brand("Ford-фургон замечен на тестах", _BB)
+
+
+def test_multiword_brand_wins_over_shorter_alternative() -> None:
+    """Longest-first alternation: "Range Rover" resolves to Land Rover."""
+    assert _mentions_brand("Range Rover Sport", _BB) == {"Land Rover"}

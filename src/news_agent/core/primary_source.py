@@ -246,13 +246,48 @@ def _matches_brand(link_domain: str, brands: list[BrandDomainEntry]) -> BrandDom
     return None
 
 
+# Compiled brand matcher, cached per brand-list. Built as ONE alternation so a
+# text is scanned in a single pass (115 brands × aliases × every article would
+# otherwise be ~265 substring scans per row).
+_BRAND_RE_CACHE: dict[tuple, tuple[re.Pattern[str], dict[str, str]]] = {}
+
+
+def _brand_matcher(
+    brands: list[BrandDomainEntry],
+) -> tuple[re.Pattern[str], dict[str, str]]:
+    key = tuple((b.brand, tuple(b.aliases)) for b in brands)
+    cached = _BRAND_RE_CACHE.get(key)
+    if cached is None:
+        name_to_brand: dict[str, str] = {}
+        for b in brands:
+            for n in (b.brand, *b.aliases):
+                n = (n or "").strip().lower()
+                if n:
+                    name_to_brand.setdefault(n, b.brand)
+        # Longest alternative first: "land rover" must win over a bare "rover"
+        # if both are ever registered.
+        names = sorted(name_to_brand, key=len, reverse=True)
+        pat = re.compile(
+            r"(?<!\w)(" + "|".join(re.escape(n) for n in names) + r")(?!\w)")
+        cached = (pat, name_to_brand)
+        _BRAND_RE_CACHE[key] = cached
+    return cached
+
+
 def _mentions_brand(text: str, brands: list[BrandDomainEntry]) -> set[str]:
-    t = text.lower()
+    """Brands named in the text, matched on WORD BOUNDARIES.
+
+    Was a plain substring test, which fired on any brand name buried inside an
+    unrelated word — measured jul-17 on live rows: "Lada AzIMut" matched brand
+    "IM Motors", "supercharged" matched "Charge". That feeds Tier 2
+    (brand-owned link + brand mentioned → HIGH), so one bogus hit plus that
+    brand's link anywhere on the page promotes a wrong primary — the same
+    "junk wins as the source" class as the akismet bug.
+    """
+    pat, name_to_brand = _brand_matcher(brands)
     hit: set[str] = set()
-    for b in brands:
-        names = [b.brand.lower(), *(a.lower() for a in b.aliases)]
-        if any(n in t for n in names):
-            hit.add(b.brand)
+    for m in pat.finditer(text.lower()):
+        hit.add(name_to_brand[m.group(1)])
     return hit
 
 
