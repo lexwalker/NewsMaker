@@ -169,6 +169,17 @@ _JUNK_URL_FRAGMENTS = (
     # Contact / about pages
     "/contact", "/contacts", "/contact-us", "/contact.html",
     "/feedback", "/support",
+    # Legal / policy boilerplate. Never a news source, but very much a DEEP
+    # link, so the deep-URL check does not catch it. jul-17: a short
+    # thesupercarblog post (685 chars, no real source link) had exactly ONE
+    # external link — akismet.com/privacy/, the WordPress comment-form notice —
+    # and Tier 4 ("cue phrase + any external link") promoted it to primary at
+    # medium. Trailing-slash / hyphen forms keep this from eating a genuine
+    # article about privacy law ("/news/new-privacy-law" does not match).
+    "/privacy/", "/privacy-policy", "/privacy.html",
+    "/terms/", "/terms-of-", "/terms.html", "/tos/",
+    "/cookie-policy", "/cookies/", "/cookie-notice",
+    "/legal/", "/disclaimer", "/imprint", "/gdpr",
     # Tracking redirectors / click-counters (liveinternet wraps the target
     # in /click with NO query string, so the "?"-suffixed forms miss it)
     "doubleclick.net", "googleadservices", "google.com/url?",
@@ -313,6 +324,13 @@ def _is_preferred_primary(candidate_domain: str) -> bool:
 _INFRA_HOSTS: frozenset[str] = frozenset({
     "reg.ru", "nic.ru", "sweb.ru", "reg.cloud", "timeweb.com", "beget.com",
     "hostland.ru", "masterhost.ru",
+    # CMS / plugin service hosts. Every WordPress site with comments carries an
+    # akismet.com link ("Learn how your comment data is processed") and most
+    # carry gravatar/wp.com asset links — page furniture on thousands of blogs,
+    # never a source. jul-17: akismet.com/privacy/ was promoted to primary on a
+    # thesupercarblog post because it was the only external link on the page.
+    "akismet.com", "gravatar.com", "automattic.com", "wordpress.org",
+    "wordpress.com", "wp.com", "w.org", "jetpack.com",
 })
 
 # A domain repeated this many times across ONE article's outbound links is the

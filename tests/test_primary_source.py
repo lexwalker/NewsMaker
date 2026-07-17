@@ -688,3 +688,43 @@ def test_arbitration_requires_a_strong_anchor() -> None:
                         "https://another.org/some-deep-article-2"],
         brands=BRANDS, cues=CUES)
     assert cands == []
+
+
+# --- Legal/service boilerplate must never become a primary ------------------
+# jul-17 (editor + live feed): a short thesupercarblog post had exactly ONE
+# external link — akismet.com/privacy/, the WordPress comment-form notice — and
+# Tier 4 ("cue phrase + any external link") promoted it to primary at medium.
+# The correct answer is self@low: the post cites no external source at all.
+
+def test_akismet_privacy_link_is_junk() -> None:
+    assert _is_junk_link("https://akismet.com/privacy/")
+
+
+def test_legal_policy_paths_are_junk() -> None:
+    for u in ("https://site.com/privacy/", "https://site.com/privacy-policy",
+              "https://site.com/terms/", "https://site.com/terms-of-use",
+              "https://site.com/cookie-policy", "https://site.com/legal/",
+              "https://site.com/imprint", "https://site.com/gdpr"):
+        assert _is_junk_link(u), u
+
+
+def test_article_about_privacy_law_is_not_junk() -> None:
+    # Guard the guard: a real article whose SLUG mentions privacy must survive.
+    for u in ("https://rg.ru/2026/07/16/new-privacy-law-cars.html",
+              "https://autonews.ru/news/privacy-rules-for-evs"):
+        assert not _is_junk_link(u), u
+
+
+def test_wordpress_only_external_link_falls_back_to_self() -> None:
+    """The exact live case: cue phrase present, the only external link is the
+    Akismet policy → must NOT be promoted; the article itself is the source."""
+    url, dom, conf = detect_primary_source(
+        article_url="https://www.thesupercarblog.com/bentley-torcal-fake-sound/",
+        body="Bentley has confirmed the Torcal will play a synthetic sound. "
+             "According to the brand, the audio was recorded live. " * 3,
+        title="Bentley Torcal electric SUV will have a fake engine sound",
+        outbound_links=["https://akismet.com/privacy/"],
+        brands=BRANDS, cues=CUES,
+    )
+    assert dom == "www.thesupercarblog.com" or dom.endswith("thesupercarblog.com")
+    assert conf == "low"
