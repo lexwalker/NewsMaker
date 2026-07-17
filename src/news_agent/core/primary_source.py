@@ -333,6 +333,36 @@ _INFRA_HOSTS: frozenset[str] = frozenset({
     "wordpress.com", "wp.com", "w.org", "jetpack.com",
 })
 
+# Tier-1 Russian outlets. When an aggregator links out to one of these, it is a
+# real candidate for "who actually reported this" — the editor asks for exactly
+# this attribution («первоисточник gazeta.ru…», «Первоисточник 1prime.ru…»,
+# jul-16 feedback rows 20/32), and the jul-17 fire-rate measurement found the
+# arbiter silently missing them (finmarket.ru → kommersant/vedomosti/interfax
+# never fired because no tier-1 RU outlet was a recognised anchor).
+#
+# DELIBERATELY NOT in _PREFERRED_PRIMARY_HOSTS: that set drives Tier 1.5, which
+# promotes a link deterministically at HIGH with no LLM — an iz.ru piece linking
+# tass.ru in a «читайте также» block would then get tass as its source. These
+# hosts ONLY make the LLM arbiter FIRE, so it can read the body and decide.
+# Every deterministic tier is untouched.
+#
+# rbc.ru is deliberately ABSENT: autonews.ru is an RBC property and carries
+# auth./cash./id.rbc.ru nav on every page — measured jul-17, including rbc.ru
+# false-fires the arbiter on autonews' own chrome. (Same-site self-links are
+# already handled by _same_site; site-ecosystem spam by _NAV_BOILERPLATE_MIN.)
+_RU_TIER1_OUTLETS: frozenset[str] = frozenset({
+    "kommersant.ru", "vedomosti.ru", "iz.ru", "interfax.ru", "tass.ru",
+    "gazeta.ru", "kp.ru", "rg.ru", "1prime.ru", "life.ru",
+})
+
+
+def _is_ru_tier1_outlet(candidate_domain: str) -> bool:
+    """True for a tier-1 RU outlet, matched on the registrable apex so
+    subdomains count (www.rg.ru, m.gazeta.ru)."""
+    n = _normalise_domain(candidate_domain)
+    return any(n == h or n.endswith("." + h) for h in _RU_TIER1_OUTLETS)
+
+
 # A domain repeated this many times across ONE article's outbound links is the
 # site's own ecosystem chrome (autonews.ru, an RBC property, links rbc.ru +
 # *.rbc.ru ~40×/page), never the article's source — a real source is cited
@@ -578,6 +608,7 @@ def arbitration_candidates(
         strong = (
             _is_preferred_primary(nd)
             or _is_official_primary(nd)
+            or _is_ru_tier1_outlet(nd)
             or (brand is not None and brand.brand in mentioned)
         )
         # A "plausible primary" is a strong signal OR any deep external article

@@ -728,3 +728,53 @@ def test_wordpress_only_external_link_falls_back_to_self() -> None:
     )
     assert dom == "www.thesupercarblog.com" or dom.endswith("thesupercarblog.com")
     assert conf == "low"
+
+
+# --- Tier-1 RU outlets as arbitration anchors (jul-17 measurement + editor) --
+# The fire-rate measurement found the arbiter silently missing the cleanest
+# cases: finmarket.ru → kommersant/vedomosti/interfax never fired because no
+# tier-1 RU outlet counted as a "strong anchor". The editor asked for exactly
+# this attribution the same week («первоисточник gazeta.ru…», «Первоисточник
+# 1prime.ru…»). These hosts make the ARBITER fire only — they must never change
+# a deterministic tier.
+
+def test_arbitration_fires_on_aggregator_linking_ru_tier1() -> None:
+    """finmarket.ru → Kommersant + Vedomosti: the measured miss."""
+    cands = arbitration_candidates(
+        article_url="https://www.finmarket.ru/main/article/6663892",
+        body="Как сообщают Коммерсантъ и Ведомости, рынок вырос. " * 8,
+        title="Рынок автокредитов вырос",
+        outbound_links=[
+            "https://www.kommersant.ru/doc/123456",
+            "https://www.vedomosti.ru/auto/articles/2026/07/16/x",
+        ],
+        brands=BRANDS, cues=CUES)
+    assert cands, "an aggregator linking two tier-1 RU outlets must be arbitrated"
+
+
+def test_arbitration_does_not_fire_on_own_corporate_nav() -> None:
+    """autonews.ru is an RBC property and carries auth./cash./id.rbc.ru nav on
+    every page. rbc.ru is deliberately absent from the tier-1 list — including
+    it made the arbiter fire on autonews' own chrome (measured jul-17)."""
+    cands = arbitration_candidates(
+        article_url="https://www.autonews.ru/news/abc123",
+        body="Новость про рынок. " * 20, title="Некая новость",
+        outbound_links=["https://auth.rbc.ru/", "https://cash.rbc.ru/",
+                        "https://id.rbc.ru/", "https://plus.rbc.ru/"],
+        brands=BRANDS, cues=CUES)
+    assert cands == []
+
+
+def test_ru_tier1_does_not_promote_deterministically() -> None:
+    """The tier-1 list must NOT leak into Tier 1.5: a redistribution host
+    linking a tier-1 outlet in a «читайте также» block must not get it as a
+    HIGH-confidence primary with no LLM. (kommersant.ru is not a press-release
+    host, so only the tier-1 list could promote it — it must not.)"""
+    url, dom, conf = detect_primary_source(
+        article_url="https://auto.mail.ru/article/12345-story/",
+        body="Новость. Читайте также материал Коммерсанта. " * 8,
+        title="Новость",
+        outbound_links=["https://www.kommersant.ru/doc/999"],
+        brands=BRANDS, cues=CUES)
+    assert not (dom.endswith("kommersant.ru") and conf == "high"), (
+        f"tier-1 list leaked into a deterministic tier: {dom}@{conf}")
