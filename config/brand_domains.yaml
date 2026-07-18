@@ -478,11 +478,21 @@ brands:
 # carscoops and autocar) because "jensen" was in neither the brand list nor the
 # aliases — the LLM-editor cluster pass groups candidates by brand, so with no
 # group there was no merge. Adding the brand lets the grouping collapse it.
-- brand: Jensen
+- brand: Jensen Motors
+  # Multi-word name + aliases ONLY (red-team jul-17): a bare "Jensen"/"Дженсен"
+  # token collides with Jensen Huang in Nvidia-automotive coverage (and the
+  # brand NAME is itself a matchable token, so it must not be bare either).
+  # The observed dup headlines all carry "Jensen Interceptor …" or
+  # "… Interceptor GTX …", so these phrases cover them without the surname.
   aliases:
-  - Дженсен
-  domains:
-  - jenseninternational.com
+  - Jensen Interceptor
+  - Interceptor GTX
+  - Дженсен Интерсептор
+  # domains deliberately EMPTY: jenseninternational.com (shipped jul-17) turned
+  # out to be a PARKED for-sale domain — a Tier 2/3 promotion target pointing
+  # at a squatter. The dedup failure this entry fixes only needs brand+aliases
+  # for cluster grouping, not a domain.
+  domains: []
 - brand: Daihatsu
   aliases:
   - Дайхатсу
