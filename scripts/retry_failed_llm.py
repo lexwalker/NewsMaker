@@ -110,6 +110,13 @@ def _cache_entry(
     run actually reads back for CORRECTNESS — the classification, primary_* and
     event_* — is supplied, primary_* read straight off the sheet row the fetch
     already filled.
+
+    Honest scope note (red-team jul-17): only ACCEPTED entries short-circuit a
+    future run (llm_section present → cache_is_authoritative). REJECTED entries
+    have llm_section="" and a verdict outside the rule/identity sets, so a
+    future run that re-fetches the URL re-classifies it — the reject entry's
+    value is its EVENT KEY feeding recent_event_keys (30-day semantic dedup),
+    not an LLM-cost saving.
     """
     canon_u = canonicalise(url)
     cached_row = {
@@ -265,7 +272,11 @@ def main() -> int:
     recent_ev: dict = {}
     recent_bm: dict = {}
     store = None          # kept for the cache WRITE-BACK below, not just hints
-    portal = os.environ.get("DEDUP_PORTAL", "RU") or "RU"
+    # HARDCODED for read/write parity: the main batch reads the cache under a
+    # hardcoded "RU" (batch_fetch_test.py DEDUP_PORTAL), so honouring an env
+    # override here would write rows the batch never reads back — silently
+    # voiding the whole write-back (red-team jul-17).
+    portal = "RU"
     try:
         from news_agent.adapters.storage import DedupStore
         _sqlite = ROOT / "data" / "news_agent.sqlite"
@@ -329,6 +340,11 @@ def main() -> int:
 
     updates: list[dict] = []
     cache_entries: list[tuple] = []  # SQLite write-back (see _cache_entry)
+    row_marks: list[int] = []  # len(updates) after each ROW's cell group —
+    # chunk flushes split only at these boundaries, so a mid-flush failure can
+    # never leave a row half-written (verdict updated but EVENT_*/reason not:
+    # such a row LOOKS healthy to the looks_failed re-pick detector and its
+    # missing cells would be silently lost forever — red-team jul-17).
     section_names = {s.name for s in sections}
     portal_country = "Russia"  # RU portal hard-coded for now
     rejected_count = 0
@@ -409,6 +425,7 @@ def main() -> int:
                     title_en="", title_ru="", note=_note, reason=reason,
                     eb=_eb, em=_em, et=_et, portal=portal))
             rejected_count += 1
+            row_marks.append(len(updates))
             print(f"  [{idx}/{len(targets)}] REJECTED row {sheet_row}: {clean_title[:55]!r}")
             continue
         # Section/region via the SHARED resolver — parity fix: recovery rows
@@ -503,36 +520,13 @@ def main() -> int:
                 title_en=tp.english, title_ru=tp.russian,
                 note=dec.heuristic_note or "", reason=reason,
                 eb=_eb, em=_em, et=_et, portal=portal))
+        row_marks.append(len(updates))
 
-    if updates:
-        # Apply in chunks, each retried with backoff. The LLM pass above is
-        # already PAID FOR and is NOT cached anywhere (unlike the main batch,
-        # this script doesn't persist to SQLite), so a transient network blip
-        # here throws the whole spend away. jul-17: an ssl.SSLEOFError on the
-        # final batchUpdate discarded ~430 classified rows ($2.67) — the chunk
-        # loop had no retry, so one blip killed the process mid-write.
-        CHUNK = 200
-        n_chunks = (len(updates) + CHUNK - 1) // CHUNK
-        for i in range(0, len(updates), CHUNK):
-            chunk = updates[i:i + CHUNK]
-            _net_retry(
-                lambda c=chunk: svc.spreadsheets().values().batchUpdate(
-                    spreadsheetId=SHEET_ID,
-                    body={"valueInputOption": "USER_ENTERED", "data": c},
-                ).execute(),
-                what=f"batchUpdate chunk {i // CHUNK + 1}/{n_chunks}",
-            )
-        n_translated = len(targets) - rejected_count
-        print(
-            f"\nDone. {n_translated} translated, {rejected_count} rejected by LLM. "
-            f"Total cost: ${budget.spent_usd:.4f}"
-        )
-
-    # Persist the classification to SQLite — the gap that made a recovered prog
-    # invisible to the NEXT run's dedup (and made it pay the LLM again for the
-    # same URLs). Local write, no network: done AFTER the sheet write so a
-    # Sheets failure can't skip it. Never fatal — the run's real output is
-    # already on the sheet.
+    # Persist the classification to SQLite BEFORE the network writes —
+    # checkpoint-first, same ordering as the main batch. This is the local,
+    # can't-SSL-fail store; writing it after the Sheets flush meant a
+    # persistent Sheets outage skipped it entirely, losing the checkpoint at
+    # exactly the moment it exists for (red-team jul-17). Never fatal.
     if cache_entries and store is not None:
         try:
             store.mark_many_with_cache(cache_entries)
@@ -541,8 +535,45 @@ def main() -> int:
                   f"for dedup instead of re-classifying them.")
         except Exception as e:  # noqa: BLE001
             print(f"  ! SQLite cache write failed ({type(e).__name__}: "
-                  f"{str(e)[:100]}) — sheet is fine, next run will re-classify.",
+                  f"{str(e)[:100]}) — continuing; next run will re-classify.",
                   file=sys.stderr)
+
+    if updates:
+        # Apply in chunks, each retried with backoff (jul-17: an unretried
+        # ssl.SSLEOFError discarded ~430 classified rows, $2.67). Chunks split
+        # ONLY at row boundaries (row_marks): a flat 200-cell split could cut
+        # one row's cell group in half, and a mid-flush permanent failure
+        # would then leave a row with its verdict written but EVENT_*/reason
+        # missing — looks healthy to the looks_failed detector, never
+        # re-picked, cells silently lost.
+        CHUNK = 200
+        chunks: list[list[dict]] = []
+        cur: list[dict] = []
+        prev = 0
+        for mark in row_marks:
+            group = updates[prev:mark]
+            prev = mark
+            if not group:
+                continue
+            if cur and len(cur) + len(group) > CHUNK:
+                chunks.append(cur)
+                cur = []
+            cur.extend(group)
+        if cur:
+            chunks.append(cur)
+        for ci, chunk in enumerate(chunks, start=1):
+            _net_retry(
+                lambda c=chunk: svc.spreadsheets().values().batchUpdate(
+                    spreadsheetId=SHEET_ID,
+                    body={"valueInputOption": "USER_ENTERED", "data": c},
+                ).execute(),
+                what=f"batchUpdate chunk {ci}/{len(chunks)}",
+            )
+        n_translated = len(targets) - rejected_count
+        print(
+            f"\nDone. {n_translated} translated, {rejected_count} rejected by LLM. "
+            f"Total cost: ${budget.spent_usd:.4f}"
+        )
     return 0
 
 
