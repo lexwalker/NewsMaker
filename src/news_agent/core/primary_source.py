@@ -169,17 +169,10 @@ _JUNK_URL_FRAGMENTS = (
     # Contact / about pages
     "/contact", "/contacts", "/contact-us", "/contact.html",
     "/feedback", "/support",
-    # Legal / policy boilerplate. Never a news source, but very much a DEEP
-    # link, so the deep-URL check does not catch it. jul-17: a short
-    # thesupercarblog post (685 chars, no real source link) had exactly ONE
-    # external link — akismet.com/privacy/, the WordPress comment-form notice —
-    # and Tier 4 ("cue phrase + any external link") promoted it to primary at
-    # medium. Trailing-slash / hyphen forms keep this from eating a genuine
-    # article about privacy law ("/news/new-privacy-law" does not match).
-    "/privacy/", "/privacy-policy", "/privacy.html",
-    "/terms/", "/terms-of-", "/terms.html", "/tos/",
-    "/cookie-policy", "/cookies/", "/cookie-notice",
-    "/legal/", "/disclaimer", "/imprint", "/gdpr",
+    # (Legal/policy boilerplate is handled by _LEGAL_LEAF_SEGMENTS below —
+    # terminal-anchored, NOT substrings: "/legal/" as a substring junked whole
+    # news verticals like reuters.com/legal/litigation/<slug>, and bare
+    # "/gdpr" junked slugs like /2026/07/gdpr-fine-hits-volkswagen/.)
     # Tracking redirectors / click-counters (liveinternet wraps the target
     # in /click with NO query string, so the "?"-suffixed forms miss it)
     "doubleclick.net", "googleadservices", "google.com/url?",
@@ -207,6 +200,37 @@ _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".avif")
 _IMAGE_PATH_MARKERS = ("/fit-in/", "/resize/", "/thumb/", "/thumbs/", "/img/")
 
 
+# Legal / policy boilerplate pages. Never a news source, but very much a DEEP
+# url, so the deep-URL check does not catch them (jul-17: akismet.com/privacy/
+# — the WordPress comment-form notice — was the ONLY external link on a short
+# thesupercarblog post and Tier 4 promoted it to primary at medium). Matched as
+# the URL's LAST path segment only: a boilerplate page is a leaf
+# (site.com/legal/, site.com/terms-of-use), while a real article continues
+# past the word (reuters.com/legal/litigation/<slug> — Reuters' automaker-
+# litigation vertical! — or /2026/07/gdpr-fine-hits-volkswagen/). The first
+# shipped version substring-matched these and junked both.
+_LEGAL_LEAF_SEGMENTS: frozenset[str] = frozenset({
+    "privacy", "privacy-policy", "privacy-notice",
+    "terms", "terms-of-use", "terms-of-service", "terms-of-sale",
+    "terms-and-conditions", "tos",
+    "cookie-policy", "cookies", "cookie-notice",
+    "legal", "disclaimer", "imprint", "impressum", "gdpr",
+})
+
+
+def _is_legal_leaf(path: str) -> bool:
+    """True when the path's FINAL segment is a legal/policy boilerplate page."""
+    segs = [s for s in (path or "").lower().split("/") if s]
+    if not segs:
+        return False
+    last = segs[-1]
+    for ext in (".html", ".htm", ".php", ".aspx"):
+        if last.endswith(ext):
+            last = last[: -len(ext)]
+            break
+    return last in _LEGAL_LEAF_SEGMENTS
+
+
 def _is_junk_link(url: str) -> bool:
     """Reject share buttons / share-widget aggregators, bare social-network
     profiles, login pages, tracking redirectors, root-only URLs, image/CDN
@@ -224,6 +248,8 @@ def _is_junk_link(url: str) -> bool:
     # any URL whose path has more than just "/". This filter catches
     # "https://www.gazeta.ru/" or "https://toyota.jp/" homepage links.
     parsed = urlparse(url)
+    if _is_legal_leaf(parsed.path):
+        return True
     path = (parsed.path or "").rstrip("/")
     if not path or path == "/":
         # URL has no meaningful path
@@ -283,9 +309,20 @@ _AMBIGUOUS_BRAND_NAMES: frozenset[str] = frozenset({
 })
 
 
+def _has_cjk(s: str) -> bool:
+    return any(ord(ch) >= 0x2E80 for ch in s)
+
+
 def _brand_matcher(
     brands: list[BrandDomainEntry],
-) -> tuple[re.Pattern[str], dict[str, str]]:
+) -> tuple[re.Pattern[str] | None, re.Pattern[str] | None, dict[str, str]]:
+    """(word_pattern, cjk_pattern, name→brand). Either pattern may be None.
+
+    CJK aliases (智己, 问界…) get their own pattern WITHOUT \\w boundaries:
+    Chinese runs unspaced, so in «智己汽车» or "IM智己L6" the neighbouring
+    CJK/Latin chars are word chars and (?<!\\w)/(?!\\w) reject the very
+    contexts the alias exists for (red-team jul-17). CJK also has no case and
+    no Russian declension, so the tail/gate don't apply."""
     key = tuple((b.brand, tuple(b.aliases)) for b in brands)
     cached = _BRAND_RE_CACHE.get(key)
     if cached is None:
@@ -297,13 +334,20 @@ def _brand_matcher(
                     name_to_brand.setdefault(n, b.brand)
         # Longest alternative first: "land rover" must win over a bare "rover"
         # if both are ever registered.
-        names = sorted(name_to_brand, key=len, reverse=True)
-        pat = re.compile(
-            r"(?<!\w)(" + "|".join(re.escape(n) for n in names) + r")"
+        word_names = sorted(
+            (n for n in name_to_brand if not _has_cjk(n)), key=len, reverse=True)
+        cjk_names = sorted(
+            (n for n in name_to_brand if _has_cjk(n)), key=len, reverse=True)
+        word_pat = re.compile(
+            r"(?<!\w)(" + "|".join(re.escape(n) for n in word_names) + r")"
             + _RU_INFLECT_TAIL + r"(?!\w)",
             re.IGNORECASE,
-        )
-        cached = (pat, name_to_brand)
+        ) if word_names else None
+        cjk_pat = re.compile(
+            "(" + "|".join(re.escape(n) for n in cjk_names) + ")",
+            re.IGNORECASE,
+        ) if cjk_names else None
+        cached = (word_pat, cjk_pat, name_to_brand)
         _BRAND_RE_CACHE[key] = cached
     return cached
 
@@ -321,14 +365,20 @@ def _mentions_brand(text: str, brands: list[BrandDomainEntry]) -> set[str]:
     as the akismet bug. Matched over the ORIGINAL text (case-insensitively) so
     the ambiguous-name gate can inspect real capitalisation.
     """
-    pat, name_to_brand = _brand_matcher(brands)
+    word_pat, cjk_pat, name_to_brand = _brand_matcher(brands)
     hit: set[str] = set()
-    for m in pat.finditer(text):
-        raw = m.group(1)
-        name = raw.lower()
-        if name in _AMBIGUOUS_BRAND_NAMES and raw == name:
-            continue  # ordinary word in running prose, not a brand mention
-        hit.add(name_to_brand[name])
+    if not name_to_brand:
+        return hit  # empty brand list → a bare alternation would match ""
+    if word_pat is not None:
+        for m in word_pat.finditer(text):
+            raw = m.group(1)
+            name = raw.lower()
+            if name in _AMBIGUOUS_BRAND_NAMES and raw == name:
+                continue  # ordinary word in running prose, not a brand mention
+            hit.add(name_to_brand[name])
+    if cjk_pat is not None:
+        for m in cjk_pat.finditer(text):
+            hit.add(name_to_brand[m.group(1).lower()])
     return hit
 
 
@@ -425,7 +475,10 @@ _INFRA_HOSTS: frozenset[str] = frozenset({
 # rbc.ru is deliberately ABSENT: autonews.ru is an RBC property and carries
 # auth./cash./id.rbc.ru nav on every page — measured jul-17, including rbc.ru
 # false-fires the arbiter on autonews' own chrome. (Same-site self-links are
-# already handled by _same_site; site-ecosystem spam by _NAV_BOILERPLATE_MIN.)
+# handled by _same_site. NB: the _NAV_BOILERPLATE_MIN frequency filter does
+# NOT protect against tass/interfax/1prime chrome — those are also
+# press_release_hosts, which _is_infra_or_nav exempts — so the strong-anchor
+# check below additionally requires a DEEP link for tier-1 hosts.)
 _RU_TIER1_OUTLETS: frozenset[str] = frozenset({
     "kommersant.ru", "vedomosti.ru", "iz.ru", "interfax.ru", "tass.ru",
     "gazeta.ru", "kp.ru", "rg.ru", "1prime.ru", "life.ru",
@@ -684,7 +737,15 @@ def arbitration_candidates(
         strong = (
             _is_preferred_primary(nd)
             or _is_official_primary(nd)
-            or _is_ru_tier1_outlet(nd)
+            # Tier-1 RU outlets count as strong ONLY via a DEEP article link.
+            # tass/interfax/1prime are also press_release_hosts, which
+            # _is_infra_or_nav exempts from the nav-frequency filter — so a
+            # shallow section link in a sister-site's page chrome
+            # (ria → tass.ru/ekonomika) would otherwise set has_strong and
+            # burn an arbitration call on pure nav (red-team jul-17). Every
+            # measured target case (finmarket→kommersant/vedomosti,
+            # auto.mail→gazeta) was a deep article link, so nothing is lost.
+            or (_is_ru_tier1_outlet(nd) and _is_deep_url(link))
             or (brand is not None and brand.brand in mentioned)
         )
         # A "plausible primary" is a strong signal OR any deep external article

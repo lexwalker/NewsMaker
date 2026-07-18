@@ -867,3 +867,56 @@ def test_ordinary_word_brands_require_capitalisation() -> None:
     assert "GAZ" in _mentions_brand("ГАЗ представил новую Газель NN", _VB)
     assert "Lada" not in _mentions_brand("букет из ваз на столе", _VB)
     assert "Lada" in _mentions_brand("ВАЗ-2107 снят с производства", _VB)
+
+
+# --- Red-team jul-17: junk markers must be terminal-anchored -----------------
+# "/legal/" as a substring junked reuters.com/legal/litigation/<slug> (Reuters'
+# automaker-litigation vertical) and bare "/gdpr" junked
+# /2026/07/gdpr-fine-hits-volkswagen/. Boilerplate is a LEAF page; a real
+# article continues past the word.
+
+def test_legal_vertical_articles_are_not_junk() -> None:
+    for u in (
+        "https://www.reuters.com/legal/litigation/tesla-must-face-lawsuit-2026-05-15/",
+        "https://www.carscoops.com/2026/07/gdpr-fine-hits-volkswagen-over-connected-car-data/",
+        "https://site.com/auto/disclaimer-tesla-adds-to-fsd-ads",
+        "https://site.com/news/terms-of-trade-in-program-changed",
+        "https://site.com/news/imprint-of-history-lada-anniversary",
+    ):
+        assert not _is_junk_link(u), u
+
+
+def test_legal_leaf_pages_are_junk() -> None:
+    for u in ("https://akismet.com/privacy/", "https://site.com/legal/",
+              "https://site.com/terms-of-use", "https://site.com/gdpr",
+              "https://site.com/privacy-policy.html", "https://site.com/impressum"):
+        assert _is_junk_link(u), u
+
+
+def test_shallow_tier1_chrome_does_not_fire_arbiter() -> None:
+    """tass/interfax/1prime are press_release_hosts, exempt from the nav
+    frequency filter — so the tier-1 strong anchor additionally requires a
+    DEEP link, else sister-site page chrome (ria → tass.ru/ekonomika) burns
+    arbitration calls on pure nav."""
+    cands = arbitration_candidates(
+        article_url="https://ria.ru/20260717/econ-2105099999.html",
+        body="Экономическая новость. " * 20, title="Новость",
+        outbound_links=["https://tass.ru/ekonomika", "https://1prime.ru/News/",
+                        "https://deep-unrelated.com/2026/07/long-article-slug/"],
+        brands=BRANDS, cues=CUES)
+    assert cands == []
+
+
+# --- Red-team jul-17: CJK aliases + empty-list guard -------------------------
+
+def test_cjk_alias_matches_in_unspaced_context() -> None:
+    """Chinese runs unspaced: in «智己汽车» the neighbours are word chars, so
+    \w boundaries would reject the very context the alias exists for."""
+    bb = [BrandDomainEntry(brand="IM Motors", aliases=["IM智己", "智己"],
+                           domains=["immotors.com"])]
+    assert "IM Motors" in _mentions_brand("智己汽车发布新车", bb)
+    assert "IM Motors" in _mentions_brand("Новинка IM智己L6 представлена", bb)
+
+
+def test_empty_brand_list_matches_nothing() -> None:
+    assert _mentions_brand("Ford unveils the new Mustang", []) == set()
