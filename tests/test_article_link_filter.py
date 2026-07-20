@@ -24,3 +24,27 @@ def test_non_article_urls_still_rejected() -> None:
     assert not _looks_like_article("https://auto.ru/garage/")
     assert not _looks_like_article("https://x.ru/")
     assert not _looks_like_article("https://x.ru/about")
+
+
+# --- jul-20: taxonomy/theme listings must never pass as articles -------------
+# kommersant.ru/theme/2099 («Кредитный рынок: последние новости» — a TAG page)
+# shipped to the editor as an article: the old bare "/20" date hint matched
+# inside "/2099". The year hint is now anchored (20[12]x) and taxonomy first
+# segments are blocked outright.
+
+def test_theme_and_taxonomy_paths_are_not_articles() -> None:
+    from news_agent.adapters.fetchers.html import _looks_like_article
+    for u in ("https://www.kommersant.ru/theme/2099?from=tag",
+              "https://www.kommersant.ru/theme/2099/",
+              "https://site.ru/tags/electro", "https://site.ru/rubric/auto",
+              "https://site.ru/page/2050"):
+        assert not _looks_like_article(u), u
+
+
+def test_date_paths_still_articles() -> None:
+    from news_agent.adapters.fetchers.html import _looks_like_article
+    for u in ("https://iz.ru/2133059/2026-07-16/za-polgoda-spros",
+              "https://1prime.ru/20260715/legkovushki-871521538.html",
+              "https://rg.ru/2026/07/16/some-slug.html",
+              "https://cnevpost.com/2026/07/20/li-auto-l6/"):
+        assert _looks_like_article(u), u

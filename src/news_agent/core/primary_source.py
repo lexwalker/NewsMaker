@@ -250,6 +250,14 @@ def _is_junk_link(url: str) -> bool:
     parsed = urlparse(url)
     if _is_legal_leaf(parsed.path):
         return True
+    # Taxonomy listings (jul-20: kommersant.ru/theme/2099 reached the feed as
+    # an "article"): a URL whose FIRST segment is a tag/theme/rubric container
+    # is a listing and can never be a source article.
+    _segs0 = [s for s in (parsed.path or "").lower().split("/") if s]
+    if _segs0 and _segs0[0] in ("theme", "themes", "tag", "tags", "rubric",
+                                "rubrics", "topic", "topics", "category",
+                                "categories", "label", "labels"):
+        return True
     path = (parsed.path or "").rstrip("/")
     if not path or path == "/":
         # URL has no meaningful path

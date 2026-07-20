@@ -579,9 +579,24 @@ def _pick_outbound_links(soup: BeautifulSoup, page_url: str) -> list[str]:
     return out
 
 
-_ARTICLE_HINTS = ("/news/", "/article/", "/post/", "/20", "/story/", "-news-",
+_ARTICLE_HINTS = ("/news/", "/article/", "/post/", "/story/", "-news-",
                   ".html", "/doc/")  # /doc/<id> = kommersant.ru article URLs
                                       # (numeric id, no slug — were rejected)
+
+# Date-shaped path segment = article-like. Replaces the old bare "/20"
+# substring hint, which matched ANY /20xx id anywhere in the path — jul-20:
+# kommersant.ru/theme/2099 (a TAG/theme index, title «Кредитный рынок:
+# последние новости») shipped to the feed as an article because "/20" matched
+# inside "/2099". Year is anchored to 20[12]x so /2099, /2050-style ids stay
+# out; covers /2026/07/16/, /2026-07-16/ and 1prime-style /20260715/.
+_DATE_PATH_RE = re.compile(r"/20[12]\d(?:[/-]\d{1,2}){0,2}(?:/|$)|/20[12]\d{5}(?:/|$)")
+
+# Taxonomy paths are NEVER articles — a link whose FIRST segment is a
+# tag/theme/rubric container is a listing, whatever else the URL contains.
+_TAXONOMY_FIRST_SEG = frozenset({
+    "theme", "themes", "tag", "tags", "rubric", "rubrics",
+    "topic", "topics", "category", "categories", "label", "labels",
+})
 
 
 # Slug-like query keys (aseancap.org serves the headline as news_post.php?slug=…).
@@ -600,7 +615,12 @@ def _looks_like_article(url: str) -> bool:
     # controller").
     if "/api/" in path or path.startswith("/api"):
         return False
+    segs0 = [s for s in path.split("/") if s]
+    if segs0 and segs0[0] in _TAXONOMY_FIRST_SEG:
+        return False  # /theme/2099, /tags/…, /rubric/… — listings, not articles
     if any(seg in path for seg in _ARTICLE_HINTS):
+        return True
+    if _DATE_PATH_RE.search(path):
         return True
     # Long hyphenated slug → plausibly an article. If the LAST path segment is a
     # pure numeric id (siam.in /…/auto-industry-performance-of-may-2026/609), the
