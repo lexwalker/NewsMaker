@@ -271,6 +271,7 @@ def main() -> int:
     # recovery had only the archive paraphrase. Read-only; failure → hints off.
     recent_ev: dict = {}
     recent_bm: dict = {}
+    own_titles: set = set()
     store = None          # kept for the cache WRITE-BACK below, not just hints
     # HARDCODED for read/write parity: the main batch reads the cache under a
     # hardcoded "RU" (batch_fetch_test.py DEDUP_PORTAL), so honouring an env
@@ -284,8 +285,10 @@ def main() -> int:
             store = DedupStore(_sqlite)
             recent_ev = store.recent_event_keys(portal, days=30)
             recent_bm = store.recent_brand_models(portal, days=30)
+            own_titles = store.recent_pushed_titles(portal, days=30)
             print(f"  dup hints: {len(recent_ev)} event-keys, "
-                  f"{len(recent_bm)} brand-models (30d)")
+                  f"{len(recent_bm)} brand-models, "
+                  f"{len(own_titles)} own titles (30d)")
     except Exception as e:  # noqa: BLE001 — advisory only
         print(f"  dup-hint store unavailable ({type(e).__name__}) — tiers 2-3 off")
 
@@ -455,6 +458,7 @@ def main() -> int:
             pub_titles=pub_titles,
             recent_ev=recent_ev,
             recent_bm=recent_bm,
+            own_titles=own_titles,
         )
         if _hint:
             reason = (_hint + (" | " + reason if reason else ""))[:300]

@@ -138,12 +138,19 @@ def dup_hint_for(
     pub_titles: set[str],
     recent_ev: dict | None,
     recent_bm: dict | None,
+    own_titles: set[str] | None = None,
 ) -> str | None:
     """Advisory dup hint for an accepted row — at most ONE, by priority:
 
     (0) PUBLISHED-archive paraphrase — already in «Опубликованные (все)»
         under a divergent headline, the strongest "don't re-post" signal the
         exact gate missed;
+    (0.5) OUR-OWN-pushes paraphrase (jul-20 dup-wave) — same fuzzy machinery
+        vs the titles WE pushed in the last 30 days (DedupStore
+        .recent_pushed_titles). Covers the layer nothing else did: a story we
+        fed on the 17th resurfacing from another outlet on the 19th — URL
+        differs, wording differs, and pre-fix history rows carry no event
+        keys, so the semantic tier is blind to them;
     (1) Stage-2a SEMANTIC event-key vs our own recent runs;
     (2) lexical P3-D brand_model.
 
@@ -152,6 +159,10 @@ def dup_hint_for(
     """
     try:
         hint = published_dup_hint(title, event_brand, event_model, pub_titles)
+        if not hint and own_titles:
+            hint = published_dup_hint(
+                title, event_brand, event_model, own_titles,
+                source_label="недавно уже отправляли в фид")
         if not hint and event_model and recent_ev:
             hint = recent_event_dup_hint(
                 event_brand, event_model, event_type, recent_ev, canon_url)

@@ -531,11 +531,19 @@ def cluster_articles(
     # both yield ("jaguar","type 01","spy_shot"). Only trust it when the
     # model is non-empty AND event_type is specific (NOT "other"/"") —
     # otherwise ("geely","","launch") would glue every Geely launch.
+    # Keys are CANONICALISED (jul-20 dup-wave): the LLM writes the signature
+    # free-form, so the same happening keyed "avtovaz|…" vs "lada|…" (brand
+    # aliases), "07 l" vs "07l" (model spacing) and "launch" vs "pricing"
+    # (a sales-start-with-prices story is one happening) — none of which
+    # compared equal here, so within-batch pairs were pushed twice.
+    from news_agent.core.dedup import canonical_event_brand, squash_model
+    _TYPE_FOLD = {"motorshow": "reveal", "pricing": "launch"}
     event_keys: list[str] = []
     for a in articles:
-        eb = (a.get("event_brand") or "").strip().lower()
-        em = (a.get("event_model") or "").strip().lower()
+        eb = canonical_event_brand(a.get("event_brand") or "")
+        em = squash_model(a.get("event_model") or "")
         et = (a.get("event_type") or "").strip().lower()
+        et = _TYPE_FOLD.get(et, et)
         if eb and em and et and et != "other":
             event_keys.append(f"{eb}|{em}|{et}")
         else:

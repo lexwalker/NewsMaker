@@ -361,3 +361,55 @@ def test_event_hint_other_types_not_folded():
     assert recent_event_dup_hint("mg", "go!", "reveal", recent,
                                  "https://b.example/2") is None
 
+
+
+# --- jul-20 dup-wave: event-key canonicalisation + own-pushes tier -----------
+# 15 editor dup flags in one batch; forensics found the SAME happening keyed
+# differently on each side: brand aliases (avtovaz vs lada), model spacing
+# ("07 l" vs "07l"), launch vs pricing for a sales-start-with-prices story.
+# recent_event_keys already canonicalises the MAP side via brand_canonical —
+# the fresh side arrived raw and never matched.
+
+def test_event_hint_matches_across_brand_alias() -> None:
+    from news_agent.core.dedup import recent_event_dup_hint
+    recent = {"lada|iskra vesta|tech": ("2026-07-17T10:00:00+00:00", "https://a/1", "lada iskra vesta (tech)")}
+    hint = recent_event_dup_hint("АвтоВАЗ", "iskra vesta", "tech", recent, "https://b/2")
+    assert hint is not None
+
+
+def test_event_hint_matches_across_model_spacing() -> None:
+    from news_agent.core.dedup import recent_event_dup_hint
+    recent = {"avatr|07l|launch": ("2026-07-18T10:00:00+00:00", "https://a/1", "avatr 07l (launch)")}
+    hint = recent_event_dup_hint("avatr", "07 l", "launch", recent, "https://b/2")
+    assert hint is not None
+
+
+def test_event_hint_folds_launch_and_pricing() -> None:
+    from news_agent.core.dedup import recent_event_dup_hint
+    recent = {"avatr|07l|launch": ("2026-07-18T10:00:00+00:00", "https://a/1", "avatr 07l (launch)")}
+    hint = recent_event_dup_hint("avatr", "07l", "pricing", recent, "https://b/2")
+    assert hint is not None
+
+
+def test_event_hint_still_separates_different_models() -> None:
+    from news_agent.core.dedup import recent_event_dup_hint
+    recent = {"byd|seal|launch": ("2026-07-18T10:00:00+00:00", "https://a/1", "byd seal (launch)")}
+    assert recent_event_dup_hint("byd", "sealion", "launch", recent, "https://b/2") is None
+
+
+def test_published_hint_brand_gate_matches_via_alias() -> None:
+    """event_brand "avtovaz" must gate against a title that only says
+    «Лада …» — the bare ``eb in pt`` gate missed every OTHER name of the
+    same brand, muting the paraphrase tier. (Scripts are not the issue:
+    normalise_title transliterates Cyrillic; ALIASES are.)"""
+    from news_agent.core.dedup import published_dup_hint
+    from news_agent.core.primary_source import normalise_title
+    own = {normalise_title("Лада начала продажи Iskra")}
+    pt = next(iter(own))
+    # the raw event_brand occurs nowhere in the title — only the alias does
+    assert "avtovaz" not in pt
+    hint = published_dup_hint(
+        "АвтоВАЗ расширил продажи Iskra в регионах",
+        "avtovaz", "iskra", own, source_label="недавно уже отправляли в фид")
+    assert hint is not None
+    assert "отправляли в фид" in hint

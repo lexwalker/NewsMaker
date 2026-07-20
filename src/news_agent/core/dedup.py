@@ -2,9 +2,67 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from rapidfuzz import fuzz
+
+# ---- Event-key canonicalisation (jul-20 dup-wave forensics) ----------------
+# The LLM writes event_brand/event_model free-form, so the SAME happening got
+# different keys and slipped every event-dedup layer: «АвтоВАЗ …» keyed
+# "avtovaz|…" in one run and "lada|…" in another (brand aliases), Avatr keyed
+# "07 l" vs "07l" (model spacing). NB: DedupStore.recent_event_keys ALREADY
+# canonicalises the map side via brand_canonical — the actual bug was the
+# FRESH side arriving raw, so "avtovaz" never met the map's "lada". These
+# helpers wrap the SAME shared module (never a parallel alias table), applied
+# at COMPARE time so months of raw history keys also benefit.
+
+
+@lru_cache(maxsize=4096)
+def canonical_event_brand(brand: str) -> str:
+    """avtovaz/АвтоВАЗ/ВАЗ → lada; unknown names pass through unchanged.
+    Same brand_canonical module the cache-map side uses; any failure degrades
+    to identity (hints are advisory, never break a run)."""
+    eb = (brand or "").strip().lower()
+    if not eb:
+        return ""
+    try:
+        from news_agent.core.brand_canonical import canonicalize_brand
+        return (canonicalize_brand(eb) or eb).lower()
+    except Exception:  # noqa: BLE001
+        return eb
+
+
+@lru_cache(maxsize=8192)
+def squash_model(model: str) -> str:
+    """Spacing/hyphen-insensitive model form: "07 l" == "07l" == "07-l"."""
+    return re.sub(r"[\s\-]+", "", (model or "").strip().lower())
+
+
+@lru_cache(maxsize=512)
+def brand_name_variants(brand: str) -> frozenset[str]:
+    """All names of a brand (canonical + every alias, lowered, len≥3).
+
+    Used as the brand GATE in title checks. Scripts are NOT the issue
+    (normalise_title transliterates Cyrillic, «АвтоВАЗ»→"avtovaz") — ALIASES
+    are: event_brand says "avtovaz" while the headline says «Лада Искра…»
+    (→ "lada iskra"), so a bare ``eb in pt`` gate finds nothing and the
+    paraphrase tier stays mute for exactly the brand's other names."""
+    eb = (brand or "").strip().lower()
+    if not eb:
+        return frozenset()
+    out = {eb}
+    try:
+        from news_agent.core.brand_canonical import (
+            aliases_for, canonicalize_brand)
+        canon = (canonicalize_brand(eb) or eb)
+        out.add(canon.lower())
+        for a in aliases_for(canon):
+            out.add((a or "").strip().lower())
+    except Exception:  # noqa: BLE001
+        pass
+    return frozenset(v for v in out if len(v) >= 3)
 
 
 def title_is_duplicate(title: str, known: list[str], *, threshold: float) -> bool:
@@ -88,51 +146,56 @@ def recent_event_dup_hint(
     not seen / only prior sighting is THIS same URL / unparseable
     timestamp (degrade silently — advisory must never break the run).
     """
-    eb = (event_brand or "").strip().lower()
+    eb = canonical_event_brand(event_brand)
     em = (event_model or "").strip().lower()
     et = (event_type or "").strip().lower()
     if not (eb and em and et and et != "other"):
         return None
-    # Compatible event types (jul-14, the MG-Goodwood 4x dup forensics): the
-    # SAME reveal got type='reveal' from one write-up and type='motorshow'
-    # from another (a show debut IS both), so exact-type matching let it
-    # through repeatedly. Only this one well-motivated pair is folded —
-    # wider type-equivalence would inflate the false-divert rate the review
-    # tab already shows.
+    # Compatible event types. jul-14 (MG-Goodwood 4x dup): the SAME reveal got
+    # type='reveal' from one write-up and 'motorshow' from another. jul-20
+    # (Avatr 07 L dup): «старт продаж с ценами» keyed 'launch' from one outlet
+    # and 'pricing' from another — one happening, two keys. Only these two
+    # well-motivated pairs are folded — wider type-equivalence would inflate
+    # the false-divert rate the review tab already shows.
     _COMPAT = {"reveal": ("reveal", "motorshow"),
-               "motorshow": ("motorshow", "reveal")}
-    types = _COMPAT.get(et, (et,))
+               "motorshow": ("motorshow", "reveal"),
+               "launch": ("launch", "pricing"),
+               "pricing": ("pricing", "launch")}
+    types = frozenset(_COMPAT.get(et, (et,)))
+    # Fast path: exact key (already-canonical history).
     hit = None
     for _t in types:
         hit = recent.get(f"{eb}|{em}|{_t}")
         if hit is not None:
             break
     if hit is None:
-        # Token-subset fallback (jul-14): two write-ups of the SAME event
-        # normalise the model differently when several models share the stage
-        # — a Goodwood MG story ran 4 times because one row keyed "go" and
-        # another "go and cyber". Same brand + same event_type + one model's
-        # token set contained in the other's ⇒ treat as the same event.
-        # Token-level containment keeps different models apart: {model,3} vs
-        # {model,y} is not a subset either way, "seal" ≠ "sealion".
+        # Canonical scan (jul-20 dup-wave): history keys are written free-form,
+        # so compare both sides canonically — brand through the alias map
+        # ("avtovaz|…" history vs "lada" fresh), model spacing-insensitive
+        # ("07 l" vs "07l"). Plus the jul-14 token-subset fallback: two
+        # write-ups of the SAME multi-model event normalise the list
+        # differently ("go" vs "go and cyber") — same brand + compatible type
+        # + one token set contained in the other ⇒ same event ("seal" vs
+        # "sealion" is not a subset either way, so distinct models stay apart).
         _CONNECTORS = {"and", "&", "и", "+", ","}
+        sq = squash_model(em)
         my = {w for w in em.split() if w not in _CONNECTORS}
-        if my:
-            prefix = f"{eb}|"
-            suffixes = tuple(f"|{_t}" for _t in types)
-            for key, val in recent.items():
-                if not key.startswith(prefix):
-                    continue
-                sfx = next((s for s in suffixes if key.endswith(s)), None)
-                if sfx is None:
-                    continue
-                other_model = key[len(prefix):-len(sfx)]
-                if not other_model or other_model == em:
-                    continue
-                theirs = {w for w in other_model.split() if w not in _CONNECTORS}
-                if theirs and (my <= theirs or theirs <= my):
-                    hit = val
-                    break
+        for key, val in recent.items():
+            parts = key.split("|")
+            if len(parts) != 3:
+                continue
+            kb, km, kt = parts
+            if kt not in types:
+                continue
+            if canonical_event_brand(kb) != eb:
+                continue
+            if squash_model(km) == sq:
+                hit = val
+                break
+            theirs = {w for w in km.split() if w not in _CONNECTORS}
+            if my and theirs and (my <= theirs or theirs <= my):
+                hit = val
+                break
     if hit is None:
         return None
     last_seen_iso, prev_url, display = hit
@@ -160,6 +223,7 @@ def published_dup_hint(
     *,
     threshold: float = 88.0,
     model_threshold: float = 62.0,
+    source_label: str = "уже публиковали",
 ) -> str | None:
     """ADVISORY — paraphrase check vs the editor's PUBLISHED archive
     ("Опубликованные (все)", normalised titles within the recency window).
@@ -201,20 +265,25 @@ def published_dup_hint(
     nt = normalise_title(title)
     if not nt:
         return None
+    # Brand gate through ALL name variants (canonical + every alias):
+    # event_brand "avtovaz" must also gate against a title that only says
+    # «Лада …» (normalised "lada …") — a bare ``eb in pt`` misses every
+    # other name of the same brand (jul-20 dup-wave forensics).
+    variants = brand_name_variants(eb) or frozenset({eb})
     for pt in pub_titles:
-        if not pt or eb not in pt:
-            continue  # brand gate: the archive title must mention this brand
+        if not pt or not any(v in pt for v in variants):
+            continue  # brand gate: the title must mention this brand
         ratio = fuzz.token_set_ratio(nt, pt)
         # B — same brand+model AND a plausibly-similar headline.
         if em and len(em) >= 3 and em in pt and ratio >= model_threshold:
             return (
-                f"(возможно дубль: уже публиковали о «{event_brand} "
+                f"(возможно дубль: {source_label} о «{event_brand} "
                 f"{event_model}» — проверьте)"
             )
         # A — no model confirmation: demand a strong full-title match.
         if ratio >= threshold:
             return (
-                "(возможно дубль: похожий заголовок уже публиковали "
+                f"(возможно дубль: похожий заголовок {source_label} "
                 "— проверьте)"
             )
     return None

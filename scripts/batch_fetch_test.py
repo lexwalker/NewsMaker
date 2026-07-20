@@ -1261,6 +1261,21 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         print(f"  Stage2a: event-key lookup skipped ({type(_e).__name__})")
         recent_ev = {}
 
+    # Tier 0.5 (jul-20 dup-wave): fuzzy paraphrase vs OUR OWN pushes of the
+    # last 30d. A story we fed on the 17th resurfaced from another outlet on
+    # the 19th and NO layer could see it (URL differs, wording differs, and
+    # pre-fix history rows carry no event keys). Same never-abort contract.
+    own_titles: set[str] = set()
+    try:
+        if DEDUP_STORE is not None:
+            own_titles = DEDUP_STORE.recent_pushed_titles(DEDUP_PORTAL, days=30)
+            if own_titles:
+                print(f"  Tier0.5: {len(own_titles)} own pushed titles "
+                      f"(30d anti-repeat enabled)")
+    except Exception as _e:  # noqa: BLE001
+        print(f"  Tier0.5: own-titles lookup skipped ({type(_e).__name__})")
+        own_titles = set()
+
     consec_errors = 0   # circuit breaker: N in a row → persistent failure
     aborted = ""        # non-empty = why the pass stopped early
     for i, r in enumerate(candidates, start=1):
@@ -1424,6 +1439,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 pub_titles=PUBLISHED_ALL_TITLES,
                 recent_ev=recent_ev,
                 recent_bm=recent_bm,
+                own_titles=own_titles,
             )
             if hint:
                 r.llm_reason = (

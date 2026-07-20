@@ -249,6 +249,44 @@ class DedupStore:
                 out[key] = (r["last_seen_at"], r["canonical_url"], display)
         return out
 
+    def recent_pushed_titles(self, portal: str, *, days: int = 30) -> set[str]:
+        """Normalised titles of rows WE accepted («Точно новость») in the last
+        ``days`` — the fuzzy anti-repeat base against OUR OWN recent pushes.
+
+        Why (jul-20 dup-wave): a story we pushed on the 17th resurfaced from
+        another outlet on the 19th and no layer could see it — exact URL
+        differs (different outlet), exact title differs (rewording), and the
+        17th's rows predate event-signature persistence, so the event layer
+        was blind too. The editor's archive covers only what THEY published,
+        with an ~18h export lag — our own feed history was checked nowhere.
+        Read-only, advisory."""
+        from datetime import timedelta
+        from news_agent.core.primary_source import normalise_title
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat()
+        out: set[str] = set()
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT title, cached_row_json FROM seen_articles "
+                "WHERE portal = ? AND last_seen_at IS NOT NULL "
+                "AND last_seen_at >= ? "
+                "AND cached_row_json IS NOT NULL AND cached_row_json != ''",
+                (portal, cutoff),
+            ).fetchall()
+        for r in rows:
+            try:
+                blob = json.loads(r["cached_row_json"])
+            except (ValueError, TypeError):
+                continue
+            if blob.get("verdict") != "Точно новость":
+                continue
+            nt = normalise_title(r["title"] or "")
+            if nt:
+                out.add(nt)
+        return out
+
     # ----------------------------------------------------- write
     def mark_many(
         self,
