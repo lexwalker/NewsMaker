@@ -920,3 +920,44 @@ def test_cjk_alias_matches_in_unspaced_context() -> None:
 
 def test_empty_brand_list_matches_nothing() -> None:
     assert _mentions_brand("Ford unveils the new Mustang", []) == set()
+
+
+# --- jul-20: a whitelisted outlet citing a wire agency deep-links it ---------
+# Editor on an auto.ru mag piece: «ИИ не видит ссылки на первоисточники в
+# самой статье» — the body deep-linked interfax.ru/amp/<id>, but the
+# whitelist-self shortcut returned auto.ru@high before Tier 1 ever saw it.
+
+def test_whitelisted_outlet_citing_press_host_yields_the_agency() -> None:
+    url, dom, conf = detect_primary_source(
+        article_url="https://trusted.example/mag/article/china-imports-record/",
+        body="Из Китая в Россию ввезли рекордное количество автомобилей, "
+             "сообщает Интерфакс. " * 4,
+        title="Рекордный импорт автомобилей из Китая",
+        outbound_links=["https://prnewswire.com/news-releases/china-imports-1234.html"],
+        brands=BRANDS, cues=CUES, whitelist_domains={"trusted.example"},
+    )
+    assert dom.endswith("prnewswire.com")
+    assert conf == "high"
+
+
+def test_whitelisted_original_without_press_links_stays_self() -> None:
+    url, dom, conf = detect_primary_source(
+        article_url="https://trusted.example/mag/article/own-research/",
+        body="Собственное исследование редакции о рынке. " * 4,
+        title="Исследование рынка",
+        outbound_links=["https://www.youtube.com/@somechannel"],
+        brands=BRANDS, cues=CUES, whitelist_domains={"trusted.example"},
+    )
+    assert url == "https://trusted.example/mag/article/own-research/"
+    assert conf == "high"
+
+
+def test_whitelist_press_carveout_ignores_shallow_press_links() -> None:
+    # A ROOT link to a wire agency (nav chrome) must not steal the primary.
+    url, dom, conf = detect_primary_source(
+        article_url="https://trusted.example/mag/article/own-piece/",
+        body="Текст статьи. " * 6, title="Статья",
+        outbound_links=["https://prnewswire.com/"],
+        brands=BRANDS, cues=CUES, whitelist_domains={"trusted.example"},
+    )
+    assert dom == "trusted.example"

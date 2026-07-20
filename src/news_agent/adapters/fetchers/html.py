@@ -559,24 +559,41 @@ def _pick_marked_source(soup: BeautifulSoup, page_url: str) -> str:
 
 
 def _pick_outbound_links(soup: BeautifulSoup, page_url: str) -> list[str]:
+    """External links from the page, narrowest useful scope first.
+
+    CASCADE, not first-tag-wins (jul-20, editor «ИИ не видит ссылки на
+    первоисточники»): auto.ru mag pages carry an <article> that is a TEASER
+    CARD with no links, while the real body — with the cited
+    interfax.ru/amp/… source — lives under <main>. The old
+    `find("article") or find("main")` picked the linkless <article> and
+    returned nothing. Now an empty scope falls through to the next wider one;
+    downstream junk/mirror/infra/nav filters absorb any extra chrome links a
+    wider scope brings in."""
     host = urlparse(page_url).netloc
-    out: list[str] = []
-    seen: set[str] = set()
-    article = soup.find("article") or soup.find("main") or soup
-    if not isinstance(article, Tag):
+
+    def collect(root: Tag) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for a in root.find_all("a", href=True):
+            absolute = urljoin(page_url, str(a.get("href")))
+            p = urlparse(absolute)
+            if p.scheme not in ("http", "https"):
+                continue
+            if p.netloc == host or not p.netloc:
+                continue
+            if absolute in seen:
+                continue
+            seen.add(absolute)
+            out.append(absolute)
         return out
-    for a in article.find_all("a", href=True):
-        absolute = urljoin(page_url, str(a.get("href")))
-        p = urlparse(absolute)
-        if p.scheme not in ("http", "https"):
+
+    for scope in (soup.find("article"), soup.find("main"), soup):
+        if not isinstance(scope, Tag):
             continue
-        if p.netloc == host or not p.netloc:
-            continue
-        if absolute in seen:
-            continue
-        seen.add(absolute)
-        out.append(absolute)
-    return out
+        out = collect(scope)
+        if out:
+            return out
+    return []
 
 
 _ARTICLE_HINTS = ("/news/", "/article/", "/post/", "/story/", "-news-",

@@ -586,6 +586,23 @@ def detect_primary_source(
         # own research). Redistribution hosts can be fetch-whitelisted too,
         # but a repost must never self-certify as the primary source (the
         # naavtotrasse case: primary=self at HIGH masked the real source).
+        #
+        # …UNLESS the article itself cites a PRESS-RELEASE host with a DEEP
+        # link (jul-20, editor on an auto.ru mag piece: «ИИ не видит ссылки
+        # на первоисточники в самой статье» — the body linked
+        # interfax.ru/amp/<id> and we still self-certified). Even a trusted
+        # outlet, when it explicitly deep-links a wire agency, is reporting
+        # THAT source. Narrow on purpose: press_release_hosts only (not
+        # preferred journalistic — those are related-reading noise on
+        # original pieces), deep links only, junk/mirror filtered.
+        for link in outbound_links:
+            if not link or _is_junk_link(link):
+                continue
+            d = domain_of(link)
+            if _same_site(d, article_domain) or _is_mirror(d, cues.mirror_hosts):
+                continue
+            if _press_release_host(d, cues.press_release_hosts) and _is_deep_url(link):
+                return link, d, "high"
         return article_url, domain_of(article_url), "high"
 
     # Filter out mirror posts, junk URLs, infra hosts, and navigation
