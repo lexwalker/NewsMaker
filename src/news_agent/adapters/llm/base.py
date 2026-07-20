@@ -1250,6 +1250,39 @@ Reject on-topic items that carry no concrete happening:
    нет. A NEW production start / new line for a NEW model («Avtotor launched
    welding line for SWM production») and RF production starts keep their
    existing routes.
+ - TRACK-ONLY specials and one-off niche performance builds - a car sold for
+   circuit use only (not road-legal), tuner track builds, muscle-truck
+   one-upmanship specials -> REJECT. Editor (17-19.07): «Jensen Interceptor
+   GTX - нет, он трековый», Morgan Supersport -> нет, Shelby F-150 Super
+   Snake -> нет. ROAD-legal performance versions of series models (BMW M3 CS,
+   AMG line) keep their routes, and a lap/track RECORD by a series model
+   stays Other news per step 3.
+ - INTEREST/behaviour surveys with no market transactions - «интерес к бренду
+   вырос», «X% водителей пересаживаются на…», «многих не волнует…» -
+   poll/survey demand pieces without sales, prices or deliveries -> REJECT.
+   Editor (16-19.07): «Interest in Volkswagen increased - не постим
+   подобное», «москвичи в два раза чаще пересаживаются на гибриды - не
+   нужно». MARKET-WIDE transaction statistics (выдача автокредитов,
+   АВТОСТАТ/АЕБ/ОКБ market figures) keep their existing routes - this
+   bullet only removes poll/survey pieces, it does not rescue anything
+   another rule rejects.
+ - carsharing USER-MILEAGE PR - operator-supplied usage trivia («проехали
+   500 млн км», «12 000 кругосветок», trips-per-user records) -> REJECT,
+   same operator-PR class as promos above. Editor (16.07): «не нужно» x2.
+   Carsharing MARKET stats (оборот, спрос, тарифы) stay Local specifics.
+ - LAB experiments / research demos with NO series product - «инженеры
+   разработали/испытали» fuel-from-X, bench/stand trials by engineers or
+   research teams with no production application -> REJECT. Editor
+   (16-19.07): «топливо из растительного масла/одуванчиков - уже не помню
+   какой по счету дубль ненужной новости». NOT this class: an AUTOMAKER's
+   own tech/feature revealed in or for a PRODUCTION model (in-car tech in a
+   series vehicle), a technology going into series (solid-state batteries
+   enter production), and model-specific patent/trademark filings - all
+   keep their existing step-3 routes.
+ - micro-EVs of golf-cart class - LSV/NEV with ~25 mph (40 km/h) top speed,
+   not highway-legal -> REJECT. Editor (16.07): «не думаю, что нам нужен
+   гольф кар» (Chip $15,000 EV). Road-homologated quadricycles and kei cars
+   for a real market keep their routes.
  - already covered / stale - if we (or the same event) ran already, skip.
  - a model temporarily PULLED FROM SALE ahead of a known facelift/refresh, with
    NO production-end announced - a routine model-year gap, not news. Editor
