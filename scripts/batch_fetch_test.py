@@ -1722,6 +1722,40 @@ def _run_corpus_primary_source_pass(article_rows: list[ArticleRow]) -> None:
     print(f"Primary-source L2: upgraded {upgraded} rows from corpus.")
 
 
+# Same-site redirector paths that wrap a marked-source link. ixbt (jul-21
+# editor: «ссылка на первоисточник есть в самой статье»): the «Источник» link
+# is api.ixbt.com/to/<encrypted> — SAME-site, so Tier 0.5 discarded it and the
+# row fell to self@low, while one HEAD request resolves the 302 to the real
+# target (the observed case: x.com/Tesla/status/… — the brand's own post).
+_REDIRECT_PATH_MARKERS = ("/to/", "/go/", "/away", "/redirect", "/out/")
+
+
+def _resolve_same_site_redirect(client, hint_url: str, article_url: str) -> str:
+    """Resolve a marked-source link wrapped in the site's OWN redirector.
+
+    Only fires for a same-site hint whose path looks like a redirect (so a
+    normal external hint costs nothing); one HEAD, no body. On any failure —
+    or if the redirect leads back to the same site — returns the input
+    unchanged, so behaviour degrades to exactly what it was before."""
+    try:
+        if not hint_url:
+            return hint_url
+        from news_agent.core.primary_source import _normalise_domain, _same_site
+        ad = _normalise_domain(domain_of(article_url))
+        if not _same_site(domain_of(hint_url), ad):
+            return hint_url  # already external — nothing to resolve
+        path = urlparse(hint_url).path or ""
+        if not any(m in path for m in _REDIRECT_PATH_MARKERS):
+            return hint_url
+        resp = client.head(hint_url, follow_redirects=False, timeout=6.0)
+        loc = resp.headers.get("location", "")
+        if loc.startswith("http") and not _same_site(domain_of(loc), ad):
+            return loc
+    except Exception:  # noqa: BLE001 — resolution is best-effort
+        pass
+    return hint_url
+
+
 def _fetch_and_score(
     client: httpx.Client,
     link: str,
@@ -1764,6 +1798,14 @@ def _fetch_and_score(
         row.verdict = "Отклонить (не удалось извлечь)"
         article_rows.append(row)
         return
+
+    # ixbt-class marked source: unwrap the site's own redirector so Tier 0.5
+    # sees the real external target instead of discarding a same-site link.
+    _hint = getattr(article, "source_hint_url", "") or ""
+    if _hint:
+        _resolved = _resolve_same_site_redirect(client, _hint, article.url)
+        if _resolved != _hint:
+            article.source_hint_url = _resolved
 
     if _score_article(article, r, row):
         article_rows.append(row)
