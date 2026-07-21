@@ -1580,16 +1580,19 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
         primary (cnevpost, carnewschina…): the editor wants the company's OWN
         site, an aggregator is only a fallback «когда с ВПН уже сайт не
         работает».
-      • reveal / partnership (jul-17: «ок, но нужен пресс» on an Xpeng
-        partnership; «пресс есть» on a DS reveal) — override ONLY a WEAK
-        primary: confidence low (self-fallback, no source found) or a
-        redistribution host standing as the source. Measured on cache history
-        before shipping: a blanket override would flip 277 rows including
-        carscoops/motor1 deep links — the exact primaries P2-A tells us to
-        keep — while the weak-gate flips 152, all of the naavtotrasse/kolesa/
-        auto.mail-as-primary class. A reveal ON a preferred journalistic site
-        (cnevpost self@high) is deliberately NOT overridden yet — one editor
-        comment is not enough to reverse the P2-A doctrine (маятник).
+      • reveal / partnership / facelift / tech (jul-17: «ок, но нужен пресс»
+        on an Xpeng partnership, «пресс есть» on a DS reveal; jul-21: «нужен
+        пресс» ×3 — Maybach GLS facelift, VW autonomous shuttles, Bentley
+        sound tech) — override ONLY a WEAK primary: confidence low
+        (self-fallback, no source found) or a redistribution host standing as
+        the source. Measured on cache history before shipping: blanket
+        reveal/partnership would flip 277 rows incl. carscoops/motor1 deep
+        links (P2-A says keep those); the weak-gate flips 152
+        (reveal/partnership) + 112 (facelift/tech), all of the
+        naavtotrasse/kolesa/auto.mail-as-primary class, while 75 deep
+        journalistic facelift/tech primaries stay. A story ON a preferred
+        journalistic site (cnevpost self@high) is deliberately NOT overridden
+        — editor comments so far don't outweigh the P2-A doctrine (маятник).
     We never override when the primary is already on an official brand-owned
     domain (a specific press release beats the generic newsroom index)."""
     try:
@@ -1614,7 +1617,8 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
         if r.verdict not in ("Точно новость", "Возможно новость"):
             continue
         et = r.event_type
-        if et not in ("sales_stat", "financial", "reveal", "partnership"):
+        if et not in ("sales_stat", "financial", "reveal", "partnership",
+                      "facelift", "tech"):
             continue
         nr = newsrooms.get((r.event_brand or "").strip().lower())
         if not nr:
@@ -1624,7 +1628,7 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
         # newsroom itself) → keep it, it's already the company's own site.
         if r.primary_domain == nr_dom or _matches_brand(r.primary_domain, brands):
             continue
-        if et in ("reveal", "partnership"):
+        if et in ("reveal", "partnership", "facelift", "tech"):
             weak = (r.primary_confidence == "low") or _is_redis(r.primary_domain)
             if not weak:
                 continue  # P2-A: keep the deep journalistic primary

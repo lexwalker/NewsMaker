@@ -125,6 +125,19 @@ brands:
   - mercedes-benz.com
   - media.mercedes-benz.com
   - mercedes-benz.ru
+# jul-21: the SAME Maybach GLS facelift ran twice (auto.ru overnight + ixbt
+# morning) — the LLM keyed one row "mercedes-maybach" and neither form existed
+# in this config, so canonicalisation had nothing to unify. Kept as its OWN
+# brand (same reasoning as Mercedes-AMG staying separate — the editor treats
+# the sub-brand as its own bucket); what matters for dedup is that all forms
+# collapse to ONE name. domains deliberately empty (Jensen lesson: never add
+# an unverified domain — Maybach press lives on Mercedes' group media site).
+- brand: Mercedes-Maybach
+  aliases:
+  - Maybach
+  - Майбах
+  - Мерседес-Майбах
+  domains: []
 - brand: Ford
   aliases:
   - Форд
@@ -303,6 +316,14 @@ brands:
   domains:
   - dongfeng-global.com
   - dfmc.com.cn
+# jul-21: Dongfeng's premium line ran as a dup because the SAME car carries two
+# names — «Yijing X9» (20.07, ок) vs «Epicland X9» (export name, «дубль»).
+# One brand entry with both observed forms so the event keys collapse. Only
+# forms actually seen in the feed are listed; domains empty (unverified).
+- brand: Yijing
+  aliases:
+  - Epicland
+  domains: []
 - brand: Zeekr
   aliases:
   - Зикр

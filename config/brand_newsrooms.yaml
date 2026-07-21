@@ -24,6 +24,13 @@ brand_newsrooms:
   volkswagen: https://www.volkswagen-newsroom.com/en
   bmw: https://www.press.bmwgroup.com/global
   mercedes-benz: https://group-media.mercedes-benz.com
+  # jul-21 editor «нужен пресс» on a Maybach GLS facelift — Maybach releases
+  # live on the group media site. Keys match LLM event_brand spellings.
+  mercedes-maybach: https://group-media.mercedes-benz.com
+  maybach: https://group-media.mercedes-benz.com
+  # jul-21 editor «нужен пресс» on a Bentley tech story; bentleymedia.com is
+  # already a verified press_release_host in primary_source_cues.yaml.
+  bentley: https://www.bentleymedia.com
   ford: https://media.ford.com
   general motors: https://news.gm.com
   gm: https://news.gm.com
