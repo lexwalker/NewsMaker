@@ -132,6 +132,13 @@ brands:
 # the sub-brand as its own bucket); what matters for dedup is that all forms
 # collapse to ONE name. domains deliberately empty (Jensen lesson: never add
 # an unverified domain — Maybach press lives on Mercedes' group media site).
+# jul-21 coverage audit: a covered DS N°7 story counted as a miss — «DS» was
+# in no brand entry, so the metric's brand bucket was empty on both sides.
+# Word-boundary matching makes the bare "DS" alias safe ("odds" won't hit).
+- brand: DS Automobiles
+  aliases:
+  - DS
+  domains: []
 - brand: Mercedes-Maybach
   aliases:
   - Maybach

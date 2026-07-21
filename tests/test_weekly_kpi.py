@@ -119,3 +119,45 @@ def test_section_eq() -> None:
     assert _section_eq("Dealer news / Promo", "Dealer news/promo")
     assert not _section_eq("Confirmed", "Rumors")
     assert not _section_eq("", "Confirmed")
+
+
+# --- jul-21 coverage-miss audit fixes ---------------------------------------
+
+def test_numero_and_dash_fold_matches_ds_case() -> None:
+    """«…№7 SUV - Elysee» vs «DS N°7 Elysee…»: the numero forms differed AND
+    normalise_title's source-suffix peeler ate «- Elysee…». Both fixed."""
+    from news_agent.core.weekly_kpi import Item, build_index, match
+    ours = [Item(title="Президентский электрокроссовер DS N°7 Elysee: удлиненная колесная база, броня и гидропневматика")]
+    pub = Item(title="DS introduced special version of electric №7 SUV - Elysee in France",
+               title_alt="DS представила спецверсию электрокроссовера №7 - Elysee")
+    m, how, _ = match(pub, build_index(ours))
+    assert m and how == "fuzzy"
+
+
+def test_family_bridge_matches_gwm_haval_greatwall() -> None:
+    """Editor says «Haval … GWM H10», source says «Great Wall H10» — one
+    family, metric-only bridge + shared model anchor h10."""
+    from news_agent.core.weekly_kpi import Item, build_index, match
+    ours = [Item(title="Новый внедорожник Great Wall H10 доступен к заказу: он больше и мощнее Dargo")]
+    pub = Item(title="Haval announced start of collecting orders for GWM H10 SUV in China",
+               title_alt="Хавейл открыл приём заказов на внедорожник GWM H10")
+    m, how, _ = match(pub, build_index(ours))
+    assert m
+
+
+def test_anchor_does_not_glue_different_models() -> None:
+    from news_agent.core.weekly_kpi import Item, build_index, match
+    ours = [Item(title="Новый внедорожник Great Wall H10 доступен к заказу")]
+    pub = Item(title="Haval certified the H9 SUV in Russia", title_alt="Хавейл сертифицировал H9")
+    m, _, _ = match(pub, build_index(ours))
+    assert not m
+
+
+def test_denominator_exclusions() -> None:
+    from news_agent.core.weekly_kpi import Item, is_editor_own_content, is_routine_brief
+    assert is_editor_own_content(Item(title="Deepal S07 test-drive", section="Test-drive"))
+    assert is_editor_own_content(Item(title="Toyota Camry test-drive (RU)"))
+    assert not is_editor_own_content(Item(title="Camry crash test results", url="https://x/y"))
+    assert is_routine_brief(Item(title="Oil prices (USD): Brent 86,08/ WTI 79,76 (RU)"))
+    assert is_routine_brief(Item(title="Central Bank increased USD rate on July 15 to 77,49 RUB (RU)"))
+    assert not is_routine_brief(Item(title="Central Bank of Brazil approved car loan reform"))

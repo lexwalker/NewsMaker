@@ -46,6 +46,8 @@ from news_agent.core.reject_stage import (  # noqa: E402
     S3_HEURISTIC, S4_LLM, classify_outcome,
 )
 from news_agent.core.weekly_kpi import (  # noqa: E402
+    is_editor_own_content,
+    is_routine_brief,
     Item, active_collection_days, build_index, coverage_by_day,
     coverage_day_aligned, precision_and_section, reject_right,
 )
@@ -179,8 +181,19 @@ def main() -> int:
     archive_entries, sec_by_key, dated = load_archive(svc)
     collection, accepted, rejected, coll_dates = load_cache(since, until)
 
-    # editor pubs THIS WEEK, kept WITH their date for day-alignment
-    dated_pubs = [(dt.date(), it) for dt, it in dated if since <= dt <= until]
+    # editor pubs THIS WEEK, kept WITH their date for day-alignment.
+    # Denominator exclusions (jul-21 miss audit, manager-agreed): the editor's
+    # OWN test-drives (no source exists to collect) and routine daily market
+    # briefs (oil/ЦБ rates — the bot must not collect these). Counts reported.
+    _in_window = [(dt.date(), it) for dt, it in dated if since <= dt <= until]
+    _own = [x for x in _in_window if is_editor_own_content(x[1])]
+    _routine = [x for x in _in_window if not is_editor_own_content(x[1])
+                and is_routine_brief(x[1])]
+    dated_pubs = [x for x in _in_window
+                  if not is_editor_own_content(x[1]) and not is_routine_brief(x[1])]
+    print(f"denominator: {len(_in_window)} pubs in window − "
+          f"{len(_own)} editor-own (test-drives) − {len(_routine)} routine "
+          f"briefs (oil/rates) = {len(dated_pubs)}")
     coll_idx = build_index(collection)
     arch_idx = build_index(archive_entries)
 

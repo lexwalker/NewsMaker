@@ -43,6 +43,66 @@ DEFAULT_THRESHOLD = 85.0
 MIN_TITLE_TOKENS = 3
 
 
+# Numero-sign forms: the editor writes «№7», our feed writes «N°7» — after
+# normalise_title they tokenised differently and a genuinely-covered story
+# (DS N°7 Elysee, jul-21 audit) counted as a coverage MISS. Unify to " n "
+# before normalisation on BOTH sides.
+_NUMERO_RE = None  # compiled lazily (module import stays light)
+_DASH_RE = None
+_ANCHOR_RE = None
+
+
+def _fold_numero(t: str) -> str:
+    """«№7»/«N°7» → " n7" — one joined token, so it doubles as a model
+    anchor; both sides fold identically («№7» editor-side, «N°7» ours)."""
+    global _NUMERO_RE
+    if _NUMERO_RE is None:
+        import re
+        _NUMERO_RE = re.compile(r"(?:№|[Nn]°)\s*")
+    return _NUMERO_RE.sub(" n", t or "")
+
+
+def _fold_dashes(t: str) -> str:
+    """Fold dash/pipe separators to spaces BEFORE normalise_title: its
+    source-suffix peeler treats a trailing «- Word Word» as a site name and
+    ate the most distinctive token of the jul-21 audit miss («…electric №7
+    SUV - Elysee in France» lost "Elysee"). Metric-side only."""
+    global _DASH_RE
+    if _DASH_RE is None:
+        import re
+        _DASH_RE = re.compile(r"\s[—–|-]\s")
+    return _DASH_RE.sub(" ", t or "")
+
+
+def _anchor_tokens(norm: str) -> frozenset:
+    """Model-like tokens: contain BOTH a letter and a digit (h10, n7, 07l).
+    Pure numbers and years are excluded — they anchor nothing."""
+    global _ANCHOR_RE
+    if _ANCHOR_RE is None:
+        import re
+        _ANCHOR_RE = re.compile(r"^(?=.*[a-z])(?=.*\d)[a-z0-9]{2,10}$")
+    return frozenset(w for w in (norm or "").split() if _ANCHOR_RE.match(w))
+
+
+# Corporate FAMILIES for the metric's brand gate only. The jul-21 coverage
+# audit found a covered story counted as a miss because the editor titled it
+# «Haval … GWM H10» while our source wrote «Great Wall H10» — three names,
+# one family, and the brand-gated fuzzy never compared them. Bridging is
+# METRIC-ONLY (dedup keeps brands separate on purpose) and the >=85 title
+# similarity still applies, so cross-brand collisions stay bounded.
+_BRAND_FAMILIES: list[set] = [
+    {"haval", "gwm", "great wall", "tank", "wey", "ora"},
+]
+
+
+def _brand_bucket(brand: str) -> str:
+    b = (brand or "").strip().lower()
+    for fam in _BRAND_FAMILIES:
+        if b in fam:
+            return "|".join(sorted(fam))
+    return b
+
+
 @dataclass
 class Item:
     """A news item from either side (editor publication or our article)."""
@@ -53,11 +113,12 @@ class Item:
 
     @property
     def brand(self) -> str:
-        return canonicalize_brand(f"{self.title} {self.title_alt}")
+        return _brand_bucket(canonicalize_brand(f"{self.title} {self.title_alt}"))
 
     def norms(self) -> list[str]:
         out = []
         for t in (self.title, self.title_alt):
+            t = _fold_dashes(_fold_numero(t))
             n = normalise_title(t) if t else ""
             if len([x for x in n.split() if x]) >= MIN_TITLE_TOKENS:
                 out.append(n)
@@ -71,6 +132,18 @@ class Index:
     by_brand: dict = field(default_factory=dict)
 
 
+# A shared MODEL anchor (letter+digit token: h10, n7) inside the SAME
+# non-empty brand bucket is strong evidence two rewordings describe one story
+# — the jul-21 audit found two PROVEN-covered stories counted as misses at
+# ratio ~52 («Haval … GWM H10» vs «Great Wall H10 …», «DS №7 - Elysee» vs
+# «DS N°7 Elysee …»). With an anchor the similarity bar drops to this value;
+# without one the strict DEFAULT_THRESHOLD stands. Kept above the 50s the
+# audit pairs actually score, documented risk: two DIFFERENT same-model
+# stories in one window can now cross-match — bounded by the anchor + bucket
+# + ratio, and honest in the direction of fixing PROVEN undercounts.
+ANCHORED_THRESHOLD = 50.0
+
+
 def build_index(items: list[Item]) -> Index:
     idx = Index()
     for it in items:
@@ -80,14 +153,15 @@ def build_index(items: list[Item]) -> Index:
                 idx.url_keys.add(k)
         b = it.brand
         for n in it.norms():
-            idx.by_brand.setdefault(b, []).append((n, it.section))
+            idx.by_brand.setdefault(b, []).append((n, it.section, _anchor_tokens(n)))
     return idx
 
 
 def match(item: Item, idx: Index, threshold: float = DEFAULT_THRESHOLD):
     """Return (matched: bool, method: 'url'|'fuzzy'|'none', section: str).
     Exact url_key first (zero false positives), then brand-gated fuzzy title
-    (only within the same canonical brand → no cross-brand collisions)."""
+    (only within the same canonical brand → no cross-brand collisions); a
+    shared model anchor lowers the similarity bar (see ANCHORED_THRESHOLD)."""
     if item.url and url_key(item.url) in idx.url_keys:
         return True, "url", ""        # section unknown via url (archive section
                                       # is looked up by the caller if needed)
@@ -95,15 +169,54 @@ def match(item: Item, idx: Index, threshold: float = DEFAULT_THRESHOLD):
     if not qn:
         return False, "none", ""
     cands = idx.by_brand.get(item.brand, [])
+    q_anchors = frozenset().union(*(_anchor_tokens(q) for q in qn)) if qn else frozenset()
     best = 0.0
     best_sec = ""
-    for n, sec in cands:
+    for n, sec, n_anchors in cands:
         s = max(fuzz.token_set_ratio(q, n) for q in qn)
+        # anchored: same non-empty brand bucket + shared model token
+        if (item.brand and q_anchors and n_anchors & q_anchors
+                and s >= ANCHORED_THRESHOLD):
+            s = max(s, threshold)  # promote past the strict bar
         if s > best:
             best, best_sec = s, sec
     if best >= threshold:
         return True, "fuzzy", best_sec
     return False, "none", ""
+
+
+# ---- coverage-denominator exclusions (jul-21 miss audit, manager-agreed) ---
+# Two publication classes are STRUCTURALLY unreachable for the bot, so keeping
+# them in the denominator understates честный coverage:
+#   * the editor's OWN test-drives («Deepal S07 test-drive») — original
+#    content with no source URL to collect;
+#   * routine daily market briefs (oil price, ЦБ currency rates) — the bot is
+#     explicitly not supposed to collect these (manager decision 21.07).
+_ROUTINE_RE = None
+
+
+def is_editor_own_content(it: "Item") -> bool:
+    sec = (it.section or "").lower()
+    if "test-drive" in sec or sec == "test drive":
+        return True
+    t = (it.title or "").lower()
+    return (not it.url) and ("test-drive" in t or "тест-драйв" in t
+                             or "comparative test" in t)
+
+
+def is_routine_brief(it: "Item") -> bool:
+    global _ROUTINE_RE
+    if _ROUTINE_RE is None:
+        import re
+        _ROUTINE_RE = re.compile(
+            r"^\s*(oil prices\b|цены на нефть\b"
+            r"|central bank (increased|decreased|raised|lowered)\b"
+            r"|цб (повысил|понизил|снизил) (курс|ставку)"
+            r"|курс (доллара|евро|юаня)\b)", re.I)
+    for t in (it.title, it.title_alt):
+        if t and _ROUTINE_RE.search(t):
+            return True
+    return False
 
 
 def _rate(hit: int, tot: int) -> float:
