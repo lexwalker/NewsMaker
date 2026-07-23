@@ -144,9 +144,18 @@ def _parse_post(
     if not body:
         return None  # media-only post without caption — skip
 
-    # Title: first line, clipped.
-    title = body.split("\n", 1)[0].strip()[:220]
-    if len(title) < 3:
+    # Title: first MEANINGFUL line, clipped. (jul-24 miss-funnel: Telegram
+    # wraps emoji in their own tags and get_text("\n") puts them on separate
+    # lines, so a post OPENING with an emoji got title="🚘" (<3 chars) and
+    # the whole post was silently dropped — ~3 editor pubs/week. Skip leading
+    # lines with no letters/digits instead of bailing.)
+    title = ""
+    for line in body.split("\n"):
+        line = line.strip()
+        if len(line) >= 3 and any(ch.isalnum() for ch in line):
+            title = line[:220]
+            break
+    if not title:
         return None
 
     # Published time

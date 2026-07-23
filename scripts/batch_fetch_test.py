@@ -137,6 +137,9 @@ _HIGH_VOLUME_DOMAINS = frozenset({
     # RU mass-market portals
     "auto.ru", "auto.mail.ru", "autonews.ru", "autostat.ru",
     "kolesa.ru", "abreview.ru", "autoreview.ru", "iz.ru",
+    # interfax was missing entirely (jul-24 funnel: 6 editor pubs/week from
+    # a wire agency stuck at the default cap 15) — plain omission.
+    "interfax.ru",
     "tass.ru", "ria.ru", "kommersant.ru", "rg.ru", "vedomosti.ru",
     "lenta.ru", "rbc.ru", "naavtotrasse.ru", "motor.ru",
     "ixbt.com", "drom.ru", "motorpage.ru", "zr.ru",
@@ -166,18 +169,37 @@ _DEEP_INDEX_DOMAINS = frozenset({
     "drom.ru", "kolesa.ru", "motorpage.ru", "autoreview.ru", "abreview.ru",
     "autonews.ru", "motor.ru", "autoevolution.com", "thekoreancarblog.com",
     "cleantechnica.com",
+    # jul-24 coverage push (boss: охват первичен). Probe-measured: iz.ru
+    # rubric pages expose 65-67 fresh links each (root 165) vs the old cap
+    # 35 — ~2x truncation, 3 editor pubs/week lost. iz.ru is fetch-healthy
+    # (WARP exclusion + Playwright for DDoS-Guard already in place).
+    "iz.ru",
 })
 ITEMS_PER_SOURCE_DEEP = 60
 
+# Source-specific caps above the deep tier (jul-24, probe-measured).
+# tass.ru/rss/v2.xml is a FIXED 100-item rolling window covering only ~4h of
+# TASS output (~600 items/day): cap 60 discards 40% of every fetch for no
+# reason — take the whole window; the run cadence (day prog + 23:30 evening
+# prog + 4h hot lane) does the rest. The cheap relevance heuristic drops
+# non-auto items before any LLM cost.
+_SOURCE_CAP_OVERRIDES: dict[str, int] = {
+    "tass.ru": 100,
+}
+
 
 def _items_cap_for(url: str) -> int:
-    """Per-source item cap: pure-auto deep-index portals 60, other high-volume
-    domains 35, everything else 15. Matches by domain incl. subdomains."""
+    """Per-source item cap: explicit overrides first, then pure-auto
+    deep-index portals 60, other high-volume domains 35, everything else 15.
+    Matches by domain incl. subdomains."""
     host = domain_of(url)
 
     def _member(pool: frozenset[str]) -> bool:
         return host in pool or any(host.endswith("." + d) for d in pool)
 
+    for d, cap in _SOURCE_CAP_OVERRIDES.items():
+        if host == d or host.endswith("." + d):
+            return cap
     if _member(_DEEP_INDEX_DOMAINS):
         return ITEMS_PER_SOURCE_DEEP
     if _member(_HIGH_VOLUME_DOMAINS):

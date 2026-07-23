@@ -52,3 +52,50 @@ def test_parse_channel_html_returns_posts_newest_first() -> None:
     assert "Toyota" in toyota.title
     assert toyota.image_url and "camry.jpg" in toyota.image_url
     assert any("toyota.com" in link for link in toyota.outbound_links)
+
+
+def test_emoji_opening_post_keeps_real_title() -> None:
+    # jul-24 miss-funnel bug: Telegram wraps emoji in their own tags and
+    # get_text("\n") puts them on a separate line — a post OPENING with an
+    # emoji got title="🚘" (<3 chars) and was dropped entirely.
+    html = """
+    <div class="tgme_widget_message_wrap">
+      <div class="tgme_widget_message" data-post="chan/777">
+        <div class="tgme_widget_message_text">
+          <i class="emoji"><b>🚘</b></i><b>Новый кроссовер Tenet A8 встал на конвейер</b>
+          <br/>Подробности в статье.
+        </div>
+        <time datetime="2026-07-23T10:00:00+00:00"></time>
+      </div>
+    </div>"""
+    posts = parse_channel_html(
+        html=html,
+        channel_preview_url="https://t.me/s/chan",
+        source_name="chan",
+        source_url="https://t.me/chan",
+        source_language="ru",
+        max_items=10,
+    )
+    assert len(posts) == 1
+    assert "Tenet A8" in posts[0].title
+    assert not posts[0].title.startswith("🚘")
+
+
+def test_emoji_only_post_still_skipped() -> None:
+    html = """
+    <div class="tgme_widget_message_wrap">
+      <div class="tgme_widget_message" data-post="chan/778">
+        <div class="tgme_widget_message_text"><i class="emoji">🔥</i>
+        <i class="emoji">🔥</i></div>
+        <time datetime="2026-07-23T10:00:00+00:00"></time>
+      </div>
+    </div>"""
+    posts = parse_channel_html(
+        html=html,
+        channel_preview_url="https://t.me/s/chan",
+        source_name="chan",
+        source_url="https://t.me/chan",
+        source_language="ru",
+        max_items=10,
+    )
+    assert posts == []
