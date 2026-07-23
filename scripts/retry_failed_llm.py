@@ -386,6 +386,7 @@ def main() -> int:
             # update — $1-2 of recovery work thrown away, sheet unchanged).
             print(f"\n!!! LLM budget exceeded at {idx}/{len(targets)} — stopping; "
                   f"flushing {len(updates)} accumulated updates.", file=sys.stderr)
+            aborted_early = True
             break
         except Exception as e:  # noqa: BLE001
             print(f"  [{idx}/{len(targets)}] EDITORIAL_REVIEW FAILED row {sheet_row}: {str(e)[:160]}")
@@ -398,6 +399,7 @@ def main() -> int:
                 print(f"\n!!! persistent LLM failure ({str(e)[:120]}) — aborting "
                       f"retry pass at {idx}/{len(targets)}; flushing "
                       f"{len(updates)} accumulated updates.", file=sys.stderr)
+                aborted_early = True
                 break
             continue
         consec_errors = 0
@@ -468,6 +470,7 @@ def main() -> int:
         except BudgetExceeded as e:
             print(f"\n!!! LLM budget exceeded at {idx}/{len(targets)} — stopping; "
                   f"flushing {len(updates)} accumulated updates.", file=sys.stderr)
+            aborted_early = True
             break
         except Exception as e:  # noqa: BLE001
             print(f"  [{idx}/{len(targets)}] TRANSLATE FAILED row {sheet_row}: {str(e)[:160]}")
@@ -578,6 +581,17 @@ def main() -> int:
             f"\nDone. {n_translated} translated, {rejected_count} rejected by LLM. "
             f"Total cost: ${budget.spent_usd:.4f}"
         )
+    if hint:
+        if aborted_early:
+            # Partial recovery: keep the hint so the next retry resumes THIS
+            # tab, and stop the chain — clustering a half-classified tab would
+            # push rows the editor never vetted.
+            print("  hint kept (partial recovery) — re-run retry to finish; "
+                  "chain stopped.", file=sys.stderr)
+            return 3
+        _consume_hint(hint, budget.spent_usd)
+    elif aborted_early:
+        return 3
     return 0
 
 
