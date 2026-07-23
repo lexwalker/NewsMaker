@@ -467,6 +467,25 @@ _INFRA_HOSTS: frozenset[str] = frozenset({
     "wordpress.com", "wp.com", "w.org", "jetpack.com",
 })
 
+# Hard-paywalled outlets — NEVER emitted as the primary source (editor,
+# jul-23: «reuters ставить нельзя — он по подписке. никакие сайты с
+# подпиской мы не ставим»). They stay valid as fetch sources / corpus
+# articles; this only blocks CHOOSING them as the «Первоисточник» link.
+# Deliberately minimal + unambiguous: only outlets whose articles are
+# subscription-gated for an anonymous reader. autonews.com is the US
+# Automotive News (paywalled) — NOT autonews.ru (suffix match is anchored
+# on '.', so the RU site never matches).
+_PAYWALL_HOSTS: frozenset[str] = frozenset({
+    "reuters.com", "bloomberg.com", "wsj.com", "ft.com",
+    "autonews.com", "asia.nikkei.com",
+})
+
+
+def _is_paywalled(candidate_domain: str) -> bool:
+    """True for a hard-paywalled outlet, subdomain-aware (www.reuters.com)."""
+    n = _normalise_domain(candidate_domain)
+    return any(n == h or n.endswith("." + h) for h in _PAYWALL_HOSTS)
+
 # Tier-1 Russian outlets. When an aggregator links out to one of these, it is a
 # real candidate for "who actually reported this" — the editor asks for exactly
 # this attribution («первоисточник gazeta.ru…», «Первоисточник 1prime.ru…»,
@@ -578,7 +597,9 @@ def detect_primary_source(
         return source_hint_url, domain_of(source_hint_url), "high"
     if source_hint_url and _is_deep_url(source_hint_url):
         hd = domain_of(source_hint_url)
-        if hd and not _same_site(hd, article_domain) and not _is_mirror(hd, cues.mirror_hosts):
+        if (hd and not _same_site(hd, article_domain)
+                and not _is_mirror(hd, cues.mirror_hosts)
+                and not _is_paywalled(hd)):
             return source_hint_url, hd, "high"
     if (article_domain in whitelist_norm
             and article_domain not in _REDISTRIBUTION_HOSTS):
@@ -616,6 +637,7 @@ def detect_primary_source(
         if link
         and not _is_junk_link(link)
         and not _is_mirror(domain_of(link), cues.mirror_hosts)
+        and not _is_paywalled(domain_of(link))
         and not _is_infra_or_nav(domain_of(link), _dom_freq,
                                  cues.press_release_hosts)
     ]
@@ -754,6 +776,8 @@ def arbitration_candidates(
         nd = _normalise_domain(d)
         if _is_mirror(d, cues.mirror_hosts):
             continue
+        if _is_paywalled(nd):
+            continue
         if _is_infra_or_nav(d, _dom_freq, cues.press_release_hosts):
             continue
         if _same_site(d, article_domain):
@@ -871,6 +895,8 @@ def detect_earliest_in_corpus(
                 continue
             if not _same_site(entry.domain, hint):
                 continue
+            if _is_paywalled(entry.domain):
+                continue
             ratio = fuzz.token_set_ratio(target_norm, normalise_title(entry.title))
             if ratio >= threshold and (best_hint is None or ratio > best_hint[1]):
                 best_hint = (entry, ratio)
@@ -883,6 +909,8 @@ def detect_earliest_in_corpus(
             continue
         if _is_mirror(entry.domain, mirror_set):
             # e.g. t.me / max.ru / vk.com — not a primary source
+            continue
+        if _is_paywalled(entry.domain):
             continue
         if entry.published_at is None or article_published_at is None:
             # can't compare ordering without both timestamps

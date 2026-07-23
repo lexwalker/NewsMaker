@@ -157,15 +157,17 @@ def test_fallback_to_article_when_no_signal() -> None:
 
 
 def test_cue_phrase_with_external_link_is_medium() -> None:
+    # (jul-23: the fixture used reuters.com here; paywalled hosts are now
+    # blocked as primaries, so a non-paywalled outlet stands in.)
     url, dom, conf = detect_primary_source(
         article_url="https://autoblog.example/story",
-        body="Сообщает Рейтер. Подробности ниже.",
+        body="Сообщает зарубежная пресса. Подробности ниже.",
         title="Новости",
-        outbound_links=["https://www.reuters.com/article-xyz"],
+        outbound_links=["https://www.freep.com/article-xyz"],
         brands=BRANDS,
         cues=CUES,
     )
-    assert dom.endswith("reuters.com")
+    assert dom.endswith("freep.com")
     assert conf == "medium"
 
 
@@ -961,3 +963,91 @@ def test_whitelist_press_carveout_ignores_shallow_press_links() -> None:
         brands=BRANDS, cues=CUES, whitelist_domains={"trusted.example"},
     )
     assert dom == "trusted.example"
+
+
+# --- Paywall block (editor jul-23: «никакие сайты с подпиской не ставим») ---
+
+
+def test_paywalled_source_hint_never_primary() -> None:
+    # Even an EXPLICIT «Источник: reuters.com/…» deep link must not become
+    # the primary — reuters is subscription-gated for the reader.
+    url, dom, conf = detect_primary_source(
+        article_url="https://autoblog.example/news/us-parts-story",
+        body="Автопром США срочно меняет китайские компоненты.",
+        title="Автопром США меняет компоненты",
+        outbound_links=[],
+        brands=BRANDS,
+        cues=CUES,
+        source_hint_url="https://www.reuters.com/business/autos-transportation/us-story-2026-07-22/",
+    )
+    assert dom == "autoblog.example"
+    assert conf == "low"
+
+
+def test_paywalled_outbound_skipped_next_candidate_wins() -> None:
+    # Tier 4 (cue phrase + external link): the reuters link is filtered out,
+    # so the next non-paywalled external candidate is chosen instead.
+    url, dom, conf = detect_primary_source(
+        article_url="https://autoblog.example/news/us-parts-story",
+        body="Как сообщает зарубежная пресса, автопром меняет поставщиков.",
+        title="Автопром меняет поставщиков",
+        outbound_links=[
+            "https://www.reuters.com/business/autos-transportation/us-story-2026-07-22/",
+            "https://www.freep.com/story/money/cars/2026/07/22/us-parts/",
+        ],
+        brands=BRANDS,
+        cues=CUES,
+    )
+    assert dom == "freep.com"
+
+
+def test_non_paywalled_hint_still_promoted() -> None:
+    # Suffix anchoring sanity: autonews.ru (RU outlet) is NOT autonews.com
+    # (US paywalled Automotive News) — a deep RU hint keeps working.
+    url, dom, conf = detect_primary_source(
+        article_url="https://autoblog.example/news/ru-market-story",
+        body="Обзор рынка.",
+        title="Рынок РФ",
+        outbound_links=[],
+        brands=BRANDS,
+        cues=CUES,
+        source_hint_url="https://www.autonews.ru/news/64f2c1a09a79471234567890",
+    )
+    assert dom == "autonews.ru"
+    assert conf == "high"
+
+
+def test_paywalled_excluded_from_arbitration() -> None:
+    # reuters would otherwise be a strong tier-1-style anchor; filtered out,
+    # the lone remaining candidate is no contest → no LLM call.
+    cands = arbitration_candidates(
+        article_url="https://www.autonews.ru/news/abc123",
+        body=_ARB_BODY, title=_ARB_TITLE,
+        outbound_links=[
+            "https://www.reuters.com/business/autos-transportation/toyota-x-2026-07-22/",
+            "https://www.toyota.com/news/new-crossover-launch",
+        ],
+        brands=BRANDS, cues=CUES)
+    assert cands == []
+
+
+def test_paywalled_corpus_twin_skipped() -> None:
+    # An earlier reuters copy in our corpus must not win corpus-earlier.
+    target_time = _t("2026-07-22T14:00:00")
+    corpus = [
+        CorpusEntry(
+            url="https://www.reuters.com/business/autos-transportation/toyota-camry-2026/",
+            title="Toyota unveils 2026 Camry plug-in hybrid",
+            published_at=_t("2026-07-22T08:00:00"),
+            domain="www.reuters.com",
+        ),
+    ]
+    res = detect_earliest_in_corpus(
+        article_url="https://motortrend.com/news/toyota-2026-camry",
+        article_title="Toyota unveils 2026 Camry with plug-in hybrid option — MotorTrend",
+        article_published_at=target_time,
+        corpus=corpus,
+        whitelist_domains=set(),
+        press_release_hosts=[],
+    )
+    assert res is None

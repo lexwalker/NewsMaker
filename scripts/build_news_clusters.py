@@ -538,16 +538,40 @@ def cluster_articles(
     # compared equal here, so within-batch pairs were pushed twice.
     from news_agent.core.dedup import canonical_event_brand, squash_model
     _TYPE_FOLD = {"motorshow": "reveal", "pricing": "launch"}
+    _EK_CONNECTORS = {"and", "&", "и", "+", ","}
     event_keys: list[str] = []
-    for a in articles:
+    event_bts: list[str] = []              # brand|type — subset-fallback gate
+    event_mtoks: list[frozenset] = []      # pre-squash model tokens
+    for ai, a in enumerate(articles):
         eb = canonical_event_brand(a.get("event_brand") or "")
-        em = squash_model(a.get("event_model") or "")
+        em_raw = (a.get("event_model") or "").strip().lower()
         et = (a.get("event_type") or "").strip().lower()
         et = _TYPE_FOLD.get(et, et)
+        if eb and not em_raw and et == "partnership":
+            # jul-23 (Honda–GAC pushed twice in one batch): a partnership's
+            # discriminator is the COUNTERPARTY, which the signature's model
+            # field never carries — so the empty-model guard below silenced
+            # the key on every copy. Both write-ups of one deal name the
+            # partner brand in the title: synthesise it (canonical, minus
+            # the event brand). Different partners ⇒ different keys
+            # (Honda–Nissan never glues to Honda–GAC); no partner found ⇒
+            # key stays disabled exactly as before.
+            partners = {canonical_event_brand(br)
+                        for br in _BRANDS_LOWER if br in norms[ai]}
+            partners.discard(eb)
+            partners.discard("")
+            if partners:
+                em_raw = " ".join(sorted(partners))
+        em = squash_model(em_raw)
         if eb and em and et and et != "other":
             event_keys.append(f"{eb}|{em}|{et}")
+            event_bts.append(f"{eb}|{et}")
+            event_mtoks.append(frozenset(
+                w for w in em_raw.split() if w not in _EK_CONNECTORS))
         else:
             event_keys.append("")
+            event_bts.append("")
+            event_mtoks.append(frozenset())
     for i in range(n):
         ti = norms[i]
         ai_pub = articles[i]["pub_dt"]
@@ -599,6 +623,18 @@ def cluster_articles(
             # months apart are different stories — different event_type
             # would already separate those; same key within 36h = dup).
             event_match = bool(eki and eki == ekj)
+            # jul-23 (Nissan recall ×2 in feed: NHTSA "armada qx56 qx80" vs
+            # autonews "armada" — exact keys differ): mirror the token-subset
+            # fallback recent_event_dup_hint already ships — same brand+type
+            # and one model token-set contained in the other ⇒ same event
+            # ("seal" vs "sealion" is not a subset either way, so distinct
+            # models stay apart). Narrower than the cross-run version: this
+            # only acts inside one batch and still respects the 36h window.
+            if (not event_match and event_bts[i] and event_bts[i] == event_bts[j]
+                    and event_mtoks[i] and event_mtoks[j]
+                    and (event_mtoks[i] <= event_mtoks[j]
+                         or event_mtoks[j] <= event_mtoks[i])):
+                event_match = True
             brand_model_match = brand_model_match or event_match
 
             if not ti or not tj:
