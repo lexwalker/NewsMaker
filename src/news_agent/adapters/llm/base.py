@@ -76,6 +76,20 @@ class LLMClient(Protocol):
         """
         ...
 
+    def same_published_event(
+        self, *, fresh: str, candidates: list[str]
+    ) -> tuple[int | None, LLMUsage]:
+        """Dup arbitration: is the fresh story one we already published?
+
+        ``fresh`` is a display line for the fresh row (title(s) + event
+        signature); ``candidates`` are display lines of near-miss prior
+        publications the deterministic dedup could not decide on. Returns the
+        1-based index of a candidate that is the SAME news event (None when
+        none is). Advisory only — the caller turns a match into a
+        «возможно дубль» hint, never a hard reject.
+        """
+        ...
+
 
 # -------------------------------------------------- shared prompt components
 RELEVANCE_SYSTEM = """\
@@ -1059,6 +1073,56 @@ PICK_PRIMARY_SCHEMA = {
         "reason": {
             "type": "string",
             "description": "Brief justification (why this link is the source).",
+        },
+    },
+}
+
+
+MATCH_PUBLISHED_SYSTEM = """\
+You are the duplicate checker of an automotive news portal.
+
+You are given a FRESH story (headline, sometimes in two languages, plus an
+extracted event signature) and a NUMBERED list of stories the portal ALREADY
+published or pushed earlier. Deterministic matching already ruled these
+candidates neither clearly identical nor clearly different — you must read
+and decide.
+
+A candidate is the SAME news event only when it reports the SAME happening:
+the same announcement, the same recall campaign, the same record, the same
+deal, the same statistic for the same period. Language and wording may
+differ completely between the fresh story and a candidate.
+
+It is NOT the same event when the candidate merely covers the same car model
+or brand at another stage of its life: certification vs sales start vs
+photos vs specs vs a later record are DIFFERENT events. A monthly statistic
+is not the same event as the previous month's statistic. A new recall of the
+same model for a different defect is a different event.
+
+Check the NUMBERS: clearly different figures (vehicle counts, prices,
+distances, percentages) mean different events — a 15,535-vehicle recall is
+not a 250,800-vehicle recall. Rounded forms of one figure (168,000 vs
+168,149) are the same figure.
+
+Return the NUMBER of a candidate that is the same event, or 0 when none is.
+When unsure, prefer 0 — a missed duplicate is reviewed by a human editor
+later, but a false match hides a genuinely new story."""
+
+MATCH_PUBLISHED_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["index"],
+    "properties": {
+        "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": (
+                "1-based number of the already-published candidate that is "
+                "the SAME news event as the fresh story, or 0 if none is."
+            ),
+        },
+        "reason": {
+            "type": "string",
+            "description": "Brief justification (same happening or why not).",
         },
     },
 }

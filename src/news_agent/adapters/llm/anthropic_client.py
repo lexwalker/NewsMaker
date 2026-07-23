@@ -13,6 +13,8 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from news_agent.adapters.llm.base import (
     CLASSIFY_SCHEMA,
     EDITORIAL_REVIEW_SCHEMA,
+    MATCH_PUBLISHED_SCHEMA,
+    MATCH_PUBLISHED_SYSTEM,
     PICK_PRIMARY_SCHEMA,
     PICK_PRIMARY_SYSTEM,
     RELEVANCE_SCHEMA,
@@ -192,6 +194,39 @@ class AnthropicLLMClient:
         if not isinstance(idx, int) or not (1 <= idx <= len(candidates)):
             return None, usage  # 0 / missing / hallucinated index → no override
         return candidates[idx - 1], usage
+
+    def same_published_event(
+        self, *, fresh: str, candidates: list[str]
+    ) -> tuple[int | None, LLMUsage]:
+        """Dup arbitration vs near-miss prior publications (advisory).
+
+        Same anti-hallucination contract as pick_primary_source: the model
+        answers with a 1-based INDEX into the caller's list; 0/out-of-range
+        degrades to None (no dup)."""
+        if not candidates:
+            return None, LLMUsage(
+                input_tokens=0, output_tokens=0, cost_usd=0.0,
+                latency_ms=0, provider="anthropic", model=self.model)
+        numbered = "\n".join(
+            f"{i}. {c}" for i, c in enumerate(candidates, start=1))
+        user = (
+            f"Fresh story:\n{fresh}\n\n"
+            f"Already published earlier:\n{numbered}\n\n"
+            "Which numbered earlier story is the SAME news event? "
+            "Answer 0 if none of them is."
+        )
+        tool = _tool(
+            "record_dup",
+            "Record which already-published story is the same news event.",
+            MATCH_PUBLISHED_SCHEMA,
+        )
+        data, usage = self._tool_call(
+            system=MATCH_PUBLISHED_SYSTEM, user=user, tool=tool, max_tokens=200
+        )
+        idx = data.get("index")
+        if not isinstance(idx, int) or not (1 <= idx <= len(candidates)):
+            return None, usage
+        return idx, usage
 
     # --------------------------------------------------------------- private
     @_RETRY

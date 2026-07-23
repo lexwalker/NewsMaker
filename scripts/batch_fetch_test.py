@@ -244,6 +244,16 @@ NHTSA_RECALL_MAX_ITEMS = int(os.environ.get("NHTSA_RECALL_MAX_ITEMS", "50") or 5
 # the row. Disable with LLM_PRIMARY_PICK=0.
 PRIMARY_LLM_PICK = os.environ.get("LLM_PRIMARY_PICK", "1").strip() != "0"
 
+# LLM dup arbiter (jul-23, editor: «писали уже давно» slipping through): the
+# deterministic dedup layers stay silent on near-misses (cross-language
+# paraphrase vs the all-time archive, gray-zone event keys); a cheap Haiku
+# call reads those candidates and answers «то же событие?». Advisory only —
+# a match diverts the row to the review tab. Cleared by the jul-23 offline
+# eval on editor labels (6/6 reachable dups caught incl. the Geely-A7
+# «писали давно» case; 2/27 approved rows flagged, both factually-correct
+# repeat calls; ~$0.002/call). Disable with LLM_DUP_ARBITER=0.
+DUP_ARBITER_ON = os.environ.get("LLM_DUP_ARBITER", "1").strip() != "0"
+
 # Resumable fetch: checkpoint each source's rows so a mid-fetch crash (power
 # outage) resumes from where it stopped instead of re-parsing all ~340 sources
 # (jul-15 outage killed a run at 173/341). Disable with FETCH_RESUME=0. A
@@ -532,6 +542,11 @@ PORTAL_COUNTRY: dict[str, tuple[str, int]] = {
 # Lang-tag map + helper are shared with retry_failed_llm via
 # news_agent.core.editorial_pass (they had drifted: retry's inline copy had
 # 8 languages vs 15 — a recovered Korean title got "(KO)" not "(КОР)").
+from news_agent.core.dup_arbiter import (  # noqa: E402
+    archive_candidates as arbiter_archive_candidates,
+    build_fresh_display as arbiter_fresh_display,
+    graykey_candidates as arbiter_graykey_candidates,
+)
 from news_agent.core.editorial_pass import (  # noqa: E402
     dup_hint_for,
     has_reject_directive,
@@ -1277,6 +1292,13 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         print(f"  Tier0.5: own-titles lookup skipped ({type(_e).__name__})")
         own_titles = set()
 
+    # Arbiter candidate pool (jul-23): archive + our own pushes in ONE set —
+    # the event-key store drops empty-model keys at write time, so a prior
+    # Honda–GAC push is reachable only through its pushed TITLE. Computed
+    # once per pass, not per row.
+    arb_pub_titles: set[str] = (
+        (PUBLISHED_ALL_TITLES or set()) | own_titles) if DUP_ARBITER_ON else set()
+
     consec_errors = 0   # circuit breaker: N in a row → persistent failure
     aborted = ""        # non-empty = why the pass stopped early
     for i, r in enumerate(candidates, start=1):
@@ -1425,26 +1447,6 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             if r.llm_section == "Test-drive":
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                     "требует ручной проверки — Test-drive"
-
-            # Advisory dup hint — SHARED 3-tier helper (archive paraphrase →
-            # semantic event-key → lexical brand_model); at most one hint.
-            # PREPENDED so the [:300] reason cap can never amputate it (the
-            # push diverts on the "возможно дуб" substring).
-            hint = dup_hint_for(
-                title=r.title,
-                event_brand=r.event_brand,
-                event_model=r.event_model,
-                event_type=r.event_type,
-                launch_brand_model=r.launch_brand_model,
-                canon_url=canonicalise(r.article_url),
-                pub_titles=PUBLISHED_ALL_TITLES,
-                recent_ev=recent_ev,
-                recent_bm=recent_bm,
-                own_titles=own_titles,
-            )
-            if hint:
-                r.llm_reason = (
-                    hint + (" | " + r.llm_reason if r.llm_reason else ""))[:300]
         else:
             # LEGACY PATH: 2 separate LLM calls (relevance + classify)
             try:
@@ -1512,6 +1514,76 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         except Exception as e:  # noqa: BLE001
             r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                 f"translate error: {str(e)[:200]}"
+
+        # 3.5 Advisory dup hint — SHARED 3-tier helper (archive paraphrase →
+        # semantic event-key → lexical brand_model); at most one hint.
+        # Moved AFTER translate (jul-23, Geely-A7 «писали давно» forensics):
+        # the all-time archive is EN-heavy and an RU original transliterates
+        # to ~50 fuzz vs its own EN twin, so the EN title must participate.
+        # PREPENDED so the [:300] reason cap can never amputate it (the
+        # push diverts on the "возможно дуб" substring).
+        dup_hint = None
+        if not use_legacy:
+            dup_hint = dup_hint_for(
+                title=r.title,
+                event_brand=r.event_brand,
+                event_model=r.event_model,
+                event_type=r.event_type,
+                launch_brand_model=r.launch_brand_model,
+                canon_url=canonicalise(r.article_url),
+                pub_titles=PUBLISHED_ALL_TITLES,
+                recent_ev=recent_ev,
+                recent_bm=recent_bm,
+                own_titles=own_titles,
+                alt_title=r.llm_title_en,
+            )
+            if dup_hint:
+                r.llm_reason = (
+                    dup_hint + (" | " + r.llm_reason if r.llm_reason else "")
+                )[:300]
+
+        # 3.6 LLM dup arbiter (LLM_DUP_ARBITER=1; advisory). Deterministic
+        # layers answered «не доказано» — collect their near-misses (all-time
+        # archive + 30d event-key gray zone) and let a cheap call read and
+        # decide. A match only prepends «возможно дубль» → review-tab divert;
+        # never a hard reject, never aborts the pass.
+        if (DUP_ARBITER_ON and not dup_hint and not use_legacy
+                and hasattr(client, "same_published_event")):
+            try:
+                _arb_cands = arbiter_archive_candidates(
+                    title=r.title, alt_title=r.llm_title_en,
+                    event_brand=r.event_brand, event_model=r.event_model,
+                    pub_titles=arb_pub_titles,
+                ) + arbiter_graykey_candidates(
+                    event_brand=r.event_brand, event_model=r.event_model,
+                    event_type=r.event_type, recent=recent_ev or {},
+                    current_url=canonicalise(r.article_url),
+                )
+                _arb_cands = _arb_cands[:6]
+                if _arb_cands:
+                    _idx, u = client.same_published_event(
+                        fresh=arbiter_fresh_display(
+                            title=r.title, alt_title=r.llm_title_en,
+                            event_brand=r.event_brand,
+                            event_model=r.event_model,
+                            event_type=r.event_type),
+                        candidates=_arb_cands,
+                    )
+                    budget.record(u)
+                    r.llm_cost_usd = round(
+                        (r.llm_cost_usd or 0) + u.cost_usd, 5)
+                    if _idx:
+                        _m = _arb_cands[_idx - 1].splitlines()[0][:80]
+                        r.llm_reason = (
+                            f"(возможно дубль, ИИ-арбитр: похоже на "
+                            f"«{_m}» — проверьте)"
+                            + (" | " + r.llm_reason if r.llm_reason else "")
+                        )[:300]
+                        print(f"  [{i}/{len(candidates)}] ARB-DUP  "
+                              f"{r.title[:45]!r} ≈ «{_m[:45]}»")
+            except Exception as e:  # noqa: BLE001 — advisory, never fatal
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    f"dup-arbiter error: {str(e)[:120]}"
 
         # 4. Primary-source arbitration (contested link-soup only). This row is
         # accepted for publication and the heuristic flagged ≥2 plausible

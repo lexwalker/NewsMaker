@@ -221,6 +221,7 @@ def published_dup_hint(
     event_model: str,
     pub_titles: set[str] | list[str],
     *,
+    alt_title: str = "",
     threshold: float = 88.0,
     model_threshold: float = 62.0,
     source_label: str = "уже публиковали",
@@ -262,9 +263,24 @@ def published_dup_hint(
         return None  # no brand anchor → can't gate safely → stay silent
     em = (event_model or "").strip().lower()
     from news_agent.core.primary_source import normalise_title
-    nt = normalise_title(title)
-    if not nt:
+    # jul-23 (Geely A7 «писали давно» forensics): the archive is EN-heavy,
+    # so an RU original transliterates to ~50 ratio against its own EN twin.
+    # When the caller has the EN translation, match BOTH forms and keep the
+    # better score.
+    nts = [n for n in (normalise_title(title), normalise_title(alt_title))
+           if n]
+    if not nts:
         return None
+    # Model anchor, token-level (jul-23: full-substring `em in pt` missed
+    # every archive title because the extracted model carried a suffix —
+    # «galaxy a7 em» is a substring of nothing). Anchored when a
+    # digit-bearing model token matches (a7/qx80 — specific enough alone)
+    # OR every word-token of the model is present (single-word models keep
+    # the old substring semantics; «galaxy» alone must NOT anchor a
+    # different Galaxy-family model).
+    _digit_toks = {t for t in em.split()
+                   if any(ch.isdigit() for ch in t)}
+    _word_toks = {t for t in em.split() if len(t) >= 3}
     # Brand gate through ALL name variants (canonical + every alias):
     # event_brand "avtovaz" must also gate against a title that only says
     # «Лада …» (normalised "lada …") — a bare ``eb in pt`` misses every
@@ -273,9 +289,14 @@ def published_dup_hint(
     for pt in pub_titles:
         if not pt or not any(v in pt for v in variants):
             continue  # brand gate: the title must mention this brand
-        ratio = fuzz.token_set_ratio(nt, pt)
+        ratio = max(fuzz.token_set_ratio(nt, pt) for nt in nts)
+        pt_toks = set(pt.split())
+        model_anchor = bool(
+            em and len(em) >= 3
+            and ((_digit_toks and _digit_toks & pt_toks)
+                 or (_word_toks and _word_toks <= pt_toks)))
         # B — same brand+model AND a plausibly-similar headline.
-        if em and len(em) >= 3 and em in pt and ratio >= model_threshold:
+        if model_anchor and ratio >= model_threshold:
             return (
                 f"(возможно дубль: {source_label} о «{event_brand} "
                 f"{event_model}» — проверьте)"

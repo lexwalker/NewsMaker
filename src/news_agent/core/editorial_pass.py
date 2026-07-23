@@ -139,6 +139,7 @@ def dup_hint_for(
     recent_ev: dict | None,
     recent_bm: dict | None,
     own_titles: set[str] | None = None,
+    alt_title: str = "",
 ) -> str | None:
     """Advisory dup hint for an accepted row — at most ONE, by priority:
 
@@ -158,10 +159,13 @@ def dup_hint_for(
     such rows to the review tab (reversible). Never raises.
     """
     try:
-        hint = published_dup_hint(title, event_brand, event_model, pub_titles)
+        hint = published_dup_hint(
+            title, event_brand, event_model, pub_titles,
+            alt_title=alt_title)
         if not hint and own_titles:
             hint = published_dup_hint(
                 title, event_brand, event_model, own_titles,
+                alt_title=alt_title,
                 source_label="недавно уже отправляли в фид")
         if not hint and event_model and recent_ev:
             hint = recent_event_dup_hint(
