@@ -39,6 +39,19 @@ if (Test-Path $lockPath) {
   }
 }
 Set-Content -Path $lockPath -Value $PID -Encoding ascii
+
+# Yield to a running HOT lane batch (jul-27: hot started 22:00, a manual prog
+# 22:04 -- the prog loads its SQLite cache map ONCE at startup, so hot's
+# classifications landing at 22:20 were invisible and ~250 candidates were
+# paid for TWICE, ~$1.9. Hot already yields to us via its own mutex; this is
+# the missing opposite direction). Wait up to 40 min, checking each minute.
+for ($w = 0; $w -lt 40; $w++) {
+  $hotBusy = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*batch_fetch_test*" }
+  if (-not $hotBusy) { break }
+  if ($w -eq 0) { Write-Output "run_prog: hot-lane batch is running -- waiting for it to finish (cache reuse)." }
+  Start-Sleep -Seconds 60
+}
 $env:PYTHONUNBUFFERED = "1"   # real-time log: a crash/death point is visible immediately, not lost in a block buffer
 $ts  = Get-Date -Format "yyyyMMdd_HHmmss"
 if (-not (Test-Path (Join-Path $root "logs"))) { New-Item -ItemType Directory (Join-Path $root "logs") | Out-Null }
