@@ -18,6 +18,27 @@ param([switch]$NoPush)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot          # repo root (scripts/..)
 Set-Location $root
+
+# Single-instance lock (jul-26: THIRD double-run incident -- a WMI-queued
+# zombie launch, then the evening scheduled task firing over a manual
+# catch-up run. Two parallel chains double the LLM bill and race the tabs).
+# Lock = PID file; stale lock (dead PID) is taken over silently.
+$lockPath = Join-Path $root "data\run_prog.lock"
+if (Test-Path $lockPath) {
+  $oldPid = (Get-Content $lockPath -ErrorAction SilentlyContinue | Select-Object -First 1)
+  $alive = $false
+  if ($oldPid -match '^\d+$') {
+    try {
+      $p = Get-Process -Id ([int]$oldPid) -ErrorAction Stop
+      if ($p.ProcessName -match 'powershell') { $alive = $true }
+    } catch {}
+  }
+  if ($alive) {
+    Write-Output "run_prog REFUSED: another run_prog chain is alive (PID $oldPid, lock $lockPath). Exit."
+    exit 9
+  }
+}
+Set-Content -Path $lockPath -Value $PID -Encoding ascii
 $env:PYTHONUNBUFFERED = "1"   # real-time log: a crash/death point is visible immediately, not lost in a block buffer
 $ts  = Get-Date -Format "yyyyMMdd_HHmmss"
 if (-not (Test-Path (Join-Path $root "logs"))) { New-Item -ItemType Directory (Join-Path $root "logs") | Out-Null }
@@ -39,6 +60,7 @@ function Stage($name, $argList) {
   $ErrorActionPreference = $prevEAP
   if ($code -ne 0) {
     Write-Output "ABORT: '$name' exited $code -- chain stopped (nothing downstream ran)." | Tee-Object -FilePath $log -Append
+    Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
     exit $code
   }
 }
@@ -70,6 +92,7 @@ if ($code -eq 3 -and (Test-Path (Join-Path $root "data\llm_abort_recovery.json")
   Stage "1R/3 retry LLM (recovery)" @('scripts/retry_failed_llm.py')
 } elseif ($code -ne 0) {
   Write-Output "ABORT: '1/3 fetch+classify' exited $code -- chain stopped (nothing downstream ran)." | Tee-Object -FilePath $log -Append
+  Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
   exit $code
 }
 Stage "2/3 cluster (LLM-editor)"  @('scripts/build_news_clusters.py','--use-llm-editor')
@@ -78,4 +101,5 @@ if ($NoPush) {
 } else {
   Stage "3/3 push to editor feed" @('scripts/build_news_sheet.py')
 }
+Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
 Write-Output "run_prog DONE $(Get-Date -Format HH:mm:ss)  log=$log"

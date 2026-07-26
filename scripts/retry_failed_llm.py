@@ -292,9 +292,15 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001 — advisory only
         print(f"  dup-hint store unavailable ({type(e).__name__}) — tiers 2-3 off")
 
-    resp = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AH"
-    ).execute()
+    # jul-26: the initial tab READ was the last bare .execute() in this
+    # script — a transient ssl.SSLEOFError here killed the whole recovery
+    # chain in 16s while every WRITE was already _net_retry-wrapped.
+    resp = _net_retry(
+        lambda: svc.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID, range=f"'{tab}'!A1:AH"
+        ).execute(),
+        what="initial tab read",
+    )
     rows = resp.get("values", [])
     header = rows[0] if rows else []
     rows = rows[1:]
