@@ -48,3 +48,19 @@ def test_date_paths_still_articles() -> None:
               "https://rg.ru/2026/07/16/some-slug.html",
               "https://cnevpost.com/2026/07/20/li-auto-l6/"):
         assert _looks_like_article(u), u
+
+
+def test_autostat_analytics_and_infographics_ids_pass() -> None:
+    # jul-27 zero-yield forensics: numeric-id articles under /analytics/ and
+    # /infographics/ matched NO hint (no slug, no date) and both sections
+    # yielded 0 across two runs.
+    assert _looks_like_article("https://www.autostat.ru/analytics/62781/")
+    assert _looks_like_article("https://www.autostat.ru/infographics/62793/")
+
+
+def test_archive_listing_pages_rejected() -> None:
+    # …while the fetch budget burned on date-shaped archive LISTINGS.
+    assert not _looks_like_article(
+        "https://www.autostat.ru/analytics/archive/2026/7/")
+    assert not _looks_like_article(
+        "https://www.autostat.ru/infographics/archive/2026/")

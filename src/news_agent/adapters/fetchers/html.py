@@ -278,6 +278,16 @@ def _pick_published(soup: BeautifulSoup) -> datetime | None:
             dt = _parse_dt(str(tag.get("content")))
             if dt:
                 return dt
+    # 1b. itemprop=datePublished on ANY tag, not only <meta> (jul-27:
+    # autostat carries it on <span class="date" itemprop="datePublished"
+    # content="2026-07-26">; the meta-only loop missed it and the
+    # trafilatura fallback then mis-dated a fresh article to 2022 →
+    # freshness gate silently dropped it).
+    tag = soup.find(attrs={"itemprop": "datePublished"})
+    if isinstance(tag, Tag) and tag.get("content"):
+        dt = _parse_dt(str(tag.get("content")))
+        if dt:
+            return dt
     # 2. JSON-LD NewsArticle
     for script in soup.find_all("script", type="application/ld+json"):
         try:
@@ -597,8 +607,14 @@ def _pick_outbound_links(soup: BeautifulSoup, page_url: str) -> list[str]:
 
 
 _ARTICLE_HINTS = ("/news/", "/article/", "/post/", "/story/", "-news-",
-                  ".html", "/doc/")  # /doc/<id> = kommersant.ru article URLs
+                  ".html", "/doc/",   # /doc/<id> = kommersant.ru article URLs
                                       # (numeric id, no slug — were rejected)
+                  # jul-27 (autostat zero-yield forensics): /analytics/<id>/
+                  # and /infographics/<id>/ are autostat's article shapes —
+                  # numeric id, no slug, no date → nothing else matched and
+                  # both sections yielded 0 across 2 runs while the fetch
+                  # budget burned on their /archive/ listing pages.
+                  "/analytics/", "/infographics/")
 
 # Date-shaped path segment = article-like. Replaces the old bare "/20"
 # substring hint, which matched ANY /20xx id anywhere in the path — jul-20:
@@ -635,6 +651,11 @@ def _looks_like_article(url: str) -> bool:
     segs0 = [s for s in path.split("/") if s]
     if segs0 and segs0[0] in _TAXONOMY_FIRST_SEG:
         return False  # /theme/2099, /tags/…, /rubric/… — listings, not articles
+    # Archive listings are never articles even when a date-shaped segment
+    # follows (jul-27: autostat /analytics/archive/2026/7/ passed via
+    # _DATE_PATH_RE and ate the whole tried=60 fetch budget on listing pages).
+    if "archive" in segs0:
+        return False
     if any(seg in path for seg in _ARTICLE_HINTS):
         return True
     if _DATE_PATH_RE.search(path):

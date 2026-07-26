@@ -80,6 +80,14 @@ impersonate_domains:
   # the next report shows links-but-0-candidates -> revisit.
   - jdpower.com
   - www.jdpower.com
+  # jul-27 coverage sweep (probe-verified plain 403 / curl 200 with links):
+  # GM family moved to their live press hosts; infiniti root works (old
+  # /en-US path 404s); volvo global news replaces the dead media app.
+  - infinitinews.com
+  - pressroom.chevrolet.com
+  - news.gm.com
+  - pressroom.cadillac.com
+  - volvocars.com
   # jun-30 top-СМИ audit: auto.ru (Yandex) serves 266k + 16 passing auto
   # articles via httpx, but intermittently load-blocks in the bulk run
   # (v23 att=0). curl_cffi (Chrome JA3) stabilises it. Playwright does NOT
@@ -214,6 +222,19 @@ playwright_domains:
   - media.jaguar.com           # 13
   - int-media.peugeot.com      # 17
   - hongqi.ru                  # 6
+  # jul-27 coverage sweep:
+  # - europarl: AWS WAF (CloudFront) js-challenge answers 202 to every curl
+  #   profile; prod PlaywrightFetcher+stealth auto-clears it — press-room
+  #   index renders 197KB with 58 same-host article links (verified).
+  # - news.gm.com: AEM JS shell — curl gets 200 but 0 article anchors, the
+  #   list is XHR-loaded; browser renders it (also in impersonate_domains
+  #   as the fallback transport).
+  # - corporate.ferrari.com / mahindra newsroom: bounded trials — releases
+  #   are JS-loaded (ferrari) / challenge page (mahindra, untested with PW).
+  - www.europarl.europa.eu
+  - news.gm.com
+  - corporate.ferrari.com
+  - www.mahindra.com
   # jul-08: iz.ru sits fully behind DDoS-Guard (httpx AND legacy-headless both
   # get the 403 "Проверка браузера" shell — earlier audit called it unfetchable
   # and "proxy needed"). The new-headless switch + challenge-poll in

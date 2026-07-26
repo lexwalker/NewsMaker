@@ -780,6 +780,12 @@ class _PwResponse:
             )
 
 
+# Per-host Accept header overrides for the plain-httpx route (see _http_get).
+_ACCEPT_OVERRIDES: dict[str, str] = {
+    "autocarindia.com": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+}
+
+
 def _http_get(client, url: str):
     """Route ``url`` through the right backend based on allowlist membership.
 
@@ -822,8 +828,23 @@ def _http_get(client, url: str):
             status, html = IMP_FETCHER.fetch(url, proxy=_proxy)
             return _PwResponse(url, status, html)
         except Exception as e:  # noqa: BLE001
-            print(f"   ! curl_cffi failed on {url}: {type(e).__name__}: {str(e)[:80]}")
+            # jul-27: one immediate curl_cffi retry before the httpx
+            # fallback. On WAF-guarded hosts the httpx fallback is a
+            # GUARANTEED 202/403 shell, so a single transient TLS error
+            # (SSLError) used to cost the whole source for the run.
+            try:
+                status, html = IMP_FETCHER.fetch(url, proxy=_proxy)
+                return _PwResponse(url, status, html)
+            except Exception:  # noqa: BLE001
+                print(f"   ! curl_cffi failed on {url}: {type(e).__name__}: {str(e)[:80]}")
 
+    # Per-host Accept override (jul-27: autocarindia's RSS 406s on the httpx
+    # default Accept, while its Cloudflare 403s the curl_cffi route — the fix
+    # is a plain httpx GET with an explicit feed Accept header).
+    host = domain_of(url)
+    for _d, _accept in _ACCEPT_OVERRIDES.items():
+        if host == _d or host.endswith("." + _d):
+            return client.get(url, headers={"Accept": _accept})
     return client.get(url)
 
 
