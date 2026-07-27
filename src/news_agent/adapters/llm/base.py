@@ -1287,11 +1287,14 @@ Reject on-topic items that carry no concrete happening:
    RECALLS remain wanted (Other news); an ENACTED law/decree with market
    effect stays (Other news, Global - the Trump right-to-repair memo was
    published).
- - single-FOREIGN-country sales results - «только глобальные продажи»: a
-   brand's US/German/etc. market figures -> REJECT. Editor (07.07/10.07):
-   "GM retains US sales lead" -> REJECT; "Mercedes-Benz USA reported 84,500
-   Q2 retail sales" -> REJECT. Brand GLOBAL totals, China-market OFFICIAL
-   stats, and RF-market figures keep their existing routes.
+ - single-FOREIGN-country sales RESULTS - «только глобальные продажи»: a
+   brand's US/German/etc. periodic market figures -> REJECT. Editor
+   (07.07/10.07): "GM retains US sales lead" -> REJECT; "Mercedes-Benz USA
+   reported 84,500 Q2 retail sales" -> REJECT. Brand GLOBAL totals,
+   China-market OFFICIAL stats, and RF-market figures keep their existing
+   routes. NOT the same thing as a model EVENT on a foreign market (a sales
+   start, an open pre-order, a cumulative milestone) - see the publish rule
+   in step 3.
  - a robotaxi/ride-service OPERATOR's territory expansion - "Waymo launches
    in Las Vegas", "Waymo adds 4 new markets" -> REJECT (operator territory
    news, not an automotive product event). A robotaxi VEHICLE reveal / tech
@@ -1360,7 +1363,42 @@ Reject on-topic items that carry no concrete happening:
    (19.06): «G 500 сняли перед обновлением - не постим». (A REAL production-end
    IS news -> Other, step 3 - don't confuse the two.)
 
------- STEP 3 - Which section? (priority ladder - first match wins) ------
+------ ------ STEP 2b - Classes the editor ALWAYS wants (rescue list) ------
+When a class below collides with a step-1/step-2 reject, THIS WINS. Each
+line is the editor's own verdict from the review tab (27.07), quoted. These
+only RESCUE — the section still comes from step 3, and nothing else is
+rerouted.
+ - BATTERY / ENERGY-STORAGE / HYDROGEN technology from ANY player - a cell
+   maker, a supplier, a research institute, a brand foundation - even with no
+   car model in sight: solid-state cells, electrolyte research, storage
+   systems, a hydrogen initiative -> PUBLISH. Editor: «по новым разработкам и
+   технологиям АКБ для ТС постим новости всегда», «про водород регулярно
+   постим» (CATL Tener storage, CAS electrolyte, QuantumScape-Honda, Toyota
+   Mobility hydrogen).
+ - PATENT filings and patent images with NO named model and no launch ->
+   PUBLISH. Editor: «мы постим патенты на технологии без конкретных
+   моделей», «патентные изображения постим всегда» (Ferrari adaptive wing,
+   Tata Tigor design).
+ - an AUTOMAKER's market presence: entering a new market, expanding presence
+   in one, or a stated LINE-UP expansion -> PUBLISH. Editor: «это расширение
+   присутствия бренда на рынке», «о расширении модельного ряда брендов пишем
+   регулярно» (VW Uzbekistan, Jeland to 5 models). A MANUFACTURER only — a
+   ride-service OPERATOR's territory news (Waymo class) stays rejected.
+ - a MODEL EVENT on a foreign market: sales start, opened pre-orders, or a
+   cumulative sales milestone -> PUBLISH. Editor: «анонсы продаж постим
+   всегда», «вывод на рынок, анонс предзаказа», «юбилейные продажи, пусть
+   даже в рамках 1 рынка» (BYD Seal 08 in China, BMW iX3 M Sport First
+   Edition, Skoda Kushaq 100k). Periodic sales RESULTS for one foreign
+   country stay rejected (step 1) — an event is not a report.
+ - SPECIAL EDITIONS / option packages / limited series -> PUBLISH, including
+   ones unveiled at a race: that is a car, not motorsport coverage. Editor:
+   «пакет опций, всегда постим подобное», «это не мотоспорт, спецверсия
+   суперкара» (Jeep Sarge Editions, McLaren Artura 1000GP).
+ - RF INSURANCE / LENDING calculations for a SPECIFIC new model -> PUBLISH
+   (Local specifics). Editor: «Для новых моделей постим расчеты по полисам»
+   (Ingosstrakh on the new Volga).
+
+STEP 3 - Which section? (priority ladder - first match wins) ------
 1) LCV news - LIGHT commercial body: pickup, light/cargo van, minibus. Wins over
    brand, over Russia, over event-type (a pickup REVEAL is still LCV - «это
    пикап, пикапы - ЛСВ»). Passenger minivan <=7 seats is NOT LCV -> Confirmed.
