@@ -55,18 +55,115 @@ def compute_classifier_version(prompt: str, *parts: bytes) -> str:
     return h.hexdigest()[:8]
 
 
+def _hash8(*chunks: bytes) -> str:
+    h = hashlib.sha256()
+    for c in chunks:
+        h.update(c)
+    return h.hexdigest()[:8]
+
+
+def strip_python_noise(source: bytes) -> bytes:
+    """Source with comments, docstrings and blank lines removed.
+
+    The cost audit's #1 own-goal: editing a COMMENT in
+    heuristic_relevance.py bumped the classifier version and invalidated
+    the whole (expensive) LLM cache. Comments cannot change a verdict, so
+    they must not change the fingerprint. Tokenize-based, so a '#' inside
+    a string literal is preserved.
+    """
+    import io as _io
+    import tokenize
+
+    try:
+        toks = list(tokenize.tokenize(_io.BytesIO(source).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return source  # unparseable → fall back to the raw bytes
+    out: list[str] = []
+    prev_type = tokenize.INDENT
+    for tok in toks:
+        if tok.type in (tokenize.COMMENT, tokenize.NL, tokenize.ENCODING):
+            continue
+        if tok.type == tokenize.STRING and prev_type in (
+            tokenize.INDENT, tokenize.DEDENT, tokenize.NEWLINE,
+        ):
+            continue  # docstring in statement position
+        out.append(tok.string)
+        if tok.type != tokenize.NEWLINE or out[-1:] != ["\n"]:
+            prev_type = tok.type
+    return "".join(out).encode("utf-8")
+
+
+def compute_split_versions(prompt: str, heuristics_source: bytes) -> tuple[str, str]:
+    """(prompt_version, heuristics_version) — the two INDEPENDENT inputs.
+
+    A single combined stamp made every prompt edit invalidate the cheap
+    rule verdicts and — far worse — every heuristics edit invalidate the
+    EXPENSIVE LLM verdicts, which cost ~$2 to rebuild per run. The two
+    verdict families depend on different inputs, so they get different
+    stamps; the heuristics stamp ignores comments/docstrings.
+    """
+    return _hash8(prompt.encode("utf-8")), _hash8(strip_python_noise(heuristics_source))
+
+
+# Direction of a prompt change, declared by whoever edits the constitution.
+# A rule that only ADDS a reject cannot turn a cached reject into a publish,
+# so cached LLM REJECTS stay valid and only the (far fewer) accepted rows
+# re-run — measured jul-27: 150 accepted vs 759 LLM-rejected in 2 days, i.e.
+# ~5x fewer paid calls for a reject-only edit. "both" = the safe default.
+PROMPT_CHANGE_BOTH = "both"
+PROMPT_CHANGE_REJECT_ONLY = "reject_only"    # new/《wider》 reject rule
+PROMPT_CHANGE_PUBLISH_ONLY = "publish_only"  # rescue / new publish route
+
+_LLM_REJECT_VERDICTS = frozenset({"Отклонено LLM"})
+
+
+def llm_cache_survives_prompt_change(cached_verdict: str, direction: str) -> bool:
+    """Whether a cached LLM verdict survives a prompt change of ``direction``.
+
+    Reject-only edits cannot rescue anything → cached rejects stay valid.
+    Publish-only edits cannot newly reject anything → cached accepts stay
+    valid. Anything else (or an unknown direction) → nothing survives.
+    """
+    is_reject = cached_verdict in _LLM_REJECT_VERDICTS
+    if direction == PROMPT_CHANGE_REJECT_ONLY:
+        return is_reject
+    if direction == PROMPT_CHANGE_PUBLISH_ONLY:
+        return not is_reject
+    return False
+
+
 def cache_is_authoritative(
-    cached_verdict: str, has_llm_classification: bool, version_ok: bool
+    cached_verdict: str,
+    has_llm_classification: bool,
+    version_ok: bool,
+    *,
+    prompt_ok: bool | None = None,
+    heuristics_ok: bool | None = None,
+    prompt_change: str = PROMPT_CHANGE_BOTH,
 ) -> bool:
     """Whether a cached row may short-circuit fresh processing.
 
     Identity verdicts are independent of the classifier and always win.
-    Rule verdicts and LLM classifications depend on the prompt/heuristics,
-    so they short-circuit only when the cached classifier version matches
-    the live one (``version_ok``); on a mismatch the row re-runs fresh.
+
+    With the SPLIT stamps (``prompt_ok`` / ``heuristics_ok`` given, i.e. the
+    cache row carries them) each verdict family is checked against the input
+    it actually depends on: rule verdicts ← heuristics, LLM verdicts ←
+    prompt. A stale-prompt LLM row can still survive when the prompt change
+    was declared reject-only / publish-only and the verdict is on the side
+    that such a change cannot flip.
+
+    Legacy rows (no split stamps) fall back to the combined ``version_ok``,
+    so nothing changes for cache written before this feature.
     """
     if cached_verdict in IDENTITY_VERDICTS:
         return True
-    if has_llm_classification or cached_verdict in RULE_VERDICTS:
-        return version_ok
+    split = prompt_ok is not None and heuristics_ok is not None
+    if cached_verdict in RULE_VERDICTS:
+        return bool(heuristics_ok) if split else version_ok
+    if has_llm_classification:
+        if not split:
+            return version_ok
+        if prompt_ok:
+            return True
+        return llm_cache_survives_prompt_change(cached_verdict, prompt_change)
     return False

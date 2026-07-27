@@ -101,6 +101,9 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
 from news_agent.core import heuristic_relevance as _heuristic_mod  # noqa: E402
 from news_agent.core.cache_version import (  # noqa: E402
     cache_is_authoritative,
+    compute_split_versions,
+    llm_cache_survives_prompt_change,
+    PROMPT_CHANGE_BOTH,
     compute_classifier_version,
 )
 from news_agent.core.published_dedup import already_published  # noqa: E402
@@ -334,15 +337,33 @@ PREVIOUSLY_SEEN: dict[str, dict] = {}
 # module SOURCE, so there's no manual constant to forget), so rule edits
 # apply on the very next prog — even a same-day re-run. Identity verdicts
 # (URL-dups, stale-by-date) stay version-independent: a dup is a dup.
-def _compute_classifier_version() -> str:
+def _heuristics_source() -> bytes:
     try:
-        heur_src = Path(_heuristic_mod.__file__).read_bytes()
+        return Path(_heuristic_mod.__file__).read_bytes()
     except Exception:
-        heur_src = b""  # missing source → degrade to prompt-only fingerprint
-    return compute_classifier_version(EDITORIAL_REVIEW_SYSTEM, heur_src)
+        return b""  # missing source → degrade to prompt-only fingerprint
+
+
+def _compute_classifier_version() -> str:
+    return compute_classifier_version(EDITORIAL_REVIEW_SYSTEM, _heuristics_source())
 
 
 CLASSIFIER_VERSION = _compute_classifier_version()
+
+# jul-27 cost work — SPLIT stamps. The combined version above stays (legacy
+# rows, forensics), but restore decisions now use two independent stamps:
+#   PROMPT_VERSION      — drives LLM verdicts only
+#   HEURISTICS_VERSION  — drives rule verdicts only, comments/docstrings
+#                         stripped (editing a COMMENT used to invalidate the
+#                         whole expensive LLM cache — the #1 own-goal).
+# Plus PROMPT_CHANGE: when a constitution edit only ADDS a reject rule, it
+# cannot rescue anything, so cached LLM REJECTS remain valid and only the
+# ~5x fewer accepted rows re-run. Declare it with PROMPT_CHANGE=reject_only
+# (or publish_only) on the first run after such an edit; default "both" is
+# the safe, always-correct behaviour.
+PROMPT_VERSION, HEURISTICS_VERSION = compute_split_versions(
+    EDITORIAL_REVIEW_SYSTEM, _heuristics_source())
+PROMPT_CHANGE = os.environ.get("PROMPT_CHANGE", PROMPT_CHANGE_BOTH).strip() or PROMPT_CHANGE_BOTH
 DEDUP_PORTAL = "RU"  # current batch treats every source as RU portal
 PRIMARY_CUES = None  # type: ignore[assignment]  # PrimarySourceCues from config
 SOURCE_QUALITY: SourceQuality | None = None  # set in main()
@@ -944,7 +965,12 @@ def _score_recall(article, r: SourceResult, row: ArticleRow) -> bool:  # type: i
         cached = PREVIOUSLY_SEEN[uh]
         version_ok = cached.get("cls_ver", "") == CLASSIFIER_VERSION
         if cache_is_authoritative(
-            cached.get("verdict", ""), bool(cached.get("llm_section")), version_ok
+            cached.get("verdict", ""), bool(cached.get("llm_section")), version_ok,
+            prompt_ok=(cached.get("prompt_ver") == PROMPT_VERSION
+                       if cached.get("prompt_ver") else None),
+            heuristics_ok=(cached.get("heur_ver") == HEURISTICS_VERSION
+                           if cached.get("heur_ver") else None),
+            prompt_change=PROMPT_CHANGE,
         ):
             row.verdict = cached.get("verdict", "") or "Возможно новость"
             row.llm_relevance = cached.get("llm_relevance", "")
@@ -2099,7 +2125,12 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
         # verdicts (dups/stale) stay valid regardless of version.
         version_ok = cached.get("cls_ver", "") == CLASSIFIER_VERSION
         cache_authoritative = cache_is_authoritative(
-            cached_verdict, has_llm_classification, version_ok
+            cached_verdict, has_llm_classification, version_ok,
+            prompt_ok=(cached.get("prompt_ver") == PROMPT_VERSION
+                       if cached.get("prompt_ver") else None),
+            heuristics_ok=(cached.get("heur_ver") == HEURISTICS_VERSION
+                           if cached.get("heur_ver") else None),
+            prompt_change=PROMPT_CHANGE,
         )
         if cache_authoritative:
             row.verdict = cached_verdict or row.verdict
@@ -2579,6 +2610,26 @@ def main(argv: list[str] | None = None) -> int:
         f"(stale rule-verdicts re-classify if re-fetched; "
         f"identity-verdicts e.g. dups stay valid)."
     )
+    # Split-stamp view: what a version change ACTUALLY costs this run.
+    _p_ok = sum(1 for c in PREVIOUSLY_SEEN.values()
+                if c.get("prompt_ver") == PROMPT_VERSION)
+    _h_ok = sum(1 for c in PREVIOUSLY_SEEN.values()
+                if c.get("heur_ver") == HEURISTICS_VERSION)
+    _legacy = sum(1 for c in PREVIOUSLY_SEEN.values() if not c.get("prompt_ver"))
+    _saved = 0
+    if PROMPT_CHANGE != PROMPT_CHANGE_BOTH:
+        _saved = sum(
+            1 for c in PREVIOUSLY_SEEN.values()
+            if c.get("prompt_ver") and c.get("prompt_ver") != PROMPT_VERSION
+            and llm_cache_survives_prompt_change(c.get("verdict", ""), PROMPT_CHANGE)
+        )
+    print(
+        f"  split stamps: prompt={PROMPT_VERSION} ({_p_ok} rows match), "
+        f"heuristics={HEURISTICS_VERSION} ({_h_ok} match), "
+        f"{_legacy} legacy rows | PROMPT_CHANGE={PROMPT_CHANGE}"
+        + (f" → {_saved} stale-prompt LLM rows kept (~${_saved * 0.0065:.2f} saved)"
+           if _saved else "")
+    )
 
     svc = sheets_client()
 
@@ -2914,6 +2965,8 @@ def main(argv: list[str] | None = None) -> int:
                 # A later run honours the row's rule-based verdict only if
                 # this matches the live version (else it re-classifies).
                 "cls_ver": CLASSIFIER_VERSION,
+                "prompt_ver": PROMPT_VERSION,
+                "heur_ver": HEURISTICS_VERSION,
                 "verdict": row.verdict,
                 "is_article": row.is_article,
                 "article_score": row.article_score,

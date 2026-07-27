@@ -51,7 +51,10 @@ from news_agent.core.tab_handoff import resolve_articles_tab  # noqa: E402
 from news_agent.core.urls import canonicalise, domain_of, url_hash  # noqa: E402
 from news_agent.settings import get_settings  # noqa: E402
 from news_agent.adapters.llm.base import EDITORIAL_REVIEW_SYSTEM  # noqa: E402
-from news_agent.core.cache_version import compute_classifier_version  # noqa: E402
+from news_agent.core.cache_version import (  # noqa: E402
+    compute_classifier_version,
+    compute_split_versions,
+)
 from news_agent.core import heuristic_relevance as _heuristic_mod  # noqa: E402
 
 
@@ -66,6 +69,17 @@ def _compute_classifier_version() -> str:
 
 
 CLASSIFIER_VERSION = _compute_classifier_version()
+
+
+def _split_versions() -> tuple[str, str]:
+    try:
+        heur_src = Path(_heuristic_mod.__file__).read_bytes()
+    except Exception:  # noqa: BLE001
+        heur_src = b""
+    return compute_split_versions(EDITORIAL_REVIEW_SYSTEM, heur_src)
+
+
+PROMPT_VERSION, HEURISTICS_VERSION = _split_versions()
 
 sys.path.insert(0, str(ROOT / "scripts"))  # published_archive.py lives here
 import published_archive  # noqa: E402  reads "Опубликованные (все)" archive
@@ -121,6 +135,10 @@ def _cache_entry(
     canon_u = canonicalise(url)
     cached_row = {
         "cls_ver": CLASSIFIER_VERSION,
+        # split stamps (jul-27) — same recipe as the batch, else a
+        # recovered row would look legacy and re-run needlessly.
+        "prompt_ver": PROMPT_VERSION,
+        "heur_ver": HEURISTICS_VERSION,
         "verdict": verdict,
         "llm_relevance": relevance,
         "llm_section": section,
