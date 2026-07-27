@@ -125,6 +125,29 @@ def recent_model_dup_hint(
     return f"(возможно дубль: о «{brand_model}» уже писали {when} — проверьте)"
 
 
+# Age at which an event-key match stops being trustworthy on its own.
+# Measured jul-27 on 1058 editor-answered rows in «Разметка отклонённого»:
+# false-divert rate by match age — today 6%, 2-3d 12%, 4-7d 5%, but 8-14d 25%
+# and 15-30d 33%. Beyond a week the same (brand|model|type) key is usually a
+# DIFFERENT happening (a facelift after a reveal, a second recall, a new
+# market), so the hint must not divert on its own — the caller hands those to
+# the LLM arbiter instead. The 30-day STORE window stays as is: the older
+# entries are still useful evidence, just not an automatic verdict.
+EVENT_HINT_TRUSTED_DAYS = 7
+
+
+def event_hint_is_stale(hint: str, threshold_days: int = EVENT_HINT_TRUSTED_DAYS) -> bool:
+    """True when a dup hint cites a match older than ``threshold_days``.
+
+    Reads the age straight off the hint text we generate ourselves
+    («уже было ~12 дн. назад»). Hints without an explicit age (today /
+    «недавно» / archive paraphrase) are never stale — those tiers are
+    calibrated separately.
+    """
+    m = re.search(r"~(\d+)\s*дн", hint or "")
+    return bool(m) and int(m.group(1)) > threshold_days
+
+
 def recent_event_dup_hint(
     event_brand: str,
     event_model: str,

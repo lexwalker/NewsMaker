@@ -413,3 +413,32 @@ def test_published_hint_brand_gate_matches_via_alias() -> None:
         "avtovaz", "iskra", own, source_label="недавно уже отправляли в фид")
     assert hint is not None
     assert "отправляли в фид" in hint
+
+
+# --- stale-hint gate (jul-27: editor «много отклоняем того, что нужно») ---
+
+
+def test_event_hint_is_stale_reads_age_from_text() -> None:
+    from news_agent.core.dedup import event_hint_is_stale
+    assert event_hint_is_stale("(возможно дубль: «bmw x5 (reveal)» уже было ~12 дн. назад — проверьте)")
+    assert event_hint_is_stale("(возможно дубль: «mazda 6 (facelift)» уже было ~30 дн. назад)")
+    # within the trusted week — keeps diverting for free
+    assert not event_hint_is_stale("(возможно дубль: «bmw ix3 (reveal)» уже было сегодня — проверьте)")
+    assert not event_hint_is_stale("(возможно дубль: «voyah passion s» уже было ~7 дн. назад)")
+    assert not event_hint_is_stale("(возможно дубль: «kia ev9» уже было ~3 дн. назад)")
+
+
+def test_event_hint_is_stale_ignores_ageless_hints() -> None:
+    # Archive-paraphrase / own-push tiers carry no age — calibrated separately.
+    from news_agent.core.dedup import event_hint_is_stale
+    assert not event_hint_is_stale("(возможно дубль: уже публиковали о «haval jolion max» — проверьте)")
+    assert not event_hint_is_stale("(возможно дубль: недавно уже отправляли в фид — проверьте)")
+    assert not event_hint_is_stale("")
+    assert not event_hint_is_stale(None)  # type: ignore[arg-type]
+
+
+def test_event_hint_threshold_is_configurable() -> None:
+    from news_agent.core.dedup import event_hint_is_stale
+    h = "(возможно дубль: «x» уже было ~10 дн. назад)"
+    assert event_hint_is_stale(h, threshold_days=7)
+    assert not event_hint_is_stale(h, threshold_days=14)

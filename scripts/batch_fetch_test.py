@@ -591,6 +591,10 @@ from news_agent.core.dup_arbiter import (  # noqa: E402
     graykey_candidates as arbiter_graykey_candidates,
     statistics_candidates as arbiter_stat_candidates,
 )
+from news_agent.core.dedup import (  # noqa: E402
+    EVENT_HINT_TRUSTED_DAYS,
+    event_hint_is_stale,
+)
 from news_agent.core.editorial_pass import (  # noqa: E402
     dup_hint_for,
     has_reject_directive,
@@ -1369,6 +1373,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     arb_pub_titles: set[str] = (
         (PUBLISHED_ALL_TITLES or set()) | own_titles) if DUP_ARBITER_ON else set()
 
+    _stale_dup_hints = 0  # hints older than a week -> handed to the arbiter
     consec_errors = 0   # circuit breaker: N in a row → persistent failure
     aborted = ""        # non-empty = why the pass stopped early
     for i, r in enumerate(candidates, start=1):
@@ -1607,6 +1612,15 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 own_titles=own_titles,
                 alt_title=r.llm_title_en,
             )
+            # jul-27 (editor: «много отклоняем того, что нужно»): a hint whose
+            # match is older than a week diverts a genuinely-new story 25-33%
+            # of the time (measured on 1058 editor answers). Don't divert on
+            # it — drop the hint and let the LLM arbiter below read the
+            # candidates and decide. Fresh hints (<=7d, 5-12% error) keep
+            # diverting deterministically for $0.
+            if dup_hint and event_hint_is_stale(dup_hint):
+                _stale_dup_hints += 1
+                dup_hint = None
             if dup_hint:
                 r.llm_reason = (
                     dup_hint + (" | " + r.llm_reason if r.llm_reason else "")
@@ -1710,6 +1724,9 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     print(f"\nLLM pass done: {snap['calls']} calls, "
           f"${snap['spent_usd']} / ${snap['cap_usd']}  "
           f"({snap['input_tokens']} in / {snap['output_tokens']} out)")
+    if _stale_dup_hints:
+        print(f"  dup hints older than {EVENT_HINT_TRUSTED_DAYS}d not auto-diverted: "
+              f"{_stale_dup_hints} (handed to the LLM arbiter instead)")
     return {"aborted": aborted}
 
 
