@@ -1296,6 +1296,13 @@ Reject on-topic items that carry no concrete happening:
    in Las Vegas", "Waymo adds 4 new markets" -> REJECT (operator territory
    news, not an automotive product event). A robotaxi VEHICLE reveal / tech
    milestone stays (Other news).
+ - RF NEW-REGIONS administration: any measure, law, registration procedure or
+   programme scoped to the new Russian regions (ДНР/ЛНР, Запорожская и
+   Херсонская области, «новые регионы РФ») -> REJECT whatever the subject.
+   Editor (27.07): "Совфед одобрил закон об упрощённой регистрации ТС в новых
+   регионах" -> «такое не нужно, не пишем про новые регионы РФ». This rejects
+   ONLY items scoped to those regions and reroutes nothing else — every other
+   story keeps whatever route the remaining rules give it.
  - RF driver-procedure / insurance MECHANICS changes - how a payout or
    repair-expense is CALCULATED, penalty-procedure tweaks, fuel-grade
    labelling, and «что изменится с 1 числа» multi-topic digests -> REJECT.

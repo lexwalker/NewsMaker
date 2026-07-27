@@ -486,6 +486,42 @@ def _is_paywalled(candidate_domain: str) -> bool:
     n = _normalise_domain(candidate_domain)
     return any(n == h or n.endswith("." + h) for h in _PAYWALL_HOSTS)
 
+
+# Chinese-LANGUAGE outlets — never the «Первоисточник» link. Editor said it
+# three times in one week (jul-27 feedback rows 14/28/37: «нельзя ставить
+# китайский первоисточник», «нельзя ставить китайские сайты как источники»),
+# and in every case a usable non-Chinese original (ixbt, carexpert.com.au)
+# was already among the row's sources — the arbiter just preferred the CN one.
+#
+# DELIBERATELY NOT blocked: cnevpost.com / carnewschina.com — ENGLISH-language
+# outlets covering China (396 of the 455 CN-ish primaries in 30d). The editor
+# has never objected to those, and they are in our own source list. The rule
+# is about the READER hitting a Chinese-only page, not about the topic.
+_CN_LANG_HOSTS: frozenset[str] = frozenset({
+    "ithome.com", "autohome.com.cn", "mydrivers.com", "yiche.com",
+    "dongchedi.com", "pcauto.com.cn", "bitauto.com", "gasgoo.com",
+    "d1ev.com", "xchuxing.com", "chinaevhome.com", "ifeng.com",
+    "weibo.cn", "weibo.com", "sohu.com", "163.com", "sina.com.cn",
+    "qq.com", "36kr.com",
+})
+
+
+def _is_cn_language_host(candidate_domain: str) -> bool:
+    """True for a Chinese-language outlet: listed host (subdomain-aware) or
+    any .cn domain. English-language China coverage on .com (cnevpost,
+    carnewschina) is unaffected."""
+    n = _normalise_domain(candidate_domain)
+    if not n:
+        return False
+    if n == "cn" or n.endswith(".cn"):
+        return True
+    return any(n == h or n.endswith("." + h) for h in _CN_LANG_HOSTS)
+
+
+def _is_blocked_primary(candidate_domain: str) -> bool:
+    """Domains that must never be emitted as the primary source."""
+    return _is_paywalled(candidate_domain) or _is_cn_language_host(candidate_domain)
+
 # Tier-1 Russian outlets. When an aggregator links out to one of these, it is a
 # real candidate for "who actually reported this" — the editor asks for exactly
 # this attribution («первоисточник gazeta.ru…», «Первоисточник 1prime.ru…»,
@@ -599,7 +635,7 @@ def detect_primary_source(
         hd = domain_of(source_hint_url)
         if (hd and not _same_site(hd, article_domain)
                 and not _is_mirror(hd, cues.mirror_hosts)
-                and not _is_paywalled(hd)):
+                and not _is_blocked_primary(hd)):
             return source_hint_url, hd, "high"
     if (article_domain in whitelist_norm
             and article_domain not in _REDISTRIBUTION_HOSTS):
@@ -637,7 +673,7 @@ def detect_primary_source(
         if link
         and not _is_junk_link(link)
         and not _is_mirror(domain_of(link), cues.mirror_hosts)
-        and not _is_paywalled(domain_of(link))
+        and not _is_blocked_primary(domain_of(link))
         and not _is_infra_or_nav(domain_of(link), _dom_freq,
                                  cues.press_release_hosts)
     ]
@@ -776,7 +812,7 @@ def arbitration_candidates(
         nd = _normalise_domain(d)
         if _is_mirror(d, cues.mirror_hosts):
             continue
-        if _is_paywalled(nd):
+        if _is_blocked_primary(nd):
             continue
         if _is_infra_or_nav(d, _dom_freq, cues.press_release_hosts):
             continue
@@ -895,7 +931,7 @@ def detect_earliest_in_corpus(
                 continue
             if not _same_site(entry.domain, hint):
                 continue
-            if _is_paywalled(entry.domain):
+            if _is_blocked_primary(entry.domain):
                 continue
             ratio = fuzz.token_set_ratio(target_norm, normalise_title(entry.title))
             if ratio >= threshold and (best_hint is None or ratio > best_hint[1]):
@@ -910,7 +946,7 @@ def detect_earliest_in_corpus(
         if _is_mirror(entry.domain, mirror_set):
             # e.g. t.me / max.ru / vk.com — not a primary source
             continue
-        if _is_paywalled(entry.domain):
+        if _is_blocked_primary(entry.domain):
             continue
         if entry.published_at is None or article_published_at is None:
             # can't compare ordering without both timestamps

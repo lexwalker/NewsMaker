@@ -114,6 +114,80 @@ def archive_candidates(
     return out
 
 
+_STAT_TYPES = frozenset({"sales_stat", "financial"})
+
+# Tokens that carry the IDENTITY of a market-statistics story: the market or
+# region, the period, and the figures. Two stat stories about the same market
+# and period are the same event even when the wording differs completely.
+_STAT_STOPWORDS = frozenset({
+    "the", "a", "an", "in", "of", "and", "for", "to", "on", "at", "by",
+    "with", "from", "v", "na", "za", "po", "i", "s", "iz", "do", "ot",
+    "new", "car", "cars", "auto", "avto", "market", "rynok", "rynke",
+    "sales", "prodazh", "prodazhi", "growth", "rост", "rost", "share",
+    "dolya", "percent", "protsentov", "results", "itogi", "data", "dannye",
+})
+
+
+def statistics_candidates(
+    *,
+    title: str,
+    alt_title: str = "",
+    event_type: str,
+    event_brand: str = "",
+    pub_titles: set[str] | list[str],
+    k: int = 4,
+) -> list[str]:
+    """Near-miss candidates for BRAND-LESS market statistics.
+
+    jul-27 editor batch: 4 of 8 missed «писали уже» rows were stat stories
+    with an EMPTY event brand+model (('', '', 'sales_stat')) — the archive
+    tier is brand-gated and the key tier drops empty models, so every layer
+    was structurally blind to them (customs imports, European H1 EV share,
+    Sber H1, regional EV/PHEV sales).
+
+    Gate without a brand anchor: the fresh row must BE a statistics story
+    (event_type) with no brand, and a candidate must share at least two
+    identity tokens — the market/region/period/figure words that survive
+    _STAT_STOPWORDS — at a moderate similarity. The LLM makes the final
+    call (a June figure is not a July figure), so this only has to be a
+    sane shortlist, not a verdict.
+    """
+    et = (event_type or "").strip().lower()
+    if et not in _STAT_TYPES or (event_brand or "").strip():
+        return []
+    if not pub_titles:
+        return []
+    nts = [n for n in (normalise_title(title), normalise_title(alt_title)) if n]
+    if not nts:
+        return []
+    my_ident = set()
+    for n in nts:
+        my_ident |= {w for w in n.split()
+                     if len(w) >= 3 and w not in _STAT_STOPWORDS}
+    if len(my_ident) < 2:
+        return []
+    scored: list[tuple[int, float, str]] = []
+    for pt in pub_titles:
+        if not pt:
+            continue
+        shared = my_ident & set(pt.split())
+        if len(shared) < 2:
+            continue
+        ratio = max(fuzz.token_set_ratio(n, pt) for n in nts)
+        if ratio < _ANCHOR_FLOOR:
+            continue
+        scored.append((len(shared), ratio, pt))
+    scored.sort(reverse=True)
+    out: list[str] = []
+    for _, _, pt in scored:
+        if any(fuzz.token_set_ratio(pt, prev) >= 90 for prev in out):
+            continue
+        out.append(pt)
+        if len(out) >= k:
+            break
+    return out
+
+
 def graykey_candidates(
     *,
     event_brand: str,

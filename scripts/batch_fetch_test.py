@@ -568,6 +568,7 @@ from news_agent.core.dup_arbiter import (  # noqa: E402
     archive_candidates as arbiter_archive_candidates,
     build_fresh_display as arbiter_fresh_display,
     graykey_candidates as arbiter_graykey_candidates,
+    statistics_candidates as arbiter_stat_candidates,
 )
 from news_agent.core.editorial_pass import (  # noqa: E402
     dup_hint_for,
@@ -1596,6 +1597,10 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 _arb_cands = arbiter_archive_candidates(
                     title=r.title, alt_title=r.llm_title_en,
                     event_brand=r.event_brand, event_model=r.event_model,
+                    pub_titles=arb_pub_titles,
+                ) + arbiter_stat_candidates(
+                    title=r.title, alt_title=r.llm_title_en,
+                    event_type=r.event_type, event_brand=r.event_brand,
                     pub_titles=arb_pub_titles,
                 ) + arbiter_graykey_candidates(
                     event_brand=r.event_brand, event_model=r.event_model,

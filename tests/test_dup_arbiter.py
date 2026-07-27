@@ -131,3 +131,46 @@ def test_alt_title_en_lifts_cross_language_match() -> None:
         "nissan", "", pub,
         alt_title="Nissan recalls 168 thousand vehicles due to incorrect labels")
     assert hint is not None and "возможно дубль" in hint
+
+
+# --- brand-less statistics tier (jul-27: 4 of 8 missed dups were these) ---
+
+
+def test_statistics_candidates_surface_same_market_period() -> None:
+    from news_agent.core.dup_arbiter import statistics_candidates
+    pool = {
+        "import mashin prodolzhaet rasti dalnevostochnye tamozhni zavaleny rabotoi",
+        "geely galaxy a7 sedan traveled 2 608 km on a single tank of fuel",
+    }
+    cands = statistics_candidates(
+        title="Импорт машин продолжает расти: дальневосточная таможня перегружена",
+        alt_title="Car imports continue to grow: Far East customs overwhelmed",
+        event_type="sales_stat", event_brand="", pub_titles=pool)
+    assert cands and "dalnevostochnye" in cands[0]
+
+
+def test_statistics_tier_silent_when_brand_present() -> None:
+    # A branded stat row is the archive tier's job (brand-gated) — this tier
+    # must not double-fire and inflate candidate lists.
+    from news_agent.core.dup_arbiter import statistics_candidates
+    assert statistics_candidates(
+        title="Продажи Lada выросли", alt_title="Lada sales grew",
+        event_type="sales_stat", event_brand="lada",
+        pub_titles={"prodazhi lada vyrosli v iyune"}) == []
+
+
+def test_statistics_tier_silent_for_non_stat_events() -> None:
+    from news_agent.core.dup_arbiter import statistics_candidates
+    assert statistics_candidates(
+        title="Представлен новый кроссовер", alt_title="New crossover revealed",
+        event_type="reveal", event_brand="",
+        pub_titles={"predstavlen novyi krossover na rynke"}) == []
+
+
+def test_statistics_needs_two_shared_identity_tokens() -> None:
+    # One generic overlap is not an identity match.
+    from news_agent.core.dup_arbiter import statistics_candidates
+    assert statistics_candidates(
+        title="Продажи авто в Европе выросли", alt_title="Car sales grew in Europe",
+        event_type="sales_stat", event_brand="",
+        pub_titles={"prodazhi gruzovikov v kitae upali"}) == []

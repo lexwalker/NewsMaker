@@ -1051,3 +1051,47 @@ def test_paywalled_corpus_twin_skipped() -> None:
         press_release_hosts=[],
     )
     assert res is None
+
+
+# --- Chinese-language source block (editor jul-27, said 3× in one week) ----
+
+
+def test_cn_language_host_never_primary_via_hint() -> None:
+    url, dom, conf = detect_primary_source(
+        article_url="https://www.ixbt.com/news/2026/07/26/toyota-battery/",
+        body="Toyota вводит пожизненную гарантию на батареи.",
+        title="Toyota вводит пожизненную гарантию",
+        outbound_links=[],
+        brands=BRANDS, cues=CUES,
+        source_hint_url="https://www.ithome.com/0/981/388.htm",
+    )
+    assert "ithome" not in dom
+
+
+def test_cn_tld_blocked_but_english_china_outlets_pass() -> None:
+    # autohome.com.cn is blocked; cnevpost.com (English) must survive — it is
+    # a listed preferred primary and 396/455 CN-ish primaries came from that
+    # English class the editor never objected to.
+    from news_agent.core.primary_source import (
+        _is_blocked_primary, _is_cn_language_host,
+    )
+    assert _is_cn_language_host("www.autohome.com.cn")
+    assert _is_cn_language_host("news.mydrivers.com")
+    assert _is_blocked_primary("ithome.com")
+    assert not _is_cn_language_host("cnevpost.com")
+    assert not _is_cn_language_host("carnewschina.com")
+    assert not _is_blocked_primary("www.carexpert.com.au")
+
+
+def test_cn_outbound_skipped_next_candidate_wins() -> None:
+    url, dom, conf = detect_primary_source(
+        article_url="https://www.ixbt.com/news/2026/07/23/xiaomi-swap/",
+        body="Как сообщает зарубежная пресса, Xiaomi готовит сеть станций.",
+        title="Xiaomi готовит сеть станций замены батарей",
+        outbound_links=[
+            "https://news.mydrivers.com/1/1138/1138525.htm",
+            "https://www.carexpert.com.au/car-news/xiaomi-battery-swap-network",
+        ],
+        brands=BRANDS, cues=CUES,
+    )
+    assert dom == "carexpert.com.au"
