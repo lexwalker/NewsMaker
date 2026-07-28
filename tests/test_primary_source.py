@@ -1095,3 +1095,13 @@ def test_cn_outbound_skipped_next_candidate_wins() -> None:
         brands=BRANDS, cues=CUES,
     )
     assert dom == "carexpert.com.au"
+
+
+def test_linkedin_share_offsite_is_junk() -> None:
+    # jul-28 editor: a Hyundai V2X row shipped with
+    # primary=linkedin.com/sharing/share-offsite/?url=<the real article>.
+    assert _is_junk_link(
+        "https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fthekoreancarblog.com%2Fx")
+    assert _is_junk_link("https://www.linkedin.com/share?url=http://x")
+    # a real LinkedIn article page is not a share widget
+    assert not _is_junk_link("https://www.linkedin.com/pulse/real-article-slug-here")

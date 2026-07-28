@@ -153,7 +153,10 @@ _JUNK_URL_FRAGMENTS = (
     "facebook.com/sharer/", "facebook.com/share/",
     "twitter.com/intent/", "twitter.com/share",
     "t.me/share", "vk.com/share",
-    "linkedin.com/share", "pinterest.com/pin/create",
+    # LinkedIn has TWO share shapes; only /share was listed, so
+    # /sharing/share-offsite/?url=<real article> slipped through and shipped
+    # as a primary (editor jul-28 on a Hyundai V2X row).
+    "linkedin.com/share", "linkedin.com/sharing/", "pinterest.com/pin/create",
     "wa.me/", "api.whatsapp.com/send", "web.whatsapp.com/send",
     # personal-profile pages are never a primary (jul-10 red-mark audit:
     # a Waymo story shipped with primary=linkedin.com/in/<journalist>)

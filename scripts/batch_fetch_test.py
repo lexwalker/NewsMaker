@@ -85,6 +85,7 @@ from news_agent.core.primary_source import (  # noqa: E402
     arbitration_candidates,
     detect_earliest_in_corpus,
     detect_primary_source,
+    _is_deep_url,
 )
 from news_agent.core.urls import url_hash, year_in_url_path  # noqa: E402
 from news_agent.core.heuristic_relevance import (  # noqa: E402
@@ -1820,7 +1821,7 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
         return n in _REDISTRIBUTION_HOSTS or any(
             n.endswith("." + h) for h in _REDISTRIBUTION_HOSTS)
 
-    hit = 0
+    rooted = 0   # rows annotated with their brand's newsroom index
     for r in article_rows:
         if r.verdict not in ("Точно новость", "Возможно новость"):
             continue
@@ -1840,14 +1841,23 @@ def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
             weak = (r.primary_confidence == "low") or _is_redis(r.primary_domain)
             if not weak:
                 continue  # P2-A: keep the deep journalistic primary
-        r.primary_url = nr
-        r.primary_domain = nr_dom
-        r.primary_confidence = "medium"
-        r.primary_method = "brand-newsroom"
-        hit += 1
-    if hit:
-        print(f"Brand-newsroom attribution: {hit} rows -> official press "
-              f"(sales/financial + weak-primary reveal/partnership).")
+        # jul-28 (editor on a Lynk & Co row: «это не ссылка на новость
+        # компании, там такой нет»). EVERY entry in brand_newsrooms.yaml is
+        # a newsroom INDEX, not a release: 21 of 34 are bare roots and the
+        # other 13 are index paths (ir.nio.com/news-events/news-releases).
+        # Neither answers «which release is this story», which is the exact
+        # reason Tier 5 (domain-root attribution) was deleted in july. So
+        # the index never overwrites a primary any more — it goes into the
+        # note, where the editor still sees an official source exists.
+        # Restoring it as a real primary needs Layer 3 (core/press_search.py,
+        # built but unwired — needs BRAVE_SEARCH_API_KEY) to find the actual
+        # release URL.
+        r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+            f"офиц. ньюсрум бренда: {nr_dom}"
+        rooted += 1
+    if rooted:
+        print(f"Brand-newsroom: {rooted} rows annotated with the official "
+              f"newsroom index (never overwrites the primary link).")
 
 
 def _run_corpus_primary_source_pass(article_rows: list[ArticleRow]) -> None:
