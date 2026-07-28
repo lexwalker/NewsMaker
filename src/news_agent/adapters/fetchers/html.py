@@ -656,6 +656,14 @@ def _looks_like_article(url: str) -> bool:
     # _DATE_PATH_RE and ate the whole tried=60 fetch budget on listing pages).
     if "archive" in segs0:
         return False
+    # Language switchers are not articles: europarl's press-room carries
+    # /news/bg, /news/es, /news/cs … for all 24 EU languages, and every one
+    # matched the "/news/" hint — 35 of them filled the whole per-source cap
+    # before a single press release was reached (jul-28: source ran with 0
+    # articles for weeks). A terminal 2-letter segment is a locale, never a
+    # story slug.
+    if len(segs0) >= 2 and len(segs0[-1]) == 2 and segs0[-1].isalpha():
+        return False
     if any(seg in path for seg in _ARTICLE_HINTS):
         return True
     if _DATE_PATH_RE.search(path):

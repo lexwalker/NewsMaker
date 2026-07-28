@@ -46,6 +46,7 @@ load_dotenv(ROOT / ".env", override=True)
 
 from news_agent.adapters.fetchers.html import (  # noqa: E402
     extract_article,
+    _DATE_PATH_RE,
     _looks_like_article,
 )
 from news_agent.adapters.fetchers.telegram import (  # noqa: E402
@@ -2378,9 +2379,30 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
         if _looks_like_article(absolute) and absolute not in seen:
             seen.add(absolute)
             out.append(absolute)
-            if len(out) >= limit:
-                break
-    return out
+    # Rank before capping (jul-28). Taking the first `limit` links in DOM
+    # order lets a site's NAVIGATION eat the whole per-source budget: on
+    # europarl's press-room the 24 language switchers plus /agenda,
+    # /press-kit, /faq filled all 35 slots and not one press release was
+    # ever fetched (source ran at 0 articles for weeks). A story URL carries
+    # a strong marker — a date in the path, a long hyphenated slug, or a
+    # numeric/alphanumeric id — while section pages are short and bare. Sort
+    # is STABLE, so within a tier the original page order is preserved and
+    # every source that was already healthy keeps its exact link set.
+    def _strength(u: str) -> int:
+        p = urlparse(u).path.rstrip("/")
+        segs = [s for s in p.split("/") if s]
+        last = segs[-1] if segs else ""
+        if _DATE_PATH_RE.search(p):
+            return 0                     # dated permalink — strongest
+        if last.count("-") >= 3:
+            return 1                     # long hyphenated slug
+        if any(ch.isdigit() for ch in last) and len(last) >= 4:
+            return 2                     # id-style leaf (autostat, europarl)
+        if len(segs) >= 3:
+            return 3                     # deep path, no marker
+        return 4                         # shallow section page
+    out.sort(key=_strength)
+    return out[:limit]
 
 
 # ------------------------------------------------------------- CLI

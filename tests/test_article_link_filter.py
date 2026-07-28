@@ -64,3 +64,14 @@ def test_archive_listing_pages_rejected() -> None:
         "https://www.autostat.ru/analytics/archive/2026/7/")
     assert not _looks_like_article(
         "https://www.autostat.ru/infographics/archive/2026/")
+
+
+def test_locale_switcher_is_not_an_article() -> None:
+    # jul-28 europarl: /news/bg, /news/es … matched the "/news/" hint and 24
+    # language switchers filled the whole per-source cap.
+    assert not _looks_like_article("https://www.europarl.europa.eu/news/bg")
+    assert not _looks_like_article("https://www.europarl.europa.eu/news/es")
+    # a real press release keeps working
+    assert _looks_like_article(
+        "https://www.europarl.europa.eu/news/en/press-room/20260716IPR46537/"
+        "foreign-affairs-committee-meps-conclude-mission-to-china")
