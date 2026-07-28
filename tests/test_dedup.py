@@ -442,3 +442,25 @@ def test_event_hint_threshold_is_configurable() -> None:
     h = "(возможно дубль: «x» уже было ~10 дн. назад)"
     assert event_hint_is_stale(h, threshold_days=7)
     assert not event_hint_is_stale(h, threshold_days=14)
+
+
+def test_archive_model_hint_recognised_as_weak() -> None:
+    # jul-28: this tier has no notion of the event — 24% of its diverts were
+    # a NEW happening for a model we had already covered.
+    from news_agent.core.dedup import archive_model_hint_is_weak
+    assert archive_model_hint_is_weak(
+        "(возможно дубль: уже публиковали о «lamborghini urus» — проверьте)")
+    assert archive_model_hint_is_weak(
+        "(возможно дубль: уже публиковали о «bmw ix5 lwb x5 lwb» — проверьте)")
+
+
+def test_strong_archive_title_hint_stays_automatic() -> None:
+    # The ≥88 full-title branch fired 10 times with 1 error — keep diverting.
+    from news_agent.core.dedup import archive_model_hint_is_weak
+    assert not archive_model_hint_is_weak(
+        "(возможно дубль: похожий заголовок уже публиковали — проверьте)")
+    assert not archive_model_hint_is_weak(
+        "(возможно дубль: «bmw ix3 (reveal)» уже было сегодня — проверьте)")
+    assert not archive_model_hint_is_weak(
+        "(возможно дубль: недавно уже отправляли в фид — проверьте)")
+    assert not archive_model_hint_is_weak("")

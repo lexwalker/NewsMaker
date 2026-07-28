@@ -136,6 +136,24 @@ def recent_model_dup_hint(
 EVENT_HINT_TRUSTED_DAYS = 7
 
 
+def archive_model_hint_is_weak(hint: str) -> bool:
+    """True for the all-time archive tier's «уже публиковали о «brand model»».
+
+    That tier fires when the editor's archive holds ANY story about the same
+    brand+model at a moderate headline similarity — it has no notion of the
+    EVENT. Measured jul-28 on 140 editor-answered rows: 33 wrong diverts
+    (24%), all of them a NEW happening for a model we covered before — a
+    recall of the Urus after its reveal, an X5 LWB for India after the one
+    for China, an AMG final edition after the base car, pre-orders for a
+    model whose specs we ran. The 107 correct diverts are true re-runs.
+    A text-only rule cannot separate those, so the caller hands this tier to
+    the LLM arbiter instead of diverting on it. The OTHER archive branch
+    («похожий заголовок…», a strong ≥88 full-title match) stays automatic —
+    it fired 10 times with 1 error.
+    """
+    return "уже публиковали о «" in (hint or "")
+
+
 def event_hint_is_stale(hint: str, threshold_days: int = EVENT_HINT_TRUSTED_DAYS) -> bool:
     """True when a dup hint cites a match older than ``threshold_days``.
 

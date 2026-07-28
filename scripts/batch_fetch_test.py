@@ -639,6 +639,7 @@ from news_agent.core.dup_arbiter import (  # noqa: E402
 )
 from news_agent.core.dedup import (  # noqa: E402
     EVENT_HINT_TRUSTED_DAYS,
+    archive_model_hint_is_weak,
     event_hint_is_stale,
 )
 from news_agent.core.editorial_pass import (  # noqa: E402
@@ -1420,6 +1421,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         (PUBLISHED_ALL_TITLES or set()) | own_titles) if DUP_ARBITER_ON else set()
 
     _stale_dup_hints = 0  # hints older than a week -> handed to the arbiter
+    _weak_archive_hints = 0  # archive brand+model tier -> handed to the arbiter
     consec_errors = 0   # circuit breaker: N in a row → persistent failure
     aborted = ""        # non-empty = why the pass stopped early
     for i, r in enumerate(candidates, start=1):
@@ -1667,6 +1669,13 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             if dup_hint and event_hint_is_stale(dup_hint):
                 _stale_dup_hints += 1
                 dup_hint = None
+            # jul-28: the all-time archive's brand+model tier knows nothing
+            # about the EVENT — 24% of its diverts were a NEW happening for
+            # a model we had covered (Urus recall after the Urus reveal,
+            # X5 LWB India after X5 LWB China). Hand it to the arbiter too.
+            elif dup_hint and archive_model_hint_is_weak(dup_hint):
+                _weak_archive_hints += 1
+                dup_hint = None
             if dup_hint:
                 r.llm_reason = (
                     dup_hint + (" | " + r.llm_reason if r.llm_reason else "")
@@ -1773,6 +1782,9 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     if _stale_dup_hints:
         print(f"  dup hints older than {EVENT_HINT_TRUSTED_DAYS}d not auto-diverted: "
               f"{_stale_dup_hints} (handed to the LLM arbiter instead)")
+    if _weak_archive_hints:
+        print(f"  archive brand+model hints not auto-diverted: "
+              f"{_weak_archive_hints} (handed to the LLM arbiter instead)")
     return {"aborted": aborted}
 
 
