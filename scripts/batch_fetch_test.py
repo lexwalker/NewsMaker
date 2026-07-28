@@ -3016,6 +3016,19 @@ def main(argv: list[str] | None = None) -> int:
                 "Отклонить (ошибка загрузки)",
                 "Отклонить (не удалось извлечь)",
                 "Отклонить (уже опубликовано редактором)",
+                # jul-28: "дубль финального URL" is a WITHIN-RUN artefact —
+                # the SAME url arriving from a second source (iz.ru root +
+                # its rubric pages, auto.ru index + mag). The first copy is
+                # the real one and may well be ACCEPTED and pushed; but both
+                # copies share a url_hash, so persisting the duplicate
+                # OVERWRITES the real row's verdict, event keys and LLM
+                # fields. Measured: 810 such rows in one week, e.g. the
+                # Maybach GLS story that WAS pushed and published while its
+                # cache row read "дубль". Consequences: the next run's dedup
+                # is blind to a story we already published (dup risk), the
+                # paid classification is lost (re-classify cost), and any
+                # analytics built on the cache under-counts the feed.
+                "Отклонить (дубль финального URL)",
             }:
                 continue
             # Don't persist accept-graded rows the LLM never classified
