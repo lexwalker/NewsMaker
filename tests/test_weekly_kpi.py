@@ -161,3 +161,34 @@ def test_denominator_exclusions() -> None:
     assert is_routine_brief(Item(title="Oil prices (USD): Brent 86,08/ WTI 79,76 (RU)"))
     assert is_routine_brief(Item(title="Central Bank increased USD rate on July 15 to 77,49 RUB (RU)"))
     assert not is_routine_brief(Item(title="Central Bank of Brazil approved car loan reform"))
+
+
+# --- event-type discriminator (jul-28 audit: anchor proved "same car",
+# not "same story" — ~1/3 of anchored matches paired different events) ---
+
+def test_event_conflict_separates_different_events_on_one_model() -> None:
+    from news_agent.core.weekly_kpi import _event_conflict
+    # editor ran the spy shots, we had the sales start — different stories
+    assert _event_conflict(["refreshed hybrid gac s7 suv spied in china"],
+                           "start prodazh obnovlennogo krossovera gac s7")
+    # pre-orders vs an interior reveal
+    assert _event_conflict(["leapmotor started collecting pre-orders for the a05"],
+                           "leapmotor a05 pokazal salon")
+
+
+def test_event_conflict_silent_on_same_event_reworded() -> None:
+    from news_agent.core.weekly_kpi import _event_conflict
+    assert not _event_conflict(["buick started collecting pre-orders for electra l7"],
+                               "buick opens orders for electra l7 bev in china")
+    assert not _event_conflict(["sollers s9 suv got vehicle type approval in russia"],
+                               "vnedorozhniki sollers s9 i jac js9 poluchili otts")
+    assert not _event_conflict(["nio sold 130 thousandth 3rd gen es8 suv"],
+                               "v kitae prodali 130 tysyachnyi krossover nio es8")
+
+
+def test_event_conflict_silent_when_a_side_has_no_marker() -> None:
+    # The proven undercount fixes (H10, DS N°7) carry no type word — they
+    # must keep matching.
+    from news_agent.core.weekly_kpi import _event_conflict
+    assert not _event_conflict(["haval gwm h10 suv"], "great wall h10 krossover")
+    assert not _event_conflict(["ds n 7 elysee"], "ds n 7 elysee in france")

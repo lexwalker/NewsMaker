@@ -143,6 +143,58 @@ class Index:
 # + ratio, and honest in the direction of fixing PROVEN undercounts.
 ANCHORED_THRESHOLD = 50.0
 
+# …and here is the documented risk actually biting (jul-28 audit of the 28
+# anchored matches): the anchor says "same CAR", never "same STORY". Manual
+# review found ~1/3 of them pairing DIFFERENT events on one model — the
+# editor's «шпионские фото GAC S7» against our «старт продаж GAC S7», his
+# «Leapmotor открыл предзаказ A05» against our «A05 показал салон», his
+# «старт продаж XPeng Mona L03» against a review of that car. Effect: the
+# coverage number was ~3-4pp too high AND section accuracy was dragged down
+# to 60% (a mis-paired story naturally sits in another section) while the
+# editor himself flagged only 2.3% of rows for a wrong section.
+#
+# Cheap discriminator: news TYPE words. When both headlines carry a type
+# marker and the markers do not intersect, they are different happenings
+# whatever the model overlap. Silent when either side has no marker, so the
+# proven undercount fixes (H10, DS N°7 — neither carries a marker) survive.
+_EVENT_MARKERS: dict[str, tuple[str, ...]] = {
+    "spy": ("spied", "spy", "prototype", "шпион", "prototip", "zamechen",
+            "camouflage", "kamuflyazh"),
+    "launch": ("sales start", "started sales", "sales of", "launched",
+               "go on sale", "start prodazh", "startovali prodazhi",
+               "postupil v prodazhu", "vyshel na rynok"),
+    "preorder": ("pre-order", "preorder", "pre order", "predzakaz"),
+    "reveal": ("unveiled", "revealed", "debut", "presented", "predstavlen",
+               "rassekrechen", "premiera"),
+    "recall": ("recall", "otzyv", "otzovet"),
+    "certification": ("type approval", "certified", "certification", "otts",
+                      "sertifikat"),
+    "interior": ("interior", "salon", "cabin"),
+    "record": ("record", "rekord", "nurburgring", "lap time"),
+    "milestone": ("thousandth", "millionth", "tysyachnyi", "millionnyi",
+                  "cumulative", "milestone"),
+    "test": ("test drive", "test-drive", "testdrive", "test drove"),
+}
+
+
+def _event_markers(norm: str) -> frozenset:
+    """Event-type markers present in a normalised headline."""
+    return frozenset(k for k, words in _EVENT_MARKERS.items()
+                     if any(w in norm for w in words))
+
+
+def _event_conflict(a_norms: list[str], b_norm: str) -> bool:
+    """True when both sides name an event type and the types disagree."""
+    a_marks: frozenset = frozenset()
+    for n in a_norms:
+        a_marks |= _event_markers(n)
+    if not a_marks:
+        return False
+    b_marks = _event_markers(b_norm)
+    if not b_marks:
+        return False
+    return not (a_marks & b_marks)
+
 
 def build_index(items: list[Item]) -> Index:
     idx = Index()
@@ -177,7 +229,11 @@ def match(item: Item, idx: Index, threshold: float = DEFAULT_THRESHOLD):
         # anchored: same non-empty brand bucket + shared model token
         if (item.brand and q_anchors and n_anchors & q_anchors
                 and s >= ANCHORED_THRESHOLD):
-            s = max(s, threshold)  # promote past the strict bar
+            # …but only when the two headlines don't name DIFFERENT events.
+            # The anchor proves "same car", the markers veto "different
+            # story" (jul-28 audit — see _EVENT_MARKERS).
+            if not _event_conflict(qn, n):
+                s = max(s, threshold)  # promote past the strict bar
         if s > best:
             best, best_sec = s, sec
     if best >= threshold:
