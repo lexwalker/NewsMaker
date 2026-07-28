@@ -104,6 +104,8 @@ from news_agent.core.cache_version import (  # noqa: E402
     compute_split_versions,
     llm_cache_survives_prompt_change,
     PROMPT_CHANGE_BOTH,
+    PROMPT_CHANGE_PUBLISH_ONLY,
+    PROMPT_CHANGE_REJECT_ONLY,
     compute_classifier_version,
 )
 from news_agent.core.published_dedup import already_published  # noqa: E402
@@ -363,7 +365,49 @@ CLASSIFIER_VERSION = _compute_classifier_version()
 # the safe, always-correct behaviour.
 PROMPT_VERSION, HEURISTICS_VERSION = compute_split_versions(
     EDITORIAL_REVIEW_SYSTEM, _heuristics_source())
-PROMPT_CHANGE = os.environ.get("PROMPT_CHANGE", PROMPT_CHANGE_BOTH).strip() or PROMPT_CHANGE_BOTH
+def _resolve_prompt_change() -> tuple[str, str]:
+    """(direction, source). Env wins; otherwise a pending declaration file.
+
+    jul-28: constitution edits happen BETWEEN runs, and the scheduled
+    23:30 prog knows nothing about them — the jul-27 evening run paid
+    PROMPT_CHANGE=both after a publish-only edit (~$1 wasted). Whoever
+    edits the prompt now drops the direction into
+    data/prompt_change.json together with the prompt_ver it applies to;
+    the next run picks it up automatically. The file is consumed after a
+    SUCCESSFUL classification pass (see _consume_prompt_change) and is
+    ignored outright once the live prompt_ver no longer matches — a stale
+    declaration must never silently keep skipping re-classification.
+    """
+    env = os.environ.get("PROMPT_CHANGE", "").strip()
+    if env:
+        return env, "env"
+    try:
+        d = json.loads(PROMPT_CHANGE_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — missing/unreadable = no declaration
+        return PROMPT_CHANGE_BOTH, "default"
+    direction = str(d.get("direction", "")).strip()
+    applies_to = str(d.get("prompt_ver", "")).strip()
+    if direction not in (PROMPT_CHANGE_REJECT_ONLY, PROMPT_CHANGE_PUBLISH_ONLY):
+        return PROMPT_CHANGE_BOTH, "default"
+    if applies_to and applies_to != PROMPT_VERSION:
+        return PROMPT_CHANGE_BOTH, f"file-stale(for {applies_to})"
+    return direction, "file"
+
+
+PROMPT_CHANGE_PATH = Path(__file__).resolve().parents[1] / "data" / "prompt_change.json"
+PROMPT_CHANGE, PROMPT_CHANGE_SRC = _resolve_prompt_change()
+
+
+def _consume_prompt_change() -> None:
+    """Drop the declaration once a run has actually used it."""
+    if PROMPT_CHANGE_SRC != "file":
+        return
+    try:
+        PROMPT_CHANGE_PATH.unlink(missing_ok=True)
+        print(f"  prompt-change declaration consumed ({PROMPT_CHANGE}) — "
+              f"later runs go back to '{PROMPT_CHANGE_BOTH}'.")
+    except Exception as e:  # noqa: BLE001 — never fail a run over this
+        print(f"  ! could not consume prompt-change file: {type(e).__name__}")
 DEDUP_PORTAL = "RU"  # current batch treats every source as RU portal
 PRIMARY_CUES = None  # type: ignore[assignment]  # PrimarySourceCues from config
 SOURCE_QUALITY: SourceQuality | None = None  # set in main()
@@ -2643,7 +2687,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"  split stamps: prompt={PROMPT_VERSION} ({_p_ok} rows match), "
         f"heuristics={HEURISTICS_VERSION} ({_h_ok} match), "
-        f"{_legacy} legacy rows | PROMPT_CHANGE={PROMPT_CHANGE}"
+        f"{_legacy} legacy rows | PROMPT_CHANGE={PROMPT_CHANGE} ({PROMPT_CHANGE_SRC})"
         + (f" → {_saved} stale-prompt LLM rows kept (~${_saved * 0.0065:.2f} saved)"
            if _saved else "")
     )
@@ -3026,6 +3070,11 @@ def main(argv: list[str] | None = None) -> int:
             f"SQLite cache: +{len(entries)} rows stored with full classification "
             f"(next run will restore these without LLM)."
         )
+        # The declaration has now done its job: the rows it protected are
+        # re-stamped with the live prompt_ver. Consume it only after a
+        # HEALTHY pass — an aborted run must keep it for the retry.
+        if not llm_aborted:
+            _consume_prompt_change()
 
     # Network writes — retried with backoff so a transient SSL/5xx blip on
     # the Sheets API doesn't discard the run (the classification is already
