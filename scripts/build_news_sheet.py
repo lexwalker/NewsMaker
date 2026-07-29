@@ -20,7 +20,6 @@ Run:  python scripts/build_news_sheet.py "ТЕСТ статьи v18"
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import re
@@ -33,10 +32,15 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from rapidfuzz import fuzz
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
+
+from news_agent.core.console import force_utf8_stdio  # noqa: E402
+
+# Import-safe (see console.py): the old wrap-the-buffer idiom closed pytest's
+# captured stream from a GC finaliser.
+force_utf8_stdio()
 
 import review_tab  # noqa: E402  (shared review-tab helper, scripts/ on path)
 from news_agent.core.config_loader import load_brand_domains  # noqa: E402

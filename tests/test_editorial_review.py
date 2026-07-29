@@ -55,15 +55,28 @@ def test_review_confidence_bounds() -> None:
         EditorialReview(should_publish=True, confidence=-0.1, reason="too low")
 
 
-def test_review_invalid_region() -> None:
-    with pytest.raises(ValidationError):
-        EditorialReview(
-            should_publish=True,
-            section="Confirmed",
-            region="Worldwide",  # not in Region literal
-            confidence=0.8,
-            reason="x",
-        )
+def test_review_invalid_region_coerces_instead_of_raising() -> None:
+    """An out-of-vocabulary region must NOT sink the verdict (jun-23).
+
+    This asserted `raises(ValidationError)` until jul-30. The behaviour was
+    deliberately inverted by _tolerant_region: one stray region string used to
+    fail the whole EditorialReview, and since verdict+reason+event_signature
+    arrive in ONE call, a lost verdict lost all three. None is safe —
+    downstream reads it as Global."""
+    r = EditorialReview(
+        should_publish=True,
+        section="Confirmed",
+        region="Worldwide",  # not in the Region literal
+        confidence=0.8,
+        reason="x",
+    )
+    assert r.region is None
+    assert r.should_publish is True  # the rest of the verdict survived
+
+
+def test_review_region_is_case_normalised() -> None:
+    assert EditorialReview(should_publish=True, region="global",
+                           confidence=0.5, reason="x").region == "Global"
 
 
 # ------------------------------------------------------------- schema
@@ -115,28 +128,47 @@ def test_system_prompt_baseline_length() -> None:
 
 
 # ----------------------------------- regression: known editor cases (textual)
-
-def test_prompt_mentions_corporate_vacation_rule() -> None:
-    """Editor row 121: vacation NOT a publishable item."""
-    assert "корпоративный отпуск" in EDITORIAL_REVIEW_SYSTEM
-
-
-def test_prompt_mentions_per_model_price_drops() -> None:
-    """Editor row 129: per-model price drops not posted."""
-    assert "price drops" in EDITORIAL_REVIEW_SYSTEM.lower()
-
-
-def test_prompt_mentions_asroad_warning() -> None:
-    """Editor warning about asroad.org being 99% repost."""
-    assert "asroad" in EDITORIAL_REVIEW_SYSTEM.lower()
+#
+# These guard that five rules the editor asked for IN PERSON survive prompt
+# rewrites. They asserted the pre-constitution prompt's exact strings
+# («корпоративный отпуск», "price drops", "asroad", "model launches",
+# "Formula"/"NASCAR") and so all five broke on the jun-19 constitution — while
+# every rule itself survived, reworded. They went unnoticed because the whole
+# suite could not run at all (see core/console.py). Rewritten jul-30 against
+# the constitution's own vocabulary; each still fails if the RULE is dropped.
 
 
-def test_prompt_mentions_stage_lifecycle() -> None:
-    """Phase 1 launch lifecycle awareness."""
-    assert "model launches" in EDITORIAL_REVIEW_SYSTEM.lower()
+def test_prompt_rejects_corporate_boilerplate() -> None:
+    """Editor row 121: a corporate vacation notice is not a publishable item.
+    The constitution generalised it to the whole boilerplate class."""
+    assert "corporate boilerplate" in EDITORIAL_REVIEW_SYSTEM
+    assert "personnel appointments" in EDITORIAL_REVIEW_SYSTEM
 
 
-def test_prompt_mentions_motorsport_reject() -> None:
-    """Motorsport always rejected."""
-    assert "Formula" in EDITORIAL_REVIEW_SYSTEM
-    assert "NASCAR" in EDITORIAL_REVIEW_SYSTEM
+def test_prompt_rejects_per_model_price_moves() -> None:
+    """Editor row 129: per-model price drops / dealer offers are not posted."""
+    assert "per-model price changes" in EDITORIAL_REVIEW_SYSTEM
+    # A model's official PRICE ANNOUNCEMENT stays publishable — the rule is
+    # about routine repricing, and collapsing the two would lose real news.
+    assert "pricing" in EDITORIAL_REVIEW_SYSTEM
+
+
+def test_prompt_rejects_aggregator_without_brand_source() -> None:
+    """Editor's asroad.org warning («99% репост») — the constitution states it
+    as the general class instead of naming the one domain."""
+    assert "агрегатор" in EDITORIAL_REVIEW_SYSTEM
+    assert "без официального источника" in EDITORIAL_REVIEW_SYSTEM
+
+
+def test_prompt_carries_launch_lifecycle_vocabulary() -> None:
+    """Phase-1 launch-lifecycle awareness: the event vocabulary must still
+    distinguish a first market launch / sales start from a teaser."""
+    assert "first market launch" in EDITORIAL_REVIEW_SYSTEM
+    assert "sales start" in EDITORIAL_REVIEW_SYSTEM
+
+
+def test_prompt_rejects_motorsport_coverage() -> None:
+    """Motorsport is rejected — but a CAR unveiled at a race is still a car,
+    and that carve-out must survive with the rule."""
+    assert "motorsport race results" in EDITORIAL_REVIEW_SYSTEM
+    assert "not motorsport coverage" in EDITORIAL_REVIEW_SYSTEM

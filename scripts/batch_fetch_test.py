@@ -17,7 +17,6 @@ Run:  python scripts/batch_fetch_test.py
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import socket
@@ -37,12 +36,15 @@ from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
+
+from news_agent.core.console import force_utf8_stdio  # noqa: E402
+
+# Import-safe (see console.py): the old wrap-the-buffer idiom closed pytest's
+# captured stream from a GC finaliser.
+force_utf8_stdio()
 
 from news_agent.adapters.fetchers.html import (  # noqa: E402
     extract_article,

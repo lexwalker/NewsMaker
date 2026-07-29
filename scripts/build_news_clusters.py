@@ -17,7 +17,6 @@ Output: data/clusters_<tab>.json
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import re
@@ -30,21 +29,16 @@ from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# Force UTF-8 console only when run as a script. Doing this at import
-# time corrupts pytest's captured stdout (wraps & later closes its
-# buffer → "I/O operation on closed file"). Guarding keeps the module
-# import-safe for unit tests.
-if __name__ == "__main__":
-    sys.stdout = io.TextIOWrapper(
-        sys.stdout.buffer, encoding="utf-8", line_buffering=True
-    )
-    sys.stderr = io.TextIOWrapper(
-        sys.stderr.buffer, encoding="utf-8", line_buffering=True
-    )
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
+
+from news_agent.core.console import force_utf8_stdio  # noqa: E402
+
+# Import-safe now (see console.py), so the old __main__ guard is gone — under
+# pytest this module used to reach the UTF-8 setup only when run directly,
+# which meant an import-time print of a Cyrillic title was still unprotected.
+force_utf8_stdio()
 
 from rapidfuzz import fuzz  # noqa: E402
 

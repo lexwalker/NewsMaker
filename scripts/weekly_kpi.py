@@ -19,7 +19,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import sqlite3
@@ -27,10 +26,15 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 DATA = ROOT / "data"
+
+from news_agent.core.console import force_utf8_stdio  # noqa: E402
+
+# Import-safe (see console.py). This module is imported BY measurement scripts,
+# and the old idiom closed their stdout from a GC finaliser mid-report.
+force_utf8_stdio()
 
 from dotenv import load_dotenv  # noqa: E402
 
