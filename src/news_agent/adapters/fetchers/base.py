@@ -42,6 +42,29 @@ _ACCEPT_ENCODING = _accept_encoding()
 # Sniff a <meta charset=...> declaration from the first bytes of an HTML body.
 _META_CHARSET = re.compile(rb"""<meta[^>]+charset=["']?\s*([A-Za-z0-9_-]+)""", re.I)
 
+# A TLS handshake killed mid-flight — the peer (or something on the path: VPN
+# egress, WAF, captive edge) closed the socket before the handshake finished.
+# httpx wraps it in ConnectError, indistinguishable by TYPE from a real
+# "host does not resolve", so we match on the OpenSSL text. Deliberately
+# narrow: only cut-during-handshake alerts, never cert-validation failures
+# (CERTIFICATE_VERIFY_FAILED is permanent and belongs to ssl_insecure_domains).
+_TLS_CUT_MARKS = (
+    "unexpected_eof_while_reading",
+    "record layer failure",
+    "handshake failure",
+    "tlsv1 alert",
+    "decryption failed or bad record mac",
+)
+# Long enough for a load-balancer to hand us a different edge, short enough
+# that 20 such sources add ~40s to a multi-hour run.
+_TLS_CUT_PAUSE_S = 2.0
+
+
+def _is_tls_cut(exc: BaseException) -> bool:
+    """True for a ConnectError that is really an interrupted TLS handshake."""
+    text = str(exc).lower()
+    return any(m in text for m in _TLS_CUT_MARKS)
+
 
 class Fetcher(Protocol):
     def fetch(self, source: Source, max_items: int) -> list[RawArticle]:
@@ -278,13 +301,14 @@ class RetryingHttpClient:
 
         Retryable (transient):
           • ``RemoteProtocolError`` / ``ReadError`` — server cut the stream
+          • ``ConnectError`` WITH a TLS-cut signature — see _is_tls_cut
           • 5xx server errors — server overloaded / temporarily broken
           • 202 Accepted — async-render servers (Nissan, Lamborghini press)
 
         NOT retryable (permanent):
           • ``ConnectTimeout`` / ``ReadTimeout`` — server not answering;
             retrying wastes ~30 sec per source for no gain.
-          • ``ConnectError`` — DNS / network down at the other end.
+          • ``ConnectError`` otherwise — DNS / network down at the other end.
           • 4xx — our fault (auth, not found, forbidden).
         """
         url = self._rewrite(url)
@@ -307,9 +331,26 @@ class RetryingHttpClient:
                 continue
             except (
                 httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
-            ):
-                # The server isn't there. Don't burn time on retries.
-                raise
+            ) as e:
+                # The server isn't there. Don't burn time on retries — with one
+                # exception: a TLS handshake cut ALSO surfaces as ConnectError,
+                # and that one is transient (jul-29: 20 sources, 18 of which had
+                # worked in the run 7h earlier, all died with the identical
+                # UNEXPECTED_EOF_WHILE_READING — GM, Cadillac, Chevrolet, Honda,
+                # Volvo, VW UK, BYD, Stellantis, Autocar). Same edge-rotation
+                # rationale as the empty-listing shell-retry: pause, ask again.
+                if not (isinstance(e, httpx.ConnectError) and _is_tls_cut(e)):
+                    raise
+                last_exc = e
+                if attempt == self.max_attempts:
+                    raise
+                log.debug(
+                    "http.retry.tls_cut",
+                    url=url, attempt=attempt, error=str(e)[:80],
+                    sleep=_TLS_CUT_PAUSE_S,
+                )
+                time.sleep(_TLS_CUT_PAUSE_S)
+                continue
 
             if resp.status_code == 202 and attempt < self.max_attempts:
                 sleep = self.backoff_base ** attempt
