@@ -174,3 +174,28 @@ def test_statistics_needs_two_shared_identity_tokens() -> None:
         title="Продажи авто в Европе выросли", alt_title="Car sales grew in Europe",
         event_type="sales_stat", event_brand="",
         pub_titles={"prodazhi gruzovikov v kitae upali"}) == []
+
+
+def test_fresh_display_carries_the_lede() -> None:
+    from news_agent.core.dup_arbiter import build_fresh_display
+    d = build_fresh_display(
+        title="АВТОВАЗ разрабатывает гибрид Lada Azimut",
+        event_brand="lada", event_model="azimut", event_type="tech",
+        lede="Новые детали: мощность 150 л.с., запас хода 80 км на электротяге, "
+             "старт производства в 2027 году.")
+    assert "[лид: Новые детали: мощность 150" in d
+    assert "[event: lada|azimut|tech]" in d
+
+
+def test_fresh_display_without_lede_is_unchanged() -> None:
+    from news_agent.core.dup_arbiter import build_fresh_display
+    d = build_fresh_display(title="Заголовок", event_brand="bmw")
+    assert "[лид:" not in d
+
+
+def test_lede_is_squeezed_and_capped() -> None:
+    from news_agent.core.dup_arbiter import build_fresh_display
+    d = build_fresh_display(title="Заголовок", lede="  много\n\nпробелов  " + "x" * 600)
+    line = [l for l in d.splitlines() if l.startswith("[лид:")][0]
+    assert "много пробелов" in line
+    assert len(line) <= 410

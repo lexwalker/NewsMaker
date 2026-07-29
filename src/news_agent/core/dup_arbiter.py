@@ -254,8 +254,19 @@ def build_fresh_display(
     event_brand: str = "",
     event_model: str = "",
     event_type: str = "",
+    lede: str = "",
 ) -> str:
-    """One display block for the fresh row, fed to same_published_event."""
+    """One display block for the fresh row, fed to same_published_event.
+
+    The lede matters (jul-29 bias audit): both of the arbiter's wrong flags
+    — and all three doubtful ones — were FOLLOW-UPS that add concrete new
+    facts to a story we already ran (a plug-in Azimut «новые детали», a
+    Zeekr 9X that lost its third row, an Audi Q3 equipment update). From
+    headlines alone those are indistinguishable from a re-run; the lede is
+    where the new numbers live. Candidates are archive titles with no body
+    available, so only the fresh side can carry one — which is exactly the
+    side that has to prove it is NEW.
+    """
     lines = [title.strip()]
     if alt_title.strip() and alt_title.strip() != title.strip():
         lines.append(alt_title.strip())
@@ -264,4 +275,7 @@ def build_fresh_display(
                     (event_type or "").strip()))
     if sig.strip("|"):
         lines.append(f"[event: {sig}]")
+    body = " ".join((lede or "").split())[:400]
+    if body:
+        lines.append(f"[лид: {body}]")
     return "\n".join(lines)

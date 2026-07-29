@@ -223,6 +223,14 @@ HTTP_TIMEOUT = 20.0  # was 10.0 — several slow-but-alive sources (gov.ru, OEM
                      # DISABLED on timeouts, so this just widens the window once.
 ENABLE_LLM = True         # flip to False to run pure heuristics again
 LLM_BUDGET_USD = 5.0      # hard cap — abort LLM calls if exceeded
+
+# Health-check floor for per-row LLM stragglers (jul-29). A block of
+# unclassified rows means errors are being swallowed somewhere and the
+# run must NOT push; one or two are the network. Abort only when BOTH
+# limits are exceeded, so a small run isn't judged by a percentage and a
+# big one isn't judged by a raw count.
+STUCK_ROWS_ABORT = 3       # more than this many stragglers…
+STUCK_SHARE_ABORT = 0.02   # …AND more than this share of the candidates
 # Circuit breaker: this many CONSECUTIVE editorial_review failures = a
 # persistent outage (org-disabled, credit-exhausted, bad model id, 429 storm)
 # → abort the pass loudly instead of silently burning every remaining call.
@@ -1748,7 +1756,8 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                             title=r.title, alt_title=r.llm_title_en,
                             event_brand=r.event_brand,
                             event_model=r.event_model,
-                            event_type=r.event_type),
+                            event_type=r.event_type,
+                            lede=r.body_excerpt or ""),
                         candidates=_arb_cands,
                     )
                     budget.record(u)
@@ -2604,10 +2613,26 @@ def _health_check(
                 f"{len(stuck)} candidates unclassified"
             )
         elif stuck:
-            alarms.append(
-                f"{len(stuck)} candidates unclassified after a 'completed' "
-                f"LLM pass (errors swallowed per-row?)"
-            )
+            # jul-29: ONE row out of 344 hit a transient "Connection error"
+            # and this alarm killed the whole chain — the feed lost ~10 ready
+            # clusters over a single network hiccup, and recovering cost a
+            # hand-written hint plus a $0.006 retry. A truly swallowed-error
+            # bug shows up as a BLOCK of stuck rows, not one; a lone straggler
+            # is just the network. Below the floor we warn and keep going —
+            # the row stays unclassified, so no unvetted story can reach the
+            # feed, and the next run re-picks it via the looks_failed detector.
+            _stuck_share = len(stuck) / max(1, len(candidates))
+            if len(stuck) > STUCK_ROWS_ABORT and _stuck_share > STUCK_SHARE_ABORT:
+                alarms.append(
+                    f"{len(stuck)} candidates unclassified after a 'completed' "
+                    f"LLM pass (errors swallowed per-row?)"
+                )
+            else:
+                print(f"  note: {len(stuck)} candidate(s) left unclassified "
+                      f"(transient per-row errors) — under the alarm floor "
+                      f"({STUCK_ROWS_ABORT} rows / "
+                      f"{STUCK_SHARE_ABORT:.0%}), chain continues; they "
+                      f"re-run next time.")
 
     # 2. Published-archive dedup: floors + shrink-vs-last-run (the gate has
     #    silently died 3 times; a >10% shrink is the early-decay signature).
