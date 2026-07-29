@@ -52,6 +52,9 @@ from news_agent.adapters.fetchers.html import (  # noqa: E402
 from news_agent.adapters.fetchers.nextjs_state import (  # noqa: E402
     extract_next_data_articles,
 )
+from news_agent.adapters.fetchers.xml_listing import (  # noqa: E402
+    extract_xml_listing,
+)
 from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     is_telegram_url,
     parse_channel_html,
@@ -1236,6 +1239,10 @@ def process_source(
         _nx = extract_next_data_articles(
             html, url, article_path=_NEXT_DATA_ARTICLE_PATHS.get(
                 domain_of(url).replace("www.", ""), ""))
+        if not _nx and html.lstrip().startswith("<?xml"):
+            # A site's OWN xml listing (not RSS — feedparser returns 0):
+            # globalsuzuki ships <newslist><article><link>+<message>.
+            _nx = extract_xml_listing(html, url)
         if _nx:
             _nx = _nx[: _items_cap_for(url)]
             links = [it["url"] for it in _nx]
