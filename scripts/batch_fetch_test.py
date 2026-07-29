@@ -49,6 +49,9 @@ from news_agent.adapters.fetchers.html import (  # noqa: E402
     _DATE_PATH_RE,
     _looks_like_article,
 )
+from news_agent.adapters.fetchers.nextjs_state import (  # noqa: E402
+    extract_next_data_articles,
+)
 from news_agent.adapters.fetchers.telegram import (  # noqa: E402
     is_telegram_url,
     parse_channel_html,
@@ -854,6 +857,12 @@ class _PwResponse:
 
 
 # Per-host Accept header overrides for the plain-httpx route (see _http_get).
+# Sites whose __NEXT_DATA__ payload carries only an item id — the article
+# URL is built as <this path>/<id> (verified live on lada.ru).
+_NEXT_DATA_ARTICLE_PATHS: dict[str, str] = {
+    "lada.ru": "/press-releases",
+}
+
 _ACCEPT_OVERRIDES: dict[str, str] = {
     "autocarindia.com": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
 }
@@ -1189,6 +1198,7 @@ def process_source(
 
     # HTML index mode
     r.detected_type = "html"
+    _nx_dates: dict[str, object] = {}
     links = _discover_article_links(url, html, _items_cap_for(url))
     if not links:
         # Anti-bot SHELL VARIANCE (jul-10 root cause of silent 0-yield runs):
@@ -1217,11 +1227,33 @@ def process_source(
                 note = f"shell-retry#{_attempt} recovered {len(links)} links"
                 r.error = (r.error + " | " + note)[:200] if r.error else note
                 break
+    if not links:
+        # Next.js listing (jul-29): the page renders its list client-side but
+        # SHIPS it inside __NEXT_DATA__. lada.ru — the AvtoVAZ press room —
+        # sat at zero links for weeks this way; 18 releases were in the HTML
+        # all along. Only tried when normal discovery found nothing, so no
+        # source that already works can change behaviour.
+        _nx = extract_next_data_articles(
+            html, url, article_path=_NEXT_DATA_ARTICLE_PATHS.get(
+                domain_of(url).replace("www.", ""), ""))
+        if _nx:
+            _nx = _nx[: _items_cap_for(url)]
+            links = [it["url"] for it in _nx]
+            # The LISTING date is authoritative here. Verified on lada.ru:
+            # the article page itself yields 2026-08-16 (a future date) and
+            # 2025-02-06 for releases the list dates 24.07 and 20.07 — the
+            # page carries site furniture our date picker mistakes for the
+            # publication date. Feeding the known date through the same
+            # channel RSS uses keeps the freshness gate honest.
+            _nx_dates = {it["url"]: it.get("published_at") for it in _nx}
+            note = f"next-data list: {len(links)} links"
+            r.error = (r.error + " | " + note)[:200] if r.error else note
     r.articles_attempted = len(links)
     for idx, link in enumerate(links, start=1):
         if _source_budget_exceeded(r, t0, idx - 1, len(links)):
             break
-        _fetch_and_score(client, link, r, source_idx, idx, article_rows)
+        _fetch_and_score(client, link, r, source_idx, idx, article_rows,
+                         rss_pub_date=_nx_dates.get(link))
     r.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return r
 
