@@ -120,7 +120,15 @@ _LLM_JUNK_RE = re.compile(
     # to review instead). These leaked before because the regex was too narrow.
     r"не автомобильн|категория исключена|смежн|инфраструктурн|не автопром|"
     r"вне авторегуляц|лайфстайл|листикл|мнение агрегатора|лоббирован|"
-    r"не реальное событие|социальный контент",
+    r"не реальное событие|социальный контент|"
+    # jul-30: the same near-miss one notch over. "не автомобильн" did not match
+    # «Макроэкономика БЕЗ АВТОМОБИЛЬНОГО угла — раздел «Экономика»», so five
+    # such rows reached the clean feed in two weeks (Fed rate hold ×2, RF GDP
+    # ×2, inflation expectations) and the editor rejected the two he reviewed:
+    # «нет», «я экономику не ищу для дайджеста». Anchored on the self-rejecting
+    # phrase, not on «макроэконом» alone — a live auto story is allowed to
+    # mention macro conditions in its rationale.
+    r"без автомобильн|без авто-угла|без привязки к авто",
     re.I,
 )
 def _llm_flag(c: dict) -> str:
@@ -379,7 +387,37 @@ def _existing_state(svc, tab: str) -> dict:
 # ----- Fuzzy anti-dup matcher --------------------------------------------
 def _normalise_for_match(t: str) -> str:
     """Strip lang tags / EN: / RU: prefixes / source suffix, keep only the
-    semantic skeleton for fuzzy comparison."""
+    semantic skeleton for fuzzy comparison.
+
+    KNOWN DEFECT, measured jul-30 — do not "fix" this without an eval. Two
+    bugs live here and they are load-bearing for the 72 threshold below:
+
+      1. The lines are joined with " | " and then the source-suffix regex
+         eats everything after it — a Russian headline is lowercase Cyrillic
+         plus spaces to end-of-string, exactly what the pattern matches. So
+         only the ENGLISH line is ever compared, and an RU-source row versus
+         an EN-source row cannot match at all. That is how the editor got the
+         Minpromtorg taxi-list story twice a day apart (1prime.ru 28.07,
+         drom.ru 29.07, «дубль»): the RU lines are near-identical, the EN
+         lines score 68 against the 72 bar.
+      2. The bare hyphen in the same pattern matches INSIDE words, cutting
+         «отзовет 168 тыс. автомобилей из-за неправильных наклеек» down to
+         «…автомобилей из».
+
+    Repairing either one raises the similarity of everything, and 72 was
+    calibrated on the truncated EN-only strings. Measured over the 829-row
+    feed: adding the RU line at 72 found 13 extra pairs, of which ~8 were
+    FALSE merges (Maybach GLS vs S-Class, MG vs Jeep, China's 470M car fleet
+    vs its 48.97M EV fleet). Raising the bar to 80 leaves 3 pairs and drops 6
+    of the 7 the current code finds. No threshold separates them, because
+    token fuzz cannot tell "same event" from "same brand, same event type,
+    different instance" — the existing 72 already merges DISTINCT recalls
+    (Hyundai 47 749 with another Hyundai recall, BMW 29 119, two Nissans).
+
+    The real fix is to match on the event signature (brand|model|type) plus
+    digit anchors, which news_agent.core.dedup already implements and this
+    sheet-level matcher never consults. That is an eval-gated change.
+    """
     if not t:
         return ""
     t = t.lower()
