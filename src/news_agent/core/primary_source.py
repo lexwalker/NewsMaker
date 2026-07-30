@@ -187,6 +187,21 @@ _JUNK_URL_FRAGMENTS = (
 )
 
 
+# URL shorteners can never BE a source — they only point at one. Matched by
+# HOST, never as a substring: "t.co" is a substring of ordinary domains like
+# autonet.com and would junk them wholesale.
+#
+# Editor jul-29, on a Volvo lidar story: «ок, но первоисточник такой не нужен»
+# — the primary link we shipped was https://t.co/<hash>. It survives every
+# existing filter: not a share widget, host isn't a social profile, and the
+# hash gives it a non-empty path so the deep-URL check passes it as an article.
+_SHORTENER_HOSTS = {
+    "t.co", "bit.ly", "ow.ly", "buff.ly", "dlvr.it", "trib.al", "tinyurl.com",
+    "goo.gl", "is.gd", "cutt.ly", "rb.gy", "shorturl.at", "lnkd.in",
+    "fb.me", "youtu.be", "amzn.to", "wp.me", "clck.ru", "vk.cc",
+}
+
+
 # Bare profiles/roots on these are not articles (e.g. twitter.com/SomeJourno);
 # a genuine post carries /status/, /posts/, /permalink or /p/. t.me is NOT
 # here — it is a legitimate source in this project.
@@ -267,8 +282,11 @@ def _is_junk_link(url: str) -> bool:
         return True
     # Reject bare social-network profiles (twitter.com/<handle> with no post
     # marker) — they are not articles and must never be a primary source.
-    if (_normalise_domain(parsed.netloc) in _SOCIAL_PROFILE_HOSTS
+    _host = _normalise_domain(parsed.netloc)
+    if (_host in _SOCIAL_PROFILE_HOSTS
             and not any(m in u for m in _SOCIAL_POST_MARKERS)):
+        return True
+    if _host in _SHORTENER_HOSTS:
         return True
     return False
 

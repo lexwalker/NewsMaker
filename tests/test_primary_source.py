@@ -1105,3 +1105,25 @@ def test_linkedin_share_offsite_is_junk() -> None:
     assert _is_junk_link("https://www.linkedin.com/share?url=http://x")
     # a real LinkedIn article page is not a share widget
     assert not _is_junk_link("https://www.linkedin.com/pulse/real-article-slug-here")
+
+
+def test_url_shortener_is_never_a_primary() -> None:
+    # jul-29 editor, on a Volvo lidar story: «ок, но первоисточник такой не
+    # нужен» — we had shipped primary=https://t.co/<hash>. It passed every
+    # existing filter: not a share widget, host is not a social profile, and
+    # the hash is a non-empty path so it read as a deep article URL.
+    assert _is_junk_link("https://t.co/AbCdEf1234")
+    assert _is_junk_link("https://bit.ly/3xYzAbC")
+    assert _is_junk_link("http://ow.ly/i/abcd")
+    assert _is_junk_link("https://youtu.be/dQw4w9WgXcQ")
+    assert _is_junk_link("https://clck.ru/3ABcDe")
+
+
+def test_shortener_match_is_host_anchored_not_substring() -> None:
+    # "t.co" is a substring of plenty of ordinary domains — matching it as a
+    # substring would junk real newsrooms wholesale.
+    assert not _is_junk_link("https://autonet.com/news/volvo-drops-lidar")
+    assert not _is_junk_link("https://www.detroit.com/2026/07/gm-recall")
+    assert not _is_junk_link("https://carscoops.com/2026/07/dodge-super-bee/")
+    # a legitimate host that merely ENDS in a shortener-looking suffix
+    assert not _is_junk_link("https://press.fiat.co.uk/news/500e")
