@@ -60,5 +60,9 @@ Write-Output "run_recover start $ts  log=$log"
 Stage "1/3 retry LLM (newest tab)" @('scripts/retry_failed_llm.py')
 Stage "2/3 cluster (LLM-editor)"   @('scripts/build_news_clusters.py','--use-llm-editor')
 Stage "3/3 push to editor feed"    @('scripts/build_news_sheet.py')
-Write-Output "run_recover DONE $(Get-Date -Format HH:mm:ss)  log=$log"
+# Tee the finish marker INTO the log (aug-03): it used to go only to the task's
+# stdout, so the log's last line was the push summary and a completed recovery
+# was indistinguishable from one hung mid-push. Anything watching the file for
+# completion waits forever.
+Write-Output "run_recover DONE $(Get-Date -Format HH:mm:ss)  log=$log" | Tee-Object -FilePath $log -Append
 Remove-Item -Path $lockPath -ErrorAction SilentlyContinue
