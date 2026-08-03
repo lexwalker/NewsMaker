@@ -22,8 +22,14 @@ $env:PYTHONUNBUFFERED = "1"
 $env:RUN_STATE_PATH = Join-Path $root "data\state_hot.json"
 
 # MUTEX: another batch run (full or hot) in progress -> skip this tick.
+# retry_failed_llm belongs in this list (aug-03): a recovery pass classifies
+# the SAME candidates a hot tick would, and the hot lane loads its SQLite cache
+# map once at startup, so verdicts landing mid-tick are invisible to it and the
+# overlap is paid for TWICE — the jul-27 ~$1.9 double-pay, one stage over.
 $busy = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-        Where-Object { $_.CommandLine -like "*batch_fetch_test*" -or $_.CommandLine -like "*build_news_*" }
+        Where-Object { $_.CommandLine -like "*batch_fetch_test*" -or
+                       $_.CommandLine -like "*build_news_*" -or
+                       $_.CommandLine -like "*retry_failed_llm*" }
 if ($busy) {
   Write-Output "HOT skip: another prog run is active (PID $($busy[0].ProcessId))."
   exit 0

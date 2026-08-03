@@ -14,6 +14,28 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+# Single-instance lock, SHARED with run_prog (aug-03). A recovery pass spends
+# on exactly the candidates a full chain would, so the evening scheduled task
+# firing over a running recovery is a double bill — the same failure run_prog
+# already guards against, which recovery was simply missing.
+$lockPath = Join-Path $root "data\run_prog.lock"
+if (Test-Path $lockPath) {
+  $oldPid = (Get-Content $lockPath -ErrorAction SilentlyContinue | Select-Object -First 1)
+  $alive = $false
+  if ($oldPid -match '^\d+$') {
+    try {
+      $p = Get-Process -Id ([int]$oldPid) -ErrorAction Stop
+      if ($p.ProcessName -match 'powershell') { $alive = $true }
+    } catch {}
+  }
+  if ($alive) {
+    Write-Output "run_recover REFUSED: a prog/recovery chain is alive (PID $oldPid). Exit."
+    exit 9
+  }
+}
+Set-Content -Path $lockPath -Value $PID -Encoding ascii
+
 $env:PYTHONUNBUFFERED = "1"   # real-time log; a crash point is visible immediately
 $ts  = Get-Date -Format "yyyyMMdd_HHmmss"
 if (-not (Test-Path (Join-Path $root "logs"))) { New-Item -ItemType Directory (Join-Path $root "logs") | Out-Null }
@@ -39,3 +61,4 @@ Stage "1/3 retry LLM (newest tab)" @('scripts/retry_failed_llm.py')
 Stage "2/3 cluster (LLM-editor)"   @('scripts/build_news_clusters.py','--use-llm-editor')
 Stage "3/3 push to editor feed"    @('scripts/build_news_sheet.py')
 Write-Output "run_recover DONE $(Get-Date -Format HH:mm:ss)  log=$log"
+Remove-Item -Path $lockPath -ErrorAction SilentlyContinue
