@@ -113,6 +113,33 @@ if ($NoPush) {
   Write-Output "STOP before push (-NoPush). Review clusters, then run: python scripts\build_news_sheet.py" | Tee-Object -FilePath $log -Append
 } else {
   Stage "3/3 push to editor feed" @('scripts/build_news_sheet.py')
+
+  # 4/4 - sample what we REJECTED and put it in front of the editor.
+  #
+  # We hold 1263 labelled duplicate suspicions and 52 labelled rejections,
+  # because this ritual was only ever run by hand. So we have been measuring
+  # the side of the funnel that loses ~20 rows a run in fine detail, and the
+  # side that loses ~190 almost not at all. On the 52 we do have, 23% of the
+  # rejections were wrong (off_topic alone: 43%) - a rate that, applied to the
+  # real volume, dwarfs everything dedup could win back.
+  #
+  # Deliberately NON-FATAL: this is diagnostics, and a failure here must never
+  # abort a chain whose delivery has already succeeded. Small batch - the
+  # editor answers these by hand, and an unanswerable pile teaches nothing.
+  #
+  # ASCII only in this file on purpose: PowerShell 5.1 reads a BOM-less .ps1 as
+  # ANSI, and Cyrillic here corrupted string terminators into a parse error.
+  Write-Output "=== 4/4 sample rejects for labelling  $(Get-Date -Format HH:mm:ss) ===" | Tee-Object -FilePath $log -Append
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  & python scripts/sample_rejected.py --total 12 --days 2 2>&1 | Tee-Object -FilePath $log -Append
+  if ($LASTEXITCODE -ne 0) {
+    Write-Output "  (reject sampling failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+  }
+  $ErrorActionPreference = $prevEAP
 }
 Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
-Write-Output "run_prog DONE $(Get-Date -Format HH:mm:ss)  log=$log"
+# Tee the finish marker INTO the log (aug-04, same defect as run_recover.ps1):
+# it used to go only to the task's stdout, so the log ended on the push summary
+# and a finished run was indistinguishable from one wedged mid-push.
+Write-Output "run_prog DONE $(Get-Date -Format HH:mm:ss)  log=$log" | Tee-Object -FilePath $log -Append
