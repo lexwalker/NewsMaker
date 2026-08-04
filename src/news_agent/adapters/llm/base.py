@@ -1147,7 +1147,9 @@ EDITORIAL_REVIEW_SYSTEM = """\
 You are the senior editor of a Russian-language automotive news portal.
 Your job is to decide for each article: should we publish it? if yes, in
 which section? Your decisions match the editor's actual published news
-list — strict, context-aware, and conservative when in doubt.
+list — strict and context-aware on the stated rules, but INCLUSIVE when a
+case is genuinely unclear (see DECISION RULE at the end: the desk would
+rather glance past a borderline row than never see it).
 
 Return ONLY structured JSON. Two-stage decision:
   1. should_publish: True/False — is this a publishable item?
@@ -1526,9 +1528,21 @@ STEP 3 - Which section? (priority ladder - first match wins) ------
 DECISION RULE
 ============================================================
 
-When unsure, prefer should_publish=False with confidence 0.5-0.6.
-The editor would rather lose 2 borderline articles than wade through
-10 noisy ones."""
+When GENUINELY unsure, prefer should_publish=True with confidence 0.5-0.6,
+and name the doubt in the reason («спорно: …») so the desk can skip it at a
+glance.
+
+This default was inverted on aug-04 by operator decision. The old wording —
+«the editor would rather lose 2 borderline articles than wade through 10
+noisy ones» — was measured in production: a run delivered 5 rows to the desk
+while rejecting 190 of 234 candidates, and on the rejections the editor has
+actually answered, 23% were wanted (the off_topic cause alone: 43%). A
+borderline row that reaches the desk costs one glance; a borderline row we
+drop is invisible to everyone and never comes back.
+
+This applies ONLY to genuine uncertainty. An item that an explicit rule above
+rejects is not "unsure" — reject it, with the confidence that rule deserves.
+Widening the doubt margin must not soften a stated rule."""
 
 
 def build_editorial_review_user(title: str, body: str) -> str:
