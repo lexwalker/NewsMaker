@@ -121,6 +121,8 @@ class RunState:
         overlap_minutes: int,
         max_lookback_hours: int,
         now: datetime | None = None,
+        peer: "RunState | None" = None,
+        peer_lag_hours: float = 3.0,
     ) -> RunWindow:
         """Return the time window the next run should fetch.
 
@@ -129,19 +131,39 @@ class RunState:
           • first run / no state: window starts at ``now − max_lookback_hours``
           • previous run too old: clamp to ``now − max_lookback_hours``
 
-        ``overlap_minutes`` and ``max_lookback_hours`` are validated to be
-        non-negative; the caller is responsible for sane values (we don't
-        want to silently swallow ``-5``).
+        ``peer`` lets one lane learn that ANOTHER lane already covered these
+        sources. The hot lane fetches 24 sources the full lane also fetches,
+        but each anchored only on its own state — so on aug-04 a hot run
+        launched 21 minutes after a healthy full run still opened a 20-hour
+        window, paid for 149 candidates, and delivered ONE new row. Everything
+        else was already on the sheet.
+
+        The peer anchor is deliberately set back by ``peer_lag_hours``. A full
+        run's ``last_run_at`` is when it FINISHED, and its fetch takes ~2h: a
+        source polled at 04:30 cannot carry a story published at 05:00, so
+        anchoring straight at the finish time would open a gap neither lane
+        ever covers. Backing off by more than the observed fetch duration
+        keeps the overlap that closes it, and still cuts the window from 20
+        hours to about 3.
+
+        Only a HEALTHY peer run counts — a degraded one may have stopped
+        mid-fetch with most sources untouched, and trusting it would silently
+        skip whatever it never reached.
         """
         if overlap_minutes < 0:
             raise ValueError(f"overlap_minutes must be >= 0, got {overlap_minutes}")
         if max_lookback_hours <= 0:
             raise ValueError(f"max_lookback_hours must be > 0, got {max_lookback_hours}")
+        if peer_lag_hours < 0:
+            raise ValueError(f"peer_lag_hours must be >= 0, got {peer_lag_hours}")
 
         now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         ceiling = now_utc - timedelta(hours=max_lookback_hours)
 
         previous = _parse_iso(self.load().get("last_run_at"))
+        peer_anchor = self._peer_anchor(peer, peer_lag_hours)
+        if peer_anchor is not None and (previous is None or peer_anchor > previous):
+            previous = peer_anchor
         if previous is None:
             return RunWindow(
                 since=ceiling,
@@ -166,3 +188,19 @@ class RunState:
             using_fallback=False,
             previous_run_at=previous,
         )
+
+    @staticmethod
+    def _peer_anchor(peer: "RunState | None", lag_hours: float) -> datetime | None:
+        """The other lane's coverage point, or None if it cannot be trusted."""
+        if peer is None:
+            return None
+        try:
+            data = peer.load()
+        except Exception:  # noqa: BLE001 — a peer we cannot read is just absent
+            return None
+        if str(data.get("last_run_status") or "").strip().lower() != "ok":
+            return None
+        finished = _parse_iso(data.get("last_run_at"))
+        if finished is None:
+            return None
+        return finished - timedelta(hours=lag_hours)

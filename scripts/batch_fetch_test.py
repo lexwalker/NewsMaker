@@ -2740,9 +2740,16 @@ def main(argv: list[str] | None = None) -> int:
             f"State file will NOT be updated."
         )
     else:
+        # The HOT lane fetches 24 sources the full lane also covers. Anchored
+        # only on its own state it re-opens the whole gap since ITS last run —
+        # aug-04: a hot run 21 minutes after a healthy full run still took a
+        # 20-hour window and delivered one new row. Hand it the main state as a
+        # peer so a healthy full run counts as coverage.
+        _peer = RunState(ROOT / "data" / "state.json") if args.hot else None
         RUN_WINDOW = state.compute_window(
             overlap_minutes=args.since_overlap_minutes,
             max_lookback_hours=args.max_lookback_hours,
+            peer=_peer,
         )
         prev = (
             RUN_WINDOW.previous_run_at.isoformat(timespec="seconds")
