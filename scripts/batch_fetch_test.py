@@ -282,6 +282,14 @@ ARCHIVE_TITLES_FLOOR = 20
 # sources at a worst case of +90s each. The real answer is fetching sources
 # concurrently (they are I/O-bound: the median source spends 14s waiting), and
 # then this can come back down.
+#
+# Applies to the HOT lane too, by operator decision (aug-04). I had split it,
+# giving hot the old 90s on the grounds that iz.ru's three rubrics now eat
+# 184s each — nine minutes of a lane meant to be quick. That reasoning was
+# wrong about what the lane is FOR: it exists to poll indexes that rotate
+# faster than the full run's cadence, so a slow-but-rich index is exactly what
+# it should be spending its time on. Nine minutes for the stories is the trade
+# we want. Reverted; SOURCE_BUDGET_S in the environment still overrides.
 SOURCE_BUDGET_S = float(os.environ.get("SOURCE_BUDGET_S", "180") or 0)
 FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # legacy fallback (ad-hoc runs)
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
@@ -2904,7 +2912,7 @@ def main(argv: list[str] | None = None) -> int:
         ARTICLES_TAB_BASE = ARTICLES_TAB_BASE + " (гор)"
         urls = load_hot_sources()
         print(f"HOT lane: {len(urls)} fast-rotating sources "
-              f"(state: {args.state_path}).")
+              f"(state: {args.state_path}, бюджет источника {SOURCE_BUDGET_S:.0f}с).")
     if not urls:
         print("No active sources found in the sheet.", file=sys.stderr)
         return 2
