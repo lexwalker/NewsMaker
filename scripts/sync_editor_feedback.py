@@ -110,6 +110,19 @@ P_DUP_CROSS = (
     r"\bдубль\b",
     r"перепост\b",
     r"несколько\s+раз\s+было",
+    # aug-03: the editor's most common wordings for "we ran this already" were
+    # invisible here — «писали» was absent from the list entirely, and «было»
+    # only counted with the «уже» prefix. Measured over all 1925 stored
+    # comments: 106 dup complaints went unlabelled, so the dup rate we report
+    # read 13.5% instead of 19%. Same failure shape as the jul-10 red-mark
+    # audit that added the wrong-primary wordings below.
+    r"(?<!не\s)\bписали\b",          # «писали», «вчера писали», «нет, писали уже»
+    r"^\s*было\.?\s*$",              # the whole comment is «было»
+    r"\bэто\s+было\b",               # «это было в прессе ранее»
+    r"\bбыло\s+\d{1,2}[.\s/]",       # «было 25.06»
+    r"\d{1,2}[.\s/]\d{0,2}\w*\s+было\b",   # «7 июля было», «31 июля было»
+    r"стар\w+\s+новост",             # «очень старая новость от 04.06»
+    r"^\s*уже\b",                    # «уже писали ранее»
 )
 P_WRONG_PRIMARY = (
     r"постили\s+пресс",

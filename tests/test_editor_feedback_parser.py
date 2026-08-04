@@ -253,3 +253,51 @@ def test_referenced_url_multiple() -> None:
         "и тут https://b.example/2 тоже"
     )
     assert len(out["referenced_urls"]) == 2
+
+
+# ---------- DUP cross-run: the aug-03 wording gap ----------------------
+# «писали» was absent from the pattern list entirely and «было» only counted
+# with an «уже» prefix, so the editor's most common phrasings for "we ran this
+# already" were never labelled. Measured over all 1925 stored comments: 106
+# dup complaints went unlabelled and the reported dup rate read 13.5% instead
+# of 19%. Each case below is a verbatim editor comment.
+
+def test_dup_bare_pisali() -> None:
+    out = parse_comment("писали")
+    assert out["label_dup_cross_run"] is True
+    assert out["label_publish"] is False
+
+
+def test_dup_pisali_with_date_and_prefix() -> None:
+    for c in ("вчера писали", "писали 31.07", "нет, писали уже",
+              "уже писали ранее", "такое не нужно, про модель уже писали"):
+        assert parse_comment(c)["label_dup_cross_run"] is True, c
+
+
+def test_dup_bare_bylo() -> None:
+    assert parse_comment("было")["label_dup_cross_run"] is True
+    assert parse_comment("это было в прессе ранее")["label_dup_cross_run"] is True
+
+
+def test_dup_dated_bylo_both_orders() -> None:
+    for c in ("7 июля было", "31 июля было", "было 25.06",
+              "в системе 14 июля было, первоисточник https://t.me/x"):
+        assert parse_comment(c)["label_dup_cross_run"] is True, c
+
+
+def test_dup_stale_story_wording() -> None:
+    for c in ("это очень старая новость. 25 апреля писали про тесты",
+              "старая новость от 21 мая"):
+        assert parse_comment(c)["label_dup_cross_run"] is True, c
+
+
+def test_negated_pisali_is_not_a_dup() -> None:
+    # «не писали» is the opposite claim — the editor says we MISSED it.
+    out = parse_comment("анонс не писали, поэтому не нужно")
+    assert out["label_dup_cross_run"] is False
+
+
+def test_press_wording_stays_wrong_primary_not_dup() -> None:
+    # «был пресс» means "the official release existed" — a source complaint.
+    out = parse_comment("ок, но был пресс")
+    assert out["label_wrong_primary"] is True
