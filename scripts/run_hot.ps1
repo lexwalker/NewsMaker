@@ -58,4 +58,8 @@ Write-Output "run_hot start $ts  log=$log"
 Stage "1/3 hot fetch+classify"    @('scripts/batch_fetch_test.py','--hot')
 Stage "2/3 cluster (LLM-editor)"  @('scripts/build_news_clusters.py','--use-llm-editor')
 Stage "3/3 push to editor feed"   @('scripts/build_news_sheet.py')
-Write-Output "run_hot DONE $(Get-Date -Format HH:mm:ss)  log=$log"
+# Tee the finish marker INTO the log (aug-04). Third copy of the same defect
+# (run_recover, run_prog, here): it went to the task's stdout only, so the log
+# ended on the push summary and a finished run was indistinguishable from one
+# wedged mid-push — anything watching the file waits forever.
+Write-Output "run_hot DONE $(Get-Date -Format HH:mm:ss)  log=$log" | Tee-Object -FilePath $log -Append
