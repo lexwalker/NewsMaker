@@ -42,3 +42,35 @@ hot_sources:
   # high-churn telegram primaries
   - https://t.me/chinamashina_news
   - https://t.me/sergtselikov
+
+  # ---- aug-04 expansion: +20 by MEASURED yield --------------------------
+  # Ranked on "прошли тему авто/эконом" averaged over the last three full-run
+  # reports (v71-v73) — i.e. rows that actually survived the topic filter, not
+  # raw link counts, so a source that floods the index with non-auto items does
+  # not buy its way in. Every entry below is already a working full-lane source
+  # (no new fetch risk); the hot lane simply stops waiting ~12h to see it.
+  #
+  # Brand newsrooms were deliberately left out despite decent numbers
+  # (hondanews 2.3, autocar.co.uk 2.3, carexpert 3.0): they publish a few times
+  # a week, so polling them every few hours buys nothing — the same reasoning
+  # that keeps NHTSA out.
+  - https://110km.ru
+  - https://32cars.ru/
+  - https://www.kommersant.ru/RSS/news.xml
+  - https://avtonovostidnya.ru/
+  - https://carbuzz.com/
+  - https://www.dp.ru/
+  - http://government.ru/            # постановления: editor asks for the decree itself
+  - https://www.popmech.ru/
+  - https://www.rbc.ru/
+  - https://kolesa.ru/
+  - https://cleantechnica.com/
+  - https://t.me/zr_ru
+  - https://www.autonews.ru/news/
+  - https://electrek.co/feed/
+  - https://rg.ru/xml/index.xml
+  - https://techcrunch.com/
+  - https://news.drom.ru
+  - https://regnum.ru/theme/auto
+  - https://3dnews.ru/auto
+  - https://motor.ru/exports/rss
