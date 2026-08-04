@@ -123,7 +123,7 @@ def _load_sent() -> set[str]:
     return out
 
 
-def load_rejects(days: int) -> list[dict]:
+def load_rejects(days: int, *, borderline_only: bool = True) -> list[dict]:
     if not SQLITE_PATH.exists():
         return []
     con = sqlite3.connect(str(SQLITE_PATH))
@@ -146,7 +146,14 @@ def load_rejects(days: int) -> list[dict]:
         # parts-ads) where the editor's label teaches nothing.
         if outcome.cause not in _BORDERLINE_CAUSES:
             continue
-        if not _auto_signal(title or ""):
+        # The auto-signal filter is what makes this sample a MAGNIFYING GLASS
+        # for false rejects — deliberately, see above. It also makes it useless
+        # for estimating a RATE, and that distinction was lost: the 43% error
+        # it showed for off_topic got read as the gate's error rate and drove a
+        # plan to rewrite the gate. A random read of 40 rejected articles
+        # (aug-04, body re-fetched, judged by the constitution) put the real
+        # figure at 0. Callers that want a rate pass borderline_only=False.
+        if borderline_only and not _auto_signal(title or ""):
             continue
         reason = d.get("llm_reason") or d.get("article_reasons") or ""
         out.append({
@@ -165,6 +172,12 @@ def main() -> int:
                     help="target sample size (round-robin across causes)")
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--seed", type=int, default=20260614)
+    ap.add_argument(
+        "--random", type=int, default=4,
+        help="extra rows drawn from ALL rejects, not just auto-borderline "
+             "ones. The borderline sample finds bad rules but cannot measure "
+             "how often a gate misfires; these can. Marked in the context "
+             "column so analysis can separate the two populations.")
     args = ap.parse_args()
 
     rejects = load_rejects(args.days)
@@ -180,6 +193,19 @@ def main() -> int:
     if not sample:
         print(f"All {len(rejects)} window-rejects already labelled — nothing new.")
         return 0
+
+    # Unbiased stratum: same causes, no auto-title requirement. Small on
+    # purpose — most of it is obvious junk the editor answers in a glance, and
+    # its only job is to give the denominator the borderline sample cannot.
+    RND_MARK = "[случайная выборка] "
+    if args.random > 0:
+        picked = {r["url_hash"] for r in sample}
+        pool = [r for r in load_rejects(args.days, borderline_only=False)
+                if r["url_hash"] not in sent and r["url_hash"] not in picked]
+        rng.shuffle(pool)
+        for r in pool[:args.random]:
+            r["reason"] = (RND_MARK + (r["reason"] or ""))[:140]
+            sample.append(r)
 
     from collections import Counter
     by = Counter(r["cause"] for r in sample)
