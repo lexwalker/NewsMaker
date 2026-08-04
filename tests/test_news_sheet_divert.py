@@ -66,3 +66,59 @@ def test_junk_wins_over_dup() -> None:
 def test_clean_reason_is_not_flagged() -> None:
     assert _flag("Официальный дебют Lada Azimut с ценами — реальное событие") == ""
     assert _flag("") == ""
+
+
+# --- cluster-level dup amplification (aug-04) -----------------------------
+# A hint from ONE member diverted the whole cluster, and the clusters it
+# removed were the big ones: 63% of clusters but 76% of all collected
+# articles. Scored against the editor's archive: diverting a singleton is
+# wrong 2% of the time, diverting a size-4+ cluster 23%.
+
+def _cluster(size, hinted, reason="(возможно дубль: «audi q9 (reveal)» уже было сегодня)"):
+    return {"size": size, "dup_hint_members": hinted, "llm_reason": reason}
+
+
+def test_singleton_with_a_hint_is_still_diverted() -> None:
+    # 98% correct — this is the behaviour that must NOT change.
+    assert bns._llm_flag(_cluster(1, 1)) == "dup"
+
+
+def test_small_cluster_is_still_diverted() -> None:
+    assert bns._llm_flag(_cluster(3, 1)) == "dup"
+
+
+def test_big_cluster_with_a_minority_hint_is_published() -> None:
+    # The Audi Q9 case: 18 outlets, one flagged, editor published it.
+    assert bns._llm_flag(_cluster(18, 1)) == ""
+
+
+def test_big_cluster_with_a_broad_hint_is_diverted() -> None:
+    assert bns._llm_flag(_cluster(18, 9)) == "dup"
+    assert bns._llm_flag(_cluster(18, 18)) == "dup"
+
+
+def test_legacy_cluster_file_keeps_old_behaviour() -> None:
+    # No member count (file written before this change) -> divert as before,
+    # rather than silently flooding the feed.
+    assert bns._llm_flag({"size": 18, "llm_reason": "(возможно дубль: x)"}) == "dup"
+    assert bns._llm_flag({"size": 18, "dup_hint_members": None,
+                          "llm_reason": "(возможно дубль: x)"}) == "dup"
+
+
+def test_hint_with_no_flagged_member_still_diverts() -> None:
+    # The reason carries a hint but no member does — trust the reason.
+    assert bns._llm_flag(_cluster(18, 0)) == "dup"
+
+
+def test_junk_still_beats_the_size_rule() -> None:
+    c = _cluster(18, 1, "не новость, это обзор | возможно дубль")
+    assert bns._llm_flag(c) == "junk"
+
+
+def test_published_big_cluster_carries_the_doubt_in_its_flag() -> None:
+    c = _cluster(18, 1)
+    c.update({"canonical_title": "EN: Audi unveiled the Q9\nRU: Audi показала Q9",
+              "members": [{"url": "https://a.example/1"}], "size": 18})
+    row = bns._row_for_cluster(c, "04.08.2026 10:00 UTC")
+    assert "возможно дубль" in row[13]
+    assert "1 из 18" in row[13]

@@ -131,6 +131,50 @@ _LLM_JUNK_RE = re.compile(
     r"без автомобильн|без авто-угла|без привязки к авто",
     re.I,
 )
+# A dup hint from ONE member used to divert the entire cluster, and the
+# clusters it removed were the big ones: measured aug-04 over v66-v73, diverted
+# clusters were 63% of clusters but held 76% of all collected articles (mean
+# 2.1 members against 1.1 for published ones, max 29). The more outlets cover a
+# story, the more chances one of them resembles something we already sent.
+#
+# Scored against the editor's own archive on 132 clusters — how often he
+# published a story we had diverted:
+#     diverted, every member flagged   66 clusters ->  3% wrong
+#     diverted, half or more flagged   11         ->  9%
+#     diverted, a minority flagged      5         -> 20%
+#     diverted, size 1                 53         ->  2%
+#     diverted, size 4+                13         -> 23%
+# So diverting singletons is right 98% of the time and must not change; it is
+# diverting a BIG cluster on a MINORITY signal that misfires, ten times more
+# often. Below that bar the row is published with the suspicion in its flag
+# column instead — the editor can skip it at a glance, and unlike a diverted
+# row he can actually see it.
+#
+# Small samples (13 large, 5 minority), so the rule is deliberately narrow: it
+# never widens diverting, only declines it where it measurably misfires.
+_DUP_CLUSTER_MIN_SIZE = 4      # below this, one hint is enough (2% error)
+_DUP_CLUSTER_MIN_SHARE = 0.5   # at or above this, the signal is broad
+
+
+def dup_signal_is_broad(c: dict) -> bool:
+    """Does the dup hint cover enough of the cluster to divert the whole thing?
+
+    True for anything a legacy clusters file produced (no member count) so an
+    old file keeps its old behaviour rather than silently flooding the feed.
+    """
+    size = int(c.get("size") or 0)
+    hinted = c.get("dup_hint_members")
+    if hinted is None or size < _DUP_CLUSTER_MIN_SIZE:
+        return True
+    try:
+        hinted = int(hinted)
+    except (TypeError, ValueError):
+        return True
+    if hinted <= 0:            # hint came from the reason alone, not a member
+        return True
+    return hinted / size >= _DUP_CLUSTER_MIN_SHARE
+
+
 def _llm_flag(c: dict) -> str:
     """Return 'junk' | 'dup' | '' from the cluster's own llm_reason.
     junk wins over dup (it's the more confident self-rejection)."""
@@ -138,6 +182,8 @@ def _llm_flag(c: dict) -> str:
     if _LLM_JUNK_RE.search(reason):
         return "junk"
     if _LLM_DUP_RE.search(reason):
+        if not dup_signal_is_broad(c):
+            return ""          # publish it; the flag column carries the doubt
         return "dup"
     return ""
 
@@ -527,6 +573,15 @@ def _is_nhtsa_cluster(c: dict) -> bool:
 def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
     members_urls = "\n".join(m["url"] for m in c["members"])
     flag = _flag_review(c["canonical_title"])
+    # A big cluster kept out of the review tab by dup_signal_is_broad still
+    # carries a suspicion — say so here, in the column the sheet paints orange.
+    # Publishing it silently would trade a hidden story for an unmarked
+    # duplicate, which is the trade the editor complains about most.
+    if _LLM_DUP_RE.search(c.get("llm_reason") or "") and not dup_signal_is_broad(c):
+        hinted = c.get("dup_hint_members")
+        note = (f"возможно дубль: намёк у {hinted} из {c.get('size')} "
+                f"источников — проверьте")
+        flag = f"{flag} | {note}" if flag else note
     return [
         run_ts,
         c["canonical_title"],

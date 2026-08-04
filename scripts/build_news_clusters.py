@@ -1206,8 +1206,23 @@ def main() -> int:
                                       press_release_hosts=press_release_hosts)
             if len(grp_sorted) > 1 else None)
 
+        # HOW MANY members carry the hint, not just whether one does. The push
+        # diverts a whole cluster on the reason string above, so a single
+        # flagged member has been removing every article in the group: measured
+        # aug-04 over v66-v73, diverted clusters held 76% of all collected
+        # articles while being 63% of clusters, because they are systematically
+        # the BIG ones (mean 2.1 members vs 1.1, max 29). That is backwards —
+        # a story 29 outlets covered is a story, and with 29 members there are
+        # 29 chances that one of them resembles something we sent yesterday.
+        # Audi's Q9 reveal (18 members) went to the review tab on «уже было
+        # сегодня» while the editor published it.
+        dup_hint_members = sum(
+            1 for a in grp_sorted
+            if "возможно дуб" in (a.get("llm_reason") or "").lower())
+
         cluster = {
             "size": len(grp),
+            "dup_hint_members": dup_hint_members,
             "canonical_title": canonical["title"],
             "canonical_url": canonical["url"],
             "canonical_domain": canonical["domain"],
