@@ -1127,3 +1127,47 @@ def test_shortener_match_is_host_anchored_not_substring() -> None:
     assert not _is_junk_link("https://carscoops.com/2026/07/dodge-super-bee/")
     # a legitimate host that merely ENDS in a shortener-looking suffix
     assert not _is_junk_link("https://press.fiat.co.uk/news/500e")
+
+
+# --- named statistics providers: cited vs actually sourced -----------------
+# Editor aug-04: «Автостат нужен, но нужно не упоминание, а источник Автостат,
+# как и РОАД». The story is wanted; the link has to be theirs.
+
+def test_cited_autostat_without_their_link_is_flagged() -> None:
+    from news_agent.core.primary_source import cited_data_source
+    got = cited_data_source(
+        "По данным АВТОСТАТ, продажи новых автомобилей выросли на 12%.",
+        primary_domain="quto.ru")
+    assert got == ("АВТОСТАТ", "autostat.ru")
+
+
+def test_no_flag_when_we_already_link_the_provider() -> None:
+    from news_agent.core.primary_source import cited_data_source
+    assert cited_data_source(
+        "По данным АВТОСТАТ, рынок вырос", primary_domain="autostat.ru") is None
+    # subdomains count as the same provider
+    assert cited_data_source(
+        "По данным АВТОСТАТ", primary_domain="www.autostat.ru") is None
+
+
+def test_road_and_rosstat_are_recognised() -> None:
+    from news_agent.core.primary_source import cited_data_source
+    assert cited_data_source("Как сообщает РОАД, средний возраст парка вырос",
+                             primary_domain="iz.ru") == ("РОАД", "asroad.org")
+    assert cited_data_source("Росстат опубликовал данные о производстве",
+                             primary_domain="1prime.ru") == ("Росстат",
+                                                             "rosstat.gov.ru")
+
+
+def test_road_match_is_word_anchored() -> None:
+    # «роад» is short; a substring rule would fire on unrelated words.
+    from news_agent.core.primary_source import cited_data_source
+    assert cited_data_source("Проехали по автодороаду — тест",
+                             primary_domain="drom.ru") is None
+
+
+def test_no_provider_cited_is_silent() -> None:
+    from news_agent.core.primary_source import cited_data_source
+    assert cited_data_source("BMW представила новый X5",
+                             primary_domain="bmw.com") is None
+    assert cited_data_source("", primary_domain="") is None

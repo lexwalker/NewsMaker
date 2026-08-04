@@ -92,6 +92,7 @@ from news_agent.core import fetch_checkpoint  # noqa: E402
 from news_agent.core.primary_source import (  # noqa: E402
     CorpusEntry,
     arbitration_candidates,
+    cited_data_source,
     detect_earliest_in_corpus,
     detect_primary_source,
     _is_deep_url,
@@ -1811,6 +1812,18 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             except Exception as e:  # noqa: BLE001
                 r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
                     f"primary-pick error: {str(e)[:120]}"
+
+        # 4.5 Named statistics provider cited but not linked (editor aug-04:
+        # «Автостат нужен, но нужно не упоминание, а источник Автостат, как и
+        # РОАД»). The story is wanted — the LINK has to be theirs. We cannot
+        # invent a URL the article never carried, so surface it in the note the
+        # editor reads instead of silently shipping the retelling as primary.
+        _cited = cited_data_source(
+            r.body_excerpt or r.title, primary_domain=r.primary_domain)
+        if _cited:
+            _label, _host = _cited
+            r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                f"источник данных {_label}: нужна ссылка на {_host}"
 
         # Row passed both relevance + classification + translation. If it
         # came in as "Возможно новость" (yellow), promote it to "Точно

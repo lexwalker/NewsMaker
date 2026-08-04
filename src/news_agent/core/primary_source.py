@@ -424,6 +424,45 @@ def _has_cue_phrase(body: str, cues: PrimarySourceCues) -> bool:
     return False
 
 
+# Statistics providers the editor treats as the SOURCE of a market-data story,
+# not as a name to drop in the text. Editor, aug-04: «Автостат нужен, но нужно
+# не упоминание, а источник Автостат, как и РОАД».
+#
+# The cue-phrase machinery above only helps when the writer put a LINK next to
+# «по данным АВТОСТАТ». Plenty of outlets cite the figures and link nothing, and
+# those rows shipped with the retelling as the primary — «нет, это автостат»,
+# «такие новости берем только с росстата, когда они публикуют». The word
+# «автостат» appearing in the bot's own rationale predicts an editor rejection
+# 7.4x (measured over 753 rationales), which is this class showing up as
+# "wrong topic" when it was really "wrong link" all along.
+_CITED_DATA_SOURCES: tuple[tuple[str, str, str], ...] = (
+    # word-anchored: «роад» is short enough to appear inside other words
+    (r"автостат|autostat", "АВТОСТАТ", "autostat.ru"),
+    (r"\bроад\b|\basroad\b", "РОАД", "asroad.org"),
+    (r"росстат|rosstat", "Росстат", "rosstat.gov.ru"),
+)
+
+
+def cited_data_source(text: str, *, primary_domain: str = "") -> tuple[str, str] | None:
+    """(label, host) of a statistics provider NAMED in the text whose own
+    publication we are not linking to.
+
+    Returns None when nothing is cited, or when the primary already points at
+    that provider — in that case the story is sourced exactly as the editor
+    wants and there is nothing to flag.
+    """
+    t = (text or "").lower()
+    pd = _normalise_domain(primary_domain)
+    for pattern, label, host in _CITED_DATA_SOURCES:
+        if not re.search(pattern, t):
+            continue
+        nh = _normalise_domain(host)
+        if pd and (pd == nh or pd.endswith("." + nh)):
+            return None
+        return label, host
+    return None
+
+
 def _is_mirror(domain: str, mirror_hosts: list[str]) -> bool:
     n = _normalise_domain(domain)
     for h in mirror_hosts:
