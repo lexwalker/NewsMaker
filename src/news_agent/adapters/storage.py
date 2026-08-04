@@ -12,6 +12,7 @@ for fast recognition of seen URLs and their cheap "reconstitution".
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -57,6 +58,11 @@ CREATE TABLE IF NOT EXISTS press_search_cache (
 CREATE INDEX IF NOT EXISTS idx_press_cache_cached_at
     ON press_search_cache(cached_at);
 """
+
+
+# The push diverts a cluster whose reason carries this — see
+# recent_pushed_titles, which must not count diverted rows as "published".
+_DUP_HINT_RE = re.compile(r"возможно дуб", re.I)
 
 
 class DedupStore:
@@ -281,6 +287,26 @@ class DedupStore:
             except (ValueError, TypeError):
                 continue
             if blob.get("verdict") != "Точно новость":
+                continue
+            # A row the push DIVERTED is not something the editor ever saw, and
+            # counting it here makes the anti-repeat base self-reinforcing: a
+            # story diverted once is recorded as «уже отправляли в фид», so the
+            # next outlet's version of it matches, gets diverted, and is
+            # recorded again — for ever.
+            #
+            # Measured aug-04 over 30 days: of 3048 rows accepted as «Точно
+            # новость», only 1028 (34%) actually reached the feed, and 1528
+            # (50% of the whole base) already carried a dup hint of their own.
+            # Half of what this base "remembers publishing" is what it caused
+            # to be hidden.
+            #
+            # The verdict alone cannot tell — diverting happens later, in the
+            # push — but the hint the push diverts ON is right here in the
+            # cached reason, so drop those. Rows dropped for other reasons
+            # (junk flag, never clustered) still leak in; the complete fix is
+            # to record actual pushes, which needs a write path the push stage
+            # does not have yet.
+            if _DUP_HINT_RE.search(blob.get("llm_reason") or ""):
                 continue
             nt = normalise_title(r["title"] or "")
             if nt:
