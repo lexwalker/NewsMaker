@@ -58,6 +58,30 @@ Write-Output "run_hot start $ts  log=$log"
 Stage "1/3 hot fetch+classify"    @('scripts/batch_fetch_test.py','--hot')
 Stage "2/3 cluster (LLM-editor)"  @('scripts/build_news_clusters.py','--use-llm-editor')
 Stage "3/3 push to editor feed"   @('scripts/build_news_sheet.py')
+
+# 4/4 - feed the labelling loop from THIS lane too.
+#
+# The push already sends its dup suspicions to the review tab, so the tab did
+# look alive from a hot run - but the REJECT sample was wired into run_prog
+# only, and the hot lane rejects ~300 rows a run it never asked about. Half
+# the batch size of the full lane: three hot runs a day plus the full one lands
+# ~30 rows on the editor, which he can actually answer.
+#
+# Non-fatal, same as in run_prog: diagnostics must never abort a delivery that
+# already succeeded. ASCII only - PowerShell 5.1 reads a BOM-less .ps1 as ANSI.
+Write-Output "=== 4/4 sample rejects for labelling  $(Get-Date -Format HH:mm:ss) ===" | Tee-Object -FilePath $log -Append
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& python scripts/sample_rejected.py --total 6 --days 1 2>&1 | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "  (reject sampling failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+}
+& python scripts/ingest_rejected_labels.py --write 2>&1 | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "  (label ingest failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+}
+$ErrorActionPreference = $prevEAP
+
 # Tee the finish marker INTO the log (aug-04). Third copy of the same defect
 # (run_recover, run_prog, here): it went to the task's stdout only, so the log
 # ended on the push summary and a finished run was indistinguishable from one
