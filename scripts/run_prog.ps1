@@ -136,6 +136,16 @@ if ($NoPush) {
   if ($LASTEXITCODE -ne 0) {
     Write-Output "  (reject sampling failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
   }
+
+  # ...and collect the answers. Sampling without ingesting is a loop with the
+  # return wire cut: this ran last on 2026-06-18, and by aug-04 the editor had
+  # answered 251 rows nobody read - 45 of them recall holes (Hongqi Tiangong
+  # 08, the electric Cayenne) that never became precedents. Idempotent by
+  # url_hash, so running it every push only ever picks up what is new.
+  & python scripts/ingest_rejected_labels.py --write 2>&1 | Tee-Object -FilePath $log -Append
+  if ($LASTEXITCODE -ne 0) {
+    Write-Output "  (label ingest failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+  }
   $ErrorActionPreference = $prevEAP
 }
 Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
