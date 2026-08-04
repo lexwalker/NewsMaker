@@ -201,6 +201,31 @@ ITEMS_PER_SOURCE_DEEP = 60
 # non-auto items before any LLM cost.
 _SOURCE_CAP_OVERRIDES: dict[str, int] = {
     "tass.ru": 100,
+    # aug-04: 127 sources finished a run pinned exactly at their cap — we were
+    # walking away from indexes that still had fresh stories on them. Of the
+    # editor's publications last week, 88 (28%) were on a domain we DID poll
+    # and did not take, and this is the largest reason why.
+    #
+    # Raised only where the report shows all three: saturated, FAST, and
+    # actually productive (auto-topic rows per run, averaged over v71-v73).
+    # Pure-auto sites first — they were the worst throttled, giving ~10 auto
+    # stories from 15 links:
+    "110km.ru": 45,              # 10.7 auto/run at cap 15, 12s
+    "32cars.ru": 45,             # 10.3 at 15, 11s
+    "avtonovostidnya.ru": 45,    #  6.3 at 15, 2s  — cheapest links we have
+    "popmech.ru": 30,            #  5.3 at 15, 4s
+    "dp.ru": 30,                 #  5.7 at 15, 4s
+    # General portals: extra links are mostly non-auto, but the heuristic
+    # drops those for free BEFORE any LLM call, so the cost is fetch seconds,
+    # not tokens.
+    "lenta.ru": 70,              #  8.0 auto/run at cap 35, 9s
+    "ria.ru": 70,                #  6.0 at 35, 14s
+    "kommersant.ru": 70,         #  7.3 at 35, 10s (RSS) / 5.3 (site)
+    "vedomosti.ru": 70,          #  5.0 at 35, 15s
+    "rg.ru": 70,                 #  5.3 at 35, 10s
+    # NOT raised: iz.ru. It is saturated too (60/60) but spends 93s to fetch
+    # 17 of them — a bigger cap buys nothing there, it needs the source budget
+    # below, or parallel fetching.
 }
 
 
@@ -250,7 +275,14 @@ ARCHIVE_TITLES_FLOOR = 20
 # skipped and the truncation is recorded in r.error (so slow sources SURFACE in
 # the report instead of hiding). This is the prerequisite for re-enabling
 # Playwright safely. 0 disables the budget.
-SOURCE_BUDGET_S = float(os.environ.get("SOURCE_BUDGET_S", "90") or 0)
+# 90s cut 8 sources short in the last full run, and the pattern is the same
+# every time: iz.ru's four rubrics find 60 links each and stop at 17, having
+# spent 93s. Those are ~5s per article, so 60 would need ~330s — 180 does not
+# finish them either, but it roughly doubles what we take from the slow-and-rich
+# sources at a worst case of +90s each. The real answer is fetching sources
+# concurrently (they are I/O-bound: the median source spends 14s waiting), and
+# then this can come back down.
+SOURCE_BUDGET_S = float(os.environ.get("SOURCE_BUDGET_S", "180") or 0)
 FRESHNESS_HOURS = int(os.environ.get("FRESHNESS_HOURS", "24"))  # legacy fallback (ad-hoc runs)
 SQLITE_PATH = Path(os.environ.get("SQLITE_PATH", "./data/news_agent.sqlite"))
 STATE_PATH = Path(os.environ.get("RUN_STATE_PATH", "./data/state.json"))
