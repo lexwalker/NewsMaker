@@ -1444,7 +1444,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             f"LLM pass: кандидатов для LLM нет "
             f"(из кэша: {cached_count} строк — LLM не вызван)."
         )
-        return {"aborted": ""}
+        return {"aborted": "", "candidates": 0}
 
     print(
         f"\nLLM pass: {len(candidates)} свежих кандидатов "
@@ -1888,7 +1888,7 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     if _weak_archive_hints:
         print(f"  archive brand+model hints not auto-diverted: "
               f"{_weak_archive_hints} (handed to the LLM arbiter instead)")
-    return {"aborted": aborted}
+    return {"aborted": aborted, "candidates": len(candidates)}
 
 
 def _apply_brand_newsroom_primary(article_rows: list[ArticleRow]) -> None:
@@ -2638,6 +2638,7 @@ def _health_check(
     *,
     llm_ran: bool,
     llm_aborted: str,
+    llm_candidates: int,
     dedup_enabled: bool,
     prev_state: dict,
 ) -> list[str]:
@@ -2676,7 +2677,7 @@ def _health_check(
             # is just the network. Below the floor we warn and keep going —
             # the row stays unclassified, so no unvetted story can reach the
             # feed, and the next run re-picks it via the looks_failed detector.
-            _stuck_share = len(stuck) / max(1, len(candidates))
+            _stuck_share = len(stuck) / max(1, llm_candidates)
             if len(stuck) > STUCK_ROWS_ABORT and _stuck_share > STUCK_SHARE_ABORT:
                 alarms.append(
                     f"{len(stuck)} candidates unclassified after a 'completed' "
@@ -3133,11 +3134,13 @@ def main(argv: list[str] | None = None) -> int:
     # ------------------------------------------ LLM pass (certain + possible)
     llm_ran = False
     llm_aborted = ""
+    llm_candidates = 0
     if ENABLE_LLM and not args.no_llm:
         llm_ran = True
         try:
             _llm_stats = _run_llm_pass(article_rows, use_legacy=args.legacy_llm) or {}
             llm_aborted = _llm_stats.get("aborted", "")
+            llm_candidates = int(_llm_stats.get("candidates") or 0)
         except BudgetExceeded as e:
             # The cap tripping mid-pass leaves the tail unclassified — same
             # truncated-feed hazard as I2. Health check below fails the run.
@@ -3306,6 +3309,7 @@ def main(argv: list[str] | None = None) -> int:
         results, article_rows,
         llm_ran=llm_ran,
         llm_aborted=llm_aborted,
+        llm_candidates=llm_candidates,
         dedup_enabled=not args.no_published_dedup,
         prev_state=state.load(),
     )
