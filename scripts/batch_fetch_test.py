@@ -715,17 +715,14 @@ from news_agent.core.dup_arbiter import (  # noqa: E402
     graykey_candidates as arbiter_graykey_candidates,
     statistics_candidates as arbiter_stat_candidates,
 )
-from news_agent.core.dedup import (  # noqa: E402
-    EVENT_HINT_TRUSTED_DAYS,
-    archive_model_hint_is_weak,
-    event_hint_is_stale,
-)
+from news_agent.core.dedup import EVENT_HINT_TRUSTED_DAYS  # noqa: E402
 from news_agent.core.editorial_pass import (  # noqa: E402
-    dup_hint_for,
+    current_dup_hint,
     has_reject_directive,
     lang_tags_for as _shared_lang_tags_for,
     looks_like_usage_limit,
     resolve_section_region,
+    split_dup_hint,
 )
 
 
@@ -1115,7 +1112,10 @@ def _score_recall(article, r: SourceResult, row: ArticleRow) -> bool:  # type: i
             row.llm_confidence = cached.get("llm_confidence", "")
             row.llm_title_en = cached.get("llm_title_en", "")
             row.llm_title_ru = cached.get("llm_title_ru", "")
-            row.llm_reason = cached.get("llm_reason", "")
+            # Frozen dup hints never replay from cache: keep the clean
+            # reason only; _refresh_cached_dup_hints re-derives the hint
+            # under CURRENT rules before the sheet write.
+            row.llm_reason = split_dup_hint(cached.get("llm_reason", ""))[1]
             row.event_brand = cached.get("event_brand", "")
             row.event_model = cached.get("event_model", "")
             row.event_type = cached.get("event_type", "")
@@ -1431,6 +1431,59 @@ def _fill_from_rss_entries(  # type: ignore[no-untyped-def]
         )
 
 
+def _refresh_cached_dup_hints(article_rows: list[ArticleRow]) -> None:
+    """Re-derive advisory dup hints for cache-restored rows under CURRENT
+    rules — deterministic tiers only, zero LLM calls.
+
+    Cache restore strips any hint frozen into the cached reason (aug-05: a
+    frozen «возможно дубль» replayed on every re-encounter of the URL —
+    window overlap, hot lane, recover — and the push diverted the row
+    forever, immune to later rule changes; 151/250 accepted rows carried
+    one). Here the hint is recomputed against TODAY's stores, so a cached
+    row behaves exactly like a fresh one would: hints that no longer fire
+    disappear, hints that fire now are applied. Arbiter verdicts are NOT
+    re-frozen — at 24% measured error they are not worth conserving, and
+    re-running the arbiter here would cost money.
+    """
+    rows = [
+        r for r in article_rows
+        if r.from_cache and r.verdict in {"Точно новость", "Возможно новость"}
+    ]
+    if not rows:
+        return
+    recent_bm: dict = {}
+    recent_ev: dict = {}
+    own_titles: set[str] = set()
+    try:
+        if DEDUP_STORE is not None:
+            recent_bm = DEDUP_STORE.recent_brand_models(DEDUP_PORTAL, days=30)
+            recent_ev = DEDUP_STORE.recent_event_keys(DEDUP_PORTAL, days=30)
+            own_titles = DEDUP_STORE.recent_pushed_titles(DEDUP_PORTAL, days=30)
+    except Exception as _e:  # noqa: BLE001 — advisory, never fatal
+        print(f"  cached-hint refresh: store lookup skipped ({type(_e).__name__})")
+    hinted = 0
+    for r in rows:
+        hint, _ = current_dup_hint(
+            title=r.title,
+            event_brand=r.event_brand,
+            event_model=r.event_model,
+            event_type=r.event_type,
+            launch_brand_model=r.launch_brand_model,
+            canon_url=canonicalise(r.article_url),
+            pub_titles=PUBLISHED_ALL_TITLES,
+            recent_ev=recent_ev,
+            recent_bm=recent_bm,
+            own_titles=own_titles,
+            alt_title=r.llm_title_en,
+        )
+        if hint:
+            r.llm_reason = (
+                hint + (" | " + r.llm_reason if r.llm_reason else ""))[:300]
+            hinted += 1
+    print(f"  cached-hint refresh: {len(rows)} cached rows re-derived under "
+          f"current rules, {hinted} carry a hint")
+
+
 def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> dict:
     """For every certain/possible row: run LLM editorial review + translate.
 
@@ -1738,7 +1791,12 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         # push diverts on the "возможно дуб" substring).
         dup_hint = None
         if not use_legacy:
-            dup_hint = dup_hint_for(
+            # Tiers + the jul-27/28 demotions live in the SHARED
+            # current_dup_hint (stale >7d and weak archive brand+model go
+            # to the LLM arbiter below instead of an auto-divert) — one
+            # implementation with retry_failed_llm and the cached-row
+            # re-derive, so the demotions can never drift again.
+            dup_hint, _demo = current_dup_hint(
                 title=r.title,
                 event_brand=r.event_brand,
                 event_model=r.event_model,
@@ -1751,22 +1809,10 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 own_titles=own_titles,
                 alt_title=r.llm_title_en,
             )
-            # jul-27 (editor: «много отклоняем того, что нужно»): a hint whose
-            # match is older than a week diverts a genuinely-new story 25-33%
-            # of the time (measured on 1058 editor answers). Don't divert on
-            # it — drop the hint and let the LLM arbiter below read the
-            # candidates and decide. Fresh hints (<=7d, 5-12% error) keep
-            # diverting deterministically for $0.
-            if dup_hint and event_hint_is_stale(dup_hint):
+            if _demo == "stale":
                 _stale_dup_hints += 1
-                dup_hint = None
-            # jul-28: the all-time archive's brand+model tier knows nothing
-            # about the EVENT — 24% of its diverts were a NEW happening for
-            # a model we had covered (Urus recall after the Urus reveal,
-            # X5 LWB India after X5 LWB China). Hand it to the arbiter too.
-            elif dup_hint and archive_model_hint_is_weak(dup_hint):
+            elif _demo == "weak":
                 _weak_archive_hints += 1
-                dup_hint = None
             if dup_hint:
                 r.llm_reason = (
                     dup_hint + (" | " + r.llm_reason if r.llm_reason else "")
@@ -2328,7 +2374,10 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             row.llm_confidence = cached.get("llm_confidence", "")
             row.llm_title_en = cached.get("llm_title_en", "")
             row.llm_title_ru = cached.get("llm_title_ru", "")
-            row.llm_reason = cached.get("llm_reason", "")
+            # Frozen dup hints never replay from cache (see the twin
+            # restore site in _score_recall): clean reason only, the hint
+            # is re-derived under current rules by _refresh_cached_dup_hints.
+            row.llm_reason = split_dup_hint(cached.get("llm_reason", ""))[1]
             # Always mark every cache restoration with "из кэша" so the
             # editor can see at a glance that the row wasn't re-evaluated
             # this run. Cached rows still carry the full verdict / section
@@ -3131,6 +3180,12 @@ def main(argv: list[str] | None = None) -> int:
     news_total = sum(r.news_like for r in results)
     print(f"News-like articles across all sources: {news_total}")
 
+    # Cache-restored rows come back with a CLEAN reason (frozen hints are
+    # stripped at restore) — re-derive their advisory dup hints under
+    # current rules before anything downstream reads llm_reason. Free.
+    if not args.legacy_llm:
+        _refresh_cached_dup_hints(article_rows)
+
     # ------------------------------------------ LLM pass (certain + possible)
     llm_ran = False
     llm_aborted = ""
@@ -3207,6 +3262,12 @@ def main(argv: list[str] | None = None) -> int:
             # Strip the "из кэша" marker before persisting so a row never
             # ends up with the marker on its own saved snapshot.
             note_out = (row.llm_note or "").replace("из кэша", "").strip(" |").strip()
+            # Persist the reason CLEAN — a hint frozen into the cached
+            # reason replays on every restore of the URL and the push
+            # diverts the row forever, immune to later rule changes
+            # (aug-05). The hint that was live THIS run is kept in its own
+            # field for forensics; restore re-derives from current stores.
+            _dup_hint_live, _reason_clean = split_dup_hint(row.llm_reason)
             cached_row = {
                 # Classifier version that produced this classification.
                 # A later run honours the row's rule-based verdict only if
@@ -3227,7 +3288,8 @@ def main(argv: list[str] | None = None) -> int:
                 "llm_title_en": row.llm_title_en[:300],
                 "llm_title_ru": row.llm_title_ru[:300],
                 "llm_note": note_out,
-                "llm_reason": (row.llm_reason or "")[:300],
+                "llm_reason": (_reason_clean or "")[:300],
+                "dup_hint": (_dup_hint_live or "")[:300],
                 "primary_url": row.primary_url,
                 "primary_domain": row.primary_domain,
                 "primary_confidence": row.primary_confidence,

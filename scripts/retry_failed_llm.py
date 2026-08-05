@@ -40,11 +40,12 @@ from news_agent.core.articles_schema import (  # noqa: E402
 from news_agent.core.budget import BudgetExceeded, BudgetTracker  # noqa: E402
 from news_agent.core.config_loader import load_sections  # noqa: E402
 from news_agent.core.editorial_pass import (  # noqa: E402
-    dup_hint_for,
+    current_dup_hint,
     has_reject_directive,
     lang_tags_for,
     looks_like_usage_limit,
     resolve_section_region,
+    split_dup_hint,
 )
 from news_agent.core.models import RawArticle  # noqa: E402
 from news_agent.core.tab_handoff import resolve_articles_tab  # noqa: E402
@@ -133,6 +134,7 @@ def _cache_entry(
     not an LLM-cost saving.
     """
     canon_u = canonicalise(url)
+    _dup_hint_live, _reason_clean = split_dup_hint(reason)
     cached_row = {
         "cls_ver": CLASSIFIER_VERSION,
         # split stamps (jul-27) — same recipe as the batch, else a
@@ -147,7 +149,11 @@ def _cache_entry(
         "llm_title_en": (title_en or "")[:300],
         "llm_title_ru": (title_ru or "")[:300],
         "llm_note": note,
-        "llm_reason": (reason or "")[:300],
+        # Reason persists CLEAN, the live hint separately — a hint frozen
+        # into the cached reason replays on every restore (same recipe as
+        # the batch persist, aug-05).
+        "llm_reason": (_reason_clean or "")[:300],
+        "dup_hint": (_dup_hint_live or "")[:300],
         "primary_url": _get(row, COL.PRIMARY_URL),
         "primary_domain": _get(row, COL.PRIMARY_DOM),
         "primary_confidence": _get(row, COL.PRIMARY_CONF),
@@ -477,10 +483,15 @@ def main() -> int:
             section_names=section_names,
         )
         section, region = dec.section, dec.region
-        # Advisory dup hint — SHARED 3-tier helper, parity with the main run
-        # (was: archive-paraphrase tier only). PREPENDED so the [:300] cap
-        # can't amputate it; the push diverts on "возможно дуб".
-        _hint = dup_hint_for(
+        # Advisory dup hint — SHARED helper, parity with the main run.
+        # current_dup_hint carries the jul-27/28 demotions (stale >7d and
+        # weak archive brand+model return None) — this tool called the raw
+        # dup_hint_for for a week after those shipped, so recovered rows
+        # kept auto-diverting on hints the main run hands to the arbiter
+        # (aug-05 audit: weak-archive diverts on post-jul-28 rows).
+        # PREPENDED so the [:300] cap can't amputate it; the push diverts
+        # on "возможно дуб".
+        _hint, _ = current_dup_hint(
             title=clean_title,
             event_brand=_eb,
             event_model=_em,

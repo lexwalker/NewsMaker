@@ -16,9 +16,12 @@ for cosmetic gain.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from news_agent.core.dedup import (
+    archive_model_hint_is_weak,
+    event_hint_is_stale,
     published_dup_hint,
     recent_event_dup_hint,
     recent_model_dup_hint,
@@ -175,3 +178,59 @@ def dup_hint_for(
         return hint
     except Exception:  # noqa: BLE001 — advisory only, never break the pass
         return None
+
+
+def current_dup_hint(**kwargs) -> tuple[str | None, str]:
+    """dup_hint_for + the demotions that define the CURRENT rules.
+
+    Returns (hint, demotion) where demotion is '' | 'stale' | 'weak':
+      stale — the event-key match is older than a week (25-33% wrong,
+      jul-27 measurement on 1058 editor answers);
+      weak — the archive brand+model tier, which has no notion of the
+      EVENT (24% wrong, jul-28).
+    Both demote to None so the caller's LLM arbiter reads those cases
+    instead of an auto-divert. ONE shared implementation for the main run,
+    the recovery tool and the cached-row re-derive — the recovery tool
+    carried its own hint call without the demotions for a week (aug-05
+    audit: weak-archive diverts kept appearing on post-jul-28 rows).
+    """
+    hint = dup_hint_for(**kwargs)
+    if hint and event_hint_is_stale(hint):
+        return None, "stale"
+    if hint and archive_model_hint_is_weak(hint):
+        return None, "weak"
+    return hint, ""
+
+
+# The advisory hint is PREPENDED to llm_reason for the sheet/push protocol
+# (the push diverts on the «возможно дуб» substring). It must never be
+# PERSISTED inside the cached reason: a frozen hint replays on every cache
+# restore of the URL (window overlap, hot lane, recover), so a one-shot
+# advisory becomes a permanent property of the row, immune to later rule
+# changes (aug-05 audit: 151/250 accepted rows carried a frozen hint).
+_HINT_PREFIX_RE = re.compile(r"^\(?возможно дубль[:,][^|]*", re.I)
+_HINT_MARKERS = (
+    "ии-арбитр",           # LLM arbiter (batch_fetch_test)
+    "уже было",            # event-key tier (recent_event_dup_hint)
+    "отправляли в фид",    # tier 0.5 own-pushes (published_dup_hint)
+    "уже публиковали",     # archive tiers (published_dup_hint)
+    "уже писали",          # P3-D brand+model (recent_model_dup_hint)
+    "уже публиковалось",   # cluster-stage cross-run hint (defensive)
+)
+
+
+def split_dup_hint(reason: str | None) -> tuple[str, str]:
+    """(injected_hint, clean_reason) — separate OUR prepended hint from the
+    model's own text. Recognised by our hint wording only: a reason the
+    MODEL chose to begin with «возможно дубль…» is left intact."""
+    text = reason or ""
+    m = _HINT_PREFIX_RE.match(text)
+    if not m:
+        return "", text
+    head = m.group(0)
+    if not any(k in head.lower() for k in _HINT_MARKERS):
+        return "", text
+    rest = text[m.end():].lstrip()
+    if rest.startswith("|"):
+        rest = rest[1:].lstrip()
+    return head.strip(), rest
