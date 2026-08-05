@@ -3250,6 +3250,16 @@ def main(argv: list[str] | None = None) -> int:
                 domain_of(canon_u),
                 DEDUP_PORTAL,
                 _json.dumps(cached_row, ensure_ascii=False),
+                # The LEDE. The store has taken an 8th element for this since
+                # the column was added, and the caller has always passed seven —
+                # so `lede_text` is empty in all 51150 rows, and EVERY dedup
+                # layer we have compares headlines because nothing else was
+                # ever kept. That is why «новая модель с тремя моторами» and
+                # «новая модель объявила цену» read as two stories when the
+                # first article's body already carried the price: the body was
+                # thrown away at write time. Cheap to store, and it is the only
+                # thing that lets a later run judge content rather than wording.
+                (row.body_excerpt or "")[:600] or None,
             ))
         DEDUP_STORE.mark_many_with_cache(entries)
         print(

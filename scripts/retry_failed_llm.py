@@ -160,6 +160,12 @@ def _cache_entry(
         url_hash(canon_u), canon_u, (title or "")[:500], None,
         domain_of(canon_u), portal,
         json.dumps(cached_row, ensure_ascii=False),
+        # The LEDE, straight off the sheet row the fetch already filled. Same
+        # omission as in the main run (aug-05): the store has taken an 8th
+        # element since the column existed, both callers passed seven, and so
+        # every dedup layer we own compares headlines because no body text was
+        # ever kept anywhere.
+        (_get(row, COL_LEDE) or "")[:600] or None,
     )
 
 
