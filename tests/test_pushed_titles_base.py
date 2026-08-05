@@ -53,6 +53,27 @@ def test_diverted_row_is_not_remembered(tmp_path) -> None:
     assert db.recent_pushed_titles("RU", days=30) == set()
 
 
+def test_diverted_row_in_clean_persist_format_is_not_remembered(tmp_path) -> None:
+    # aug-05 clean-persist format: the hint lives in the dup_hint field and
+    # llm_reason is clean — the exclusion must read the field, else every
+    # new-format hint-carrier slips back into the base.
+    db = DedupStore(tmp_path / "t2.sqlite")
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with db._conn() as c:
+        c.execute(
+            "INSERT INTO seen_articles (url_hash, canonical_url, title, "
+            "first_seen_at, last_seen_at, source_domain, portal, "
+            "cached_row_json) VALUES (?,?,?,?,?,?,?,?)",
+            ("hx", "https://e.example/x", "Чистая причина, намёк в поле",
+             now, now, "e.example", "RU",
+             json.dumps({"verdict": "Точно новость",
+                         "llm_reason": "Запуск продаж — публикуем",
+                         "dup_hint": "(возможно дубль: … — проверьте)"},
+                        ensure_ascii=False)))
+    assert db.recent_pushed_titles("RU", days=30) == set()
+
+
 def test_rejected_rows_never_counted(tmp_path) -> None:
     db = _store(tmp_path, [("Что-то не то", "Отклонено LLM", ""),
                            ("И это тоже", "Точно не новость (не авто)", "")])

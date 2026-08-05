@@ -65,6 +65,15 @@ CREATE INDEX IF NOT EXISTS idx_press_cache_cached_at
 _DUP_HINT_RE = re.compile(r"возможно дуб", re.I)
 
 
+def _blob_carries_dup_hint(blob: dict) -> bool:
+    """True when the cached row carried a dup hint — the dedicated
+    ``dup_hint`` field (clean-persist format, aug-05) or the legacy hint
+    baked into llm_reason. Rows like this were DIVERTED by the push, not
+    published: no anti-repeat store may treat them as evidence."""
+    return bool((blob.get("dup_hint") or "").strip()) or bool(
+        _DUP_HINT_RE.search(blob.get("llm_reason") or ""))
+
+
 class DedupStore:
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +255,18 @@ class DedupStore:
             et = (blob.get("event_type") or "").strip().lower()
             if not (eb_raw and em and et and et != "other"):
                 continue
+            # A row that ITSELF carried a dup hint is an echo, not a new
+            # sighting of the event — and echoes must not rejuvenate the
+            # key's clock. Before this filter (aug-05) every classified
+            # echo refreshed last_seen_at, so a hot key (popular
+            # model+type) stayed forever younger than the 7-day trust
+            # window while anyone kept writing about it: a genuinely new
+            # story got a fresh deterministic hint, was diverted, its own
+            # row re-warmed the key — and the next outlet's version walked
+            # into the same trap. The recent_pushed_titles half-fix (7.1)
+            # never covered this store.
+            if _blob_carries_dup_hint(blob):
+                continue
             # Canonicalise the brand half of the key.
             eb = (canonicalize_brand(eb_raw) or eb_raw).lower()
             key = f"{eb}|{em}|{et}"
@@ -301,12 +322,13 @@ class DedupStore:
             # to be hidden.
             #
             # The verdict alone cannot tell — diverting happens later, in the
-            # push — but the hint the push diverts ON is right here in the
-            # cached reason, so drop those. Rows dropped for other reasons
-            # (junk flag, never clustered) still leak in; the complete fix is
-            # to record actual pushes, which needs a write path the push stage
-            # does not have yet.
-            if _DUP_HINT_RE.search(blob.get("llm_reason") or ""):
+            # push — but the hint the push diverts ON is in the cached row:
+            # its own dup_hint field since the aug-05 clean-persist format,
+            # baked into llm_reason on legacy blobs. Rows dropped for other
+            # reasons (junk flag, never clustered) still leak in; the
+            # complete fix is to record actual pushes, which needs a write
+            # path the push stage does not have yet.
+            if _blob_carries_dup_hint(blob):
                 continue
             nt = normalise_title(r["title"] or "")
             if nt:
