@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -218,29 +219,60 @@ def _divert_to_review(svc, flagged: list[dict], run_human: str) -> None:
     if not flagged:
         return
     rows = []
+    no_key = 0
     for c in flagged:
         f = _llm_flag(c)
         canon = c.get("canonical_url", "") or ""
+        title = c.get("canonical_title", "") or ""
+        if not canon:
+            # Fall back to the first member URL: review_tab's fresh-filter
+            # drops keyless rows, so a diverted cluster with no
+            # canonical_url used to vanish from BOTH the feed and the
+            # review tab (aug-05 audit). A member URL is a real identity;
+            # the title surrogate below is the last resort (two «<UNKNOWN>»
+            # titles would collide on it).
+            for m in c.get("members") or []:
+                mu = (m.get("url") or "").strip()
+                if mu:
+                    canon = mu
+                    break
+        if canon:
+            uh = url_hash(canonicalise(canon))
+        elif title.strip():
+            # Same title → same hash, so cross-run dedup still holds.
+            uh = url_hash("title:" + " ".join(title.lower().split()))
+        else:
+            uh = ""
+            no_key += 1
         rows.append({
-            "title": c.get("canonical_title", "") or "",
+            "title": title,
             "context": (c.get("llm_reason") or "")[:300],
             "type": review_tab.TYPE_DUP if f == "dup" else review_tab.TYPE_NOT_NEWS,
-            "url_hash": url_hash(canonicalise(canon)) if canon else "",
+            "url_hash": uh,
             "url": canon,
         })
     label = f"ИИ заподозрил (дубль/не новость), {run_human}"
     added = review_tab.append_batch(svc, SHEET_ID, rows, label)
-    print(f"  diverted {added} to '{review_tab.REVIEW_TAB}' "
-          f"({len(flagged)-added} already there)")
+    msg = (f"  diverted {added} to '{review_tab.REVIEW_TAB}' "
+           f"({len(flagged) - added - no_key} already there)")
+    if no_key:
+        msg += (f"; !!! {no_key} строк без URL и заголовка — "
+                f"им нечем ключеваться, в разметку не попали")
+    print(msg)
 
 
-def _is_junk_cluster(c: dict) -> bool:
+def _junk_reason(c: dict) -> str:
+    """Non-empty reason string when the cluster must not reach the editor.
+
+    Returns WHY, not just a bool: these clusters are dropped before the
+    review-tab divert, so the run log is the only trace they existed
+    (aug-05 audit — the silent counter hid real «Точно новость» losses)."""
     title = c["canonical_title"].strip()
     text = re.sub(r"\s*EN:\s*", "", title)
     text = re.sub(r"\s*RU:\s*", " ", text)
     text = re.sub(r"\s*\([A-Za-zА-Яа-яЁё]{2,4}\)\s*", "", text).strip()
     if len(text.split()) <= 2:
-        return True
+        return "заголовок ≤2 слов"
     junk_patterns = (
         "PressClub", "PRESSCLUB", "Press Club",
         "Newsroom", "NEWSROOM",
@@ -263,25 +295,31 @@ def _is_junk_cluster(c: dict) -> bool:
         "no article headline",
         "Auth-controller", "Authentication controller",
     )
-    if any(p.lower() in title.lower() for p in junk_patterns):
-        return True
+    for p in junk_patterns:
+        if p.lower() in title.lower():
+            return f"мусорный паттерн «{p}»"
     # Static reference documents (spec sheets) detected by URL pattern
     canon_url = (c.get("canonical_url") or "").lower()
     primary_url = (c.get("primary_url") or "").lower()
     member_urls = " ".join(m.get("url", "").lower() for m in c.get("members", []))
     haystack = canon_url + " " + primary_url + " " + member_urls
-    if any(h in haystack for h in _STATIC_DOC_URL_HINTS):
-        return True
+    for h in _STATIC_DOC_URL_HINTS:
+        if h in haystack:
+            return f"статический документ (URL «{h}»)"
     # LLM-failed clusters: title is just the original scraped string,
     # no "EN:"/"RU:" prefix → LLM didn't translate. Skip them to avoid
     # half-broken rows on the sheet. These will be re-classified after
     # the API cap resets.
     if "EN:" not in title and "RU:" not in title:
-        return True
+        return "нет EN:/RU: — перевод не сработал"
     lede = c.get("canonical_lede", "").strip()
     if len(lede) < 50 and len(text.split()) < 6:
-        return True
-    return False
+        return "пустой лид + короткий заголовок"
+    return ""
+
+
+def _is_junk_cluster(c: dict) -> bool:
+    return bool(_junk_reason(c))
 
 
 # ----- Year-drift detector ------------------------------------------------
@@ -390,12 +428,29 @@ def _existing_state(svc, tab: str) -> dict:
         публикации); empty string if the cell is blank. Lets the dedup
         logic patch missing dates without rewriting other cells.
     """
-    try:
-        resp = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:P"
-        ).execute()
-    except Exception:  # noqa: BLE001
-        return {"url_to_row": {}, "rows_meta": [], "date_by_row": {}}
+    # A failed read must STOP the push, not degrade it: returning an empty
+    # state here means "the feed has no rows", every cluster is judged new
+    # and the whole batch re-inserts on top — dedup silently OFF for the
+    # run (aug-05 audit). A loud stop is re-runnable; a duplicated feed is
+    # manual cleanup.
+    last_err: Exception | None = None
+    resp = None
+    for attempt in range(3):
+        try:
+            resp = svc.spreadsheets().values().get(
+                spreadsheetId=SHEET_ID, range=f"'{tab}'!A2:P"
+            ).execute()
+            break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            time.sleep(2.0 * (attempt + 1))
+    if resp is None:
+        raise SystemExit(
+            f"!!! Не удалось прочитать ленту '{tab}' после 3 попыток "
+            f"({type(last_err).__name__}: {last_err}) — пуш остановлен: "
+            f"продолжать с пустым состоянием значит отключить дедуп и "
+            f"задублировать ленту. Перезапустите пуш."
+        )
     rows = resp.get("values", []) or []
     url_to_row: dict[str, int] = {}
     rows_meta: list[dict] = []
@@ -488,8 +543,16 @@ def _build_brand_lexicon() -> list[str]:
             out.append(b.brand.lower())
             for a in getattr(b, "aliases", []) or []:
                 out.append(a.lower())
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        # An empty lexicon silently disables the brand guard and leaves the
+        # fuzzy matcher on the bare 72 threshold — a broken brand config must
+        # stop the push, not weaken it (aug-05 audit; the cluster stage would
+        # have died on the same config, this only triggers on a lone push).
+        raise SystemExit(
+            f"!!! Конфиг брендов не читается ({type(e).__name__}: {e}) — "
+            f"пуш остановлен: без лексикона бренд-защита нечёткой сверки "
+            f"отключилась бы молча."
+        )
     return [b for b in out if len(b) >= 4]
 
 
@@ -1004,8 +1067,12 @@ def main() -> int:
     clean: list[dict] = []
     junk = 0
     for c in clusters:
-        if _is_junk_cluster(c):
+        jr = _junk_reason(c)
+        if jr:
             junk += 1
+            print(f"  junk [{jr}]: "
+                  f"{(c.get('canonical_title') or '')[:80].strip()}  "
+                  f"{c.get('canonical_url') or ''}")
             continue
         clean.append(c)
     print(f"After junk filter: {len(clean)} ({junk} junk dropped)")
