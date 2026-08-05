@@ -87,8 +87,12 @@ def main() -> int:
     args = ap.parse_args()
 
     svc = _svc()
+    # Open-ended range — the tab grows forever and batches are PREPENDED
+    # (review_tab.append_batch), so answered rows drift DOWN. A fixed
+    # A1:G400 window (aug-05 bug) silently dropped every answer below row
+    # 400, and labeling_sent.jsonl blocks re-sending — the loss was final.
     rows = svc.spreadsheets().values().get(
-        spreadsheetId=EDITOR, range=f"'{TAB}'!A1:G400",
+        spreadsheetId=EDITOR, range=f"'{TAB}'!A1:G",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute().get("values", [])
 
