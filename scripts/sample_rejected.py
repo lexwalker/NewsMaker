@@ -21,8 +21,9 @@ What it does:
   * writes them to the "Разметка отклонённого (ИИ)" tab with the bot's
     reason as context and an empty "Нужно?" column for the editor.
 
-Editor then fills column E (да/нет) and, if да, F (раздел). Run
-ingest_rejected_labels.py afterwards to route the verdicts.
+Editor then fills column D «Нужно?» (да/нет) and, if да, E «Раздел».
+Column F holds the url_hash — the ingest matching key; never overwrite it.
+Run ingest_rejected_labels.py afterwards to route the verdicts.
 
 Usage:
   python scripts/sample_rejected.py                 # ~32 rows, last 14 days
@@ -174,10 +175,13 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=20260614)
     ap.add_argument(
         "--random", type=int, default=4,
-        help="extra rows drawn from ALL rejects, not just auto-borderline "
-             "ones. The borderline sample finds bad rules but cannot measure "
-             "how often a gate misfires; these can. Marked in the context "
-             "column so analysis can separate the two populations.")
+        help="extra rows random WITHIN the same borderline causes "
+             "(llm/blacklist/off_topic) but without the auto-title filter. "
+             "Gives those three gates a denominator the borderline sample "
+             "lacks; gates outside the causes (not_article, multi_news, "
+             "dedup, freshness…) never enter this pool, so their misfire "
+             "rate is NOT measurable here. Marked in the context column "
+             "so analysis can separate the two populations.")
     args = ap.parse_args()
 
     rejects = load_rejects(args.days)

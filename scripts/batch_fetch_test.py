@@ -105,7 +105,6 @@ from news_agent.core.heuristic_relevance import (  # noqa: E402
     is_auto_or_economy,
     is_dzen_listicle,
     is_multi_news_title,
-    is_ru_transport_civic,
     is_supplier_abstract_showcase,
     looks_like_article,
 )
@@ -439,6 +438,18 @@ def _resolve_prompt_change() -> tuple[str, str]:
     """
     env = os.environ.get("PROMPT_CHANGE", "").strip()
     if env:
+        if env in (PROMPT_CHANGE_REJECT_ONLY, PROMPT_CHANGE_PUBLISH_ONLY):
+            # The env path has NO prompt_ver check and is never consumed —
+            # stuck in a Scheduled Task it would silently keep cached
+            # verdicts through EVERY future constitution edit, including
+            # ones in the opposite direction (aug-05 audit). The file path
+            # (declare_prompt_change.py) is version-checked and one-shot.
+            print(
+                f"  ! PROMPT_CHANGE={env!r} задан ОКРУЖЕНИЕМ: без привязки к "
+                f"prompt_ver и без разового потребления — действует на каждый "
+                f"прогон, пока переменная не снята. Для разовой правки "
+                f"используйте scripts/declare_prompt_change.py."
+            )
         return env, "env"
     try:
         d = json.loads(PROMPT_CHANGE_PATH.read_text(encoding="utf-8"))
@@ -548,6 +559,12 @@ class SourceResult:
     http_status: int | str = ""
     error: str = ""
     articles_attempted: int = 0
+    # Candidate links found BEFORE the per-source cap cut. The budget cut
+    # writes itself into `error`; the cap cut used to leave no trace at all
+    # (aug-05 audit) — with 28% of editor publications lost on domains we DO
+    # poll, the largest loss channel had no telemetry. links_precap >
+    # articles_attempted ⇒ the cap left links on the table.
+    links_precap: int = 0
     articles_with_title: int = 0
     articles_with_body: int = 0
     articles_with_date: int = 0
@@ -667,6 +684,10 @@ HEADER = [
     "Ошибка",
     "Примеры заголовков",
     "Примеры прошедших оба фильтра",
+    # At the END on purpose — every reader of this tab indexes by position.
+    # «Найдено» > «Попыток» ⇒ the per-source cap cut links (cap-loss
+    # telemetry, aug-05; the budget cut reports through «Ошибка» instead).
+    "Найдено (до среза)",
 ]
 
 
@@ -859,6 +880,7 @@ def write_report(svc, run_ts: str, results: list[SourceResult], tab: str) -> Non
                 r.error,
                 " | ".join(t[:80] for t in r.sample_titles[:3]),
                 " | ".join(t[:80] for t in r.sample_passed[:3]),
+                r.links_precap,
             ]
         )
     svc.spreadsheets().values().update(
@@ -1222,11 +1244,13 @@ def process_source(
     )
     if looks_like_feed:
         cap = _items_cap_for(url)
-        entries = feedparser.parse(html).entries[:cap]
+        _feed_all = feedparser.parse(html).entries
+        entries = _feed_all[:cap]
         if entries:
             r.detected_type = "rss"
             r.feed_url = url
             r.articles_attempted = len(entries)
+            r.links_precap = len(_feed_all)
             _fill_from_rss_entries(client, entries, r, source_idx, article_rows,
                                    t0=t0)
             r.elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -1238,11 +1262,13 @@ def process_source(
             rss_resp = client.get(feed_url)
             rss_resp.raise_for_status()
             cap = _items_cap_for(url)
-            entries = feedparser.parse(rss_resp.content).entries[:cap]
+            _feed_all = feedparser.parse(rss_resp.content).entries
+            entries = _feed_all[:cap]
             if entries:
                 r.detected_type = "rss"
                 r.feed_url = feed_url
                 r.articles_attempted = len(entries)
+                r.links_precap = len(_feed_all)
                 _fill_from_rss_entries(client, entries, r, source_idx,
                                        article_rows, t0=t0)
                 r.elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -1253,7 +1279,8 @@ def process_source(
     # HTML index mode
     r.detected_type = "html"
     _nx_dates: dict[str, object] = {}
-    links = _discover_article_links(url, html, _items_cap_for(url))
+    links, _links_precap = _discover_article_links_counted(
+        url, html, _items_cap_for(url))
     if not links:
         # Anti-bot SHELL VARIANCE (jul-10 root cause of silent 0-yield runs):
         # some sources intermittently serve a JS-shell instead of the real
@@ -1273,7 +1300,7 @@ def process_source(
             try:
                 resp_retry = _http_get(client, url)
                 resp_retry.raise_for_status()
-                links = _discover_article_links(
+                links, _links_precap = _discover_article_links_counted(
                     url, resp_retry.text, _items_cap_for(url))
             except Exception:  # noqa: BLE001
                 continue
@@ -1295,6 +1322,7 @@ def process_source(
             # globalsuzuki ships <newslist><article><link>+<message>.
             _nx = extract_xml_listing(html, url)
         if _nx:
+            _links_precap = len(_nx)
             _nx = _nx[: _items_cap_for(url)]
             links = [it["url"] for it in _nx]
             # The LISTING date is authoritative here. Verified on lada.ru:
@@ -1307,6 +1335,7 @@ def process_source(
             note = f"next-data list: {len(links)} links"
             r.error = (r.error + " | " + note)[:200] if r.error else note
     r.articles_attempted = len(links)
+    r.links_precap = _links_precap
     for idx, link in enumerate(links, start=1):
         if _source_budget_exceeded(r, t0, idx - 1, len(links)):
             break
@@ -1594,46 +1623,18 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                 continue
 
             if not review.should_publish:
-                # RU transport-civic rescue (jun-2026 "Опубликованные 3"
-                # recall audit). The LLM rejects Russian transport-CIVIC
-                # news (traffic law, roads, taxi/carsharing, ОСАГО,
-                # утильсбор, car surveys) as non-product noise — but the
-                # editor publishes ~40% of Local specifics from exactly
-                # this category. Force-accept the genuine category to
-                # Local specifics; the editor still reviews Local and can
-                # drop edge cases. Gated against military/banking noise
-                # inside is_ru_transport_civic.
-                if False and is_ru_transport_civic(r.title, r.body_excerpt):  # noqa: SIM223
-                    # RESCUE DISABLED (jun-19). The editorial constitution now
-                    # routes genuine RU-transport itself (regulation / carsharing
-                    # / loan surveys -> Local); the rescue was force-adding
-                    # OFF-topic Local junk the LLM correctly rejected (PMD-social,
-                    # taxi-tyres, parking-trivia, driving-tips). Trust the LLM.
-                    r.llm_relevance = "Да"
-                    r.llm_section = "Local specifics"
-                    r.llm_region = "Local"
-                    r.llm_confidence = 0.55
-                    r.llm_note = (
-                        (r.llm_note + " | " if r.llm_note else "")
-                        + "RU-транспорт-civic rescue (LLM отклонил: "
-                        + f"{review.reason[:60]}) — проверьте"
-                    )
-                    r.verdict = "Точно новость"
-                    print(
-                        f"  [{i}/{len(candidates)}] RESCUE→Local  "
-                        f"(LLM rejected)  |  {r.title[:50]}"
-                    )
-                    # fall through to the accept path below
-                else:
-                    # LLM rejected. Mark verdict + reason for editor.
-                    r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
-                        f"LLM: {review.reason[:120]}"
-                    r.verdict = "Отклонено LLM"
-                    print(
-                        f"  [{i}/{len(candidates)}] REJECT  conf={review.confidence:.2f}  "
-                        f"{review.reason[:60]}  |  {r.title[:50]}"
-                    )
-                    continue
+                # LLM rejected. Mark verdict + reason for editor. (The RU
+                # transport-civic rescue that lived here was disabled jun-19
+                # — the constitution routes genuine RU-transport itself —
+                # and its dead `if False` body was removed aug-05.)
+                r.llm_note = (r.llm_note + " | " if r.llm_note else "") + \
+                    f"LLM: {review.reason[:120]}"
+                r.verdict = "Отклонено LLM"
+                print(
+                    f"  [{i}/{len(candidates)}] REJECT  conf={review.confidence:.2f}  "
+                    f"{review.reason[:60]}  |  {r.title[:50]}"
+                )
+                continue
 
             # Accepted — final section/region via the SHARED resolver
             # (heuristic pre-classifier override + Other-news fallback;
@@ -2353,25 +2354,8 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             row.auto_topic = bool(cached.get("auto_topic", True))
             row.auto_hits = cached.get("auto_hits", "")
             row.from_cache = True
-            # RU transport-civic rescue ALSO at cache-restore time.
-            # Today's heuristic fixes (rescue, blacklist) must apply even
-            # to articles cached BEFORE the fix — otherwise a recently
-            # cached run short-circuits the whole change. Only flips
-            # LLM-rejections (not heuristic hard-rejects, which are
-            # correct); is_ru_transport_civic gates out military/banking.
-            if (False  # RESCUE DISABLED jun-19 (see live path) — keep cached
-                    # LLM rejections rejected; constitution handles RU-transport
-                    and row.verdict == "Отклонено LLM"
-                    and is_ru_transport_civic(row.title, row.body_excerpt)):
-                row.verdict = "Точно новость"
-                row.llm_relevance = "Да"
-                row.llm_section = "Local specifics"
-                row.llm_region = "Local"
-                row.llm_confidence = 0.55
-                row.llm_note = (
-                    "RU-транспорт-civic rescue (из кэша) — проверьте"
-                    + (f" | {row.llm_note}" if row.llm_note else "")
-                )
+            # (The cache-restore copy of the RU transport-civic rescue was
+            # disabled jun-19 and its dead `if False` body removed aug-05.)
             return True
         # Else: cache exists but is incomplete (fetch-only run). Fall through
         # so the normal heuristic + LLM pipeline picks this row up fresh.
@@ -2465,6 +2449,16 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
 
 
 def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
+    """Back-compat wrapper: capped links only (probes/one-off scripts)."""
+    return _discover_article_links_counted(index_url, html, limit)[0]
+
+
+def _discover_article_links_counted(
+    index_url: str, html: str, limit: int,
+) -> tuple[list[str], int]:
+    """(capped links, count found BEFORE the cap) — the second number is the
+    cap-loss telemetry: it goes to SourceResult.links_precap so saturation
+    is visible in the run report instead of silently truncating."""
     soup = BeautifulSoup(html, "lxml")
     host = urlparse(index_url).netloc
     # www./m./amp.-tolerant same-site check. The exact-netloc comparison
@@ -2517,7 +2511,7 @@ def _discover_article_links(index_url: str, html: str, limit: int) -> list[str]:
             return 3                     # deep path, no marker
         return 4                         # shallow section page
     out.sort(key=_strength)
-    return out[:limit]
+    return out[:limit], len(out)
 
 
 # ------------------------------------------------------------- CLI
@@ -2736,6 +2730,12 @@ def _health_check(
     print("\n=== RUN HEALTH ===")
     print(f"  sources : {len(results)} fetched | {err_sources} errored | "
           f"{zero_links} reachable-but-0-links")
+    _cap_cut = [s for s in results if s.links_precap > s.articles_attempted]
+    if _cap_cut:
+        _cap_lost = sum(s.links_precap - s.articles_attempted for s in _cap_cut)
+        print(f"  caps    : {len(_cap_cut)} sources saturated their link cap "
+              f"— {_cap_lost} candidate links left uncollected "
+              f"(колонка «Найдено (до среза)» в отчёте)")
     if llm_ran:
         print(f"  llm     : {'ABORTED: ' + llm_aborted if llm_aborted else 'completed'}"
               f" | stuck={len(stuck)}")

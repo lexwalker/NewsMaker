@@ -125,8 +125,11 @@ def main() -> int:
     args = ap.parse_args()
 
     svc = _svc()
+    # Open-ended range: the feed only grows, and a hard A1:P2000 window was
+    # silently truncating runs that crossed row 2000 — their «полезных строк
+    # за прогон» read lower than reality (aug-05 audit).
     feed = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET, range=f"'{FEED_TAB}'!A1:P2000").execute().get(
+        spreadsheetId=SHEET, range=f"'{FEED_TAB}'!A1:P").execute().get(
             "values", [])
     labels = load_editor_labels()
     published = load_published_keys(svc)
