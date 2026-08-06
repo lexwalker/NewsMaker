@@ -190,3 +190,83 @@ def test_nothing_to_freeze_means_no_write_at_all(bft, monkeypatch) -> None:
 def test_no_store_is_not_an_error(bft, monkeypatch) -> None:
     monkeypatch.setattr(bft, "DEDUP_STORE", None)
     assert bft._persist_rows([_Row()]) == 0
+
+
+# ------------------------------------------- the provisional mark and its use
+
+def test_the_checkpoint_marks_its_rows_provisional(bft) -> None:
+    import json
+    plain = json.loads(bft._cache_entry_for(_Row())[6])
+    mid = json.loads(bft._cache_entry_for(_Row(), provisional=True)[6])
+    assert "provisional" not in plain          # the end-of-run write is unchanged
+    assert mid["provisional"] is True
+    # Nothing else differs — the verdict is equally real either way.
+    assert {k: v for k, v in mid.items() if k != "provisional"} == plain
+
+
+def test_a_healthy_run_clears_the_mark(bft, monkeypatch) -> None:
+    """The end-of-run write overwrites the same url_hash without the flag, so
+    a run that finishes leaves nothing provisional behind."""
+    written = []
+
+    class _Store:
+        def mark_many_with_cache(self, entries):
+            written.append(entries)
+
+    monkeypatch.setattr(bft, "DEDUP_STORE", _Store())
+    row = _Row()
+    bft._persist_rows([row], provisional=True)     # mid-pass
+    bft._persist_rows([row])                       # end of run
+    import json
+    assert written[0][0][0] == written[1][0][0]    # same url_hash — an upsert
+    assert json.loads(written[0][0][6])["provisional"] is True
+    assert "provisional" not in json.loads(written[1][0][6])
+
+
+def test_provisional_rows_are_not_evidence_of_a_push(bft) -> None:
+    """A run that died pushed nothing. Counting its saved rows as «отправляли в
+    фид» would make the RECOVERY run divert the very stories it rescued."""
+    from news_agent.adapters.storage import _blob_is_provisional
+    assert _blob_is_provisional({"provisional": True})
+    assert not _blob_is_provisional({})
+    assert not _blob_is_provisional({"provisional": False})
+
+
+def test_both_anti_repeat_stores_skip_provisional_rows(tmp_path) -> None:
+    """End-to-end against a real store: a provisional accepted row must appear
+    in neither the own-pushes base nor the event-key map."""
+    import json
+    from datetime import datetime, timezone
+    from news_agent.adapters.storage import DedupStore
+
+    store = DedupStore(tmp_path / "t.sqlite")
+    now = datetime.now(timezone.utc).isoformat()
+
+    def blob(**over):
+        b = {"verdict": "Точно новость", "llm_relevance": "Да", "llm_reason": "ок",
+             "event_brand": "bmw", "event_model": "x5", "event_type": "launch"}
+        b.update(over)
+        return json.dumps(b, ensure_ascii=False)
+
+    store.mark_many_with_cache([
+        ("h1", "https://a/1", "BMW X5 представлен официально", now,
+         "a.com", "p", blob(), "лид"),
+        ("h2", "https://a/2", "Audi Q7 представлен официально", now,
+         "a.com", "p", blob(provisional=True, event_model="q7"), "лид"),
+    ])
+    titles = store.recent_pushed_titles("p", days=30)
+    assert any("bmw" in t for t in titles)
+    assert not any("audi" in t for t in titles)
+    keys = store.recent_event_keys("p", days=30)
+    assert "bmw|x5|launch" in keys
+    assert "audi|q7|launch" not in keys
+
+
+def test_checkpoint_every_is_parsed_defensively(bft, monkeypatch) -> None:
+    import importlib
+    for raw, want in (("", 25), ("nonsense", 25), ("0", 0), ("-3", 0), ("5", 5)):
+        monkeypatch.setenv("LLM_CHECKPOINT_EVERY", raw)
+        mod = importlib.reload(bft)
+        assert mod.LLM_CHECKPOINT_EVERY == want, f"{raw!r} → {mod.LLM_CHECKPOINT_EVERY}"
+    monkeypatch.delenv("LLM_CHECKPOINT_EVERY", raising=False)
+    importlib.reload(bft)

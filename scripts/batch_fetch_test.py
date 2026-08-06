@@ -292,7 +292,14 @@ EDITORIAL_BATCH_SIZE = max(1, min(25, EDITORIAL_BATCH_SIZE))  # 1 = выключ
 # 25 rows is roughly two batched calls: small enough that a crash costs pennies,
 # large enough that the write happens ~17 times a run instead of 418. The store
 # is local SQLite, so a flush is milliseconds and cannot fail on the network.
-LLM_CHECKPOINT_EVERY = max(0, int(os.environ.get("LLM_CHECKPOINT_EVERY", "") or 25))
+# Parsed defensively for the same reason as EDITORIAL_BATCH_SIZE: a run must
+# not die on the import line because someone set the variable to nothing.
+try:
+    LLM_CHECKPOINT_EVERY = int(os.environ.get("LLM_CHECKPOINT_EVERY", "") or 25)
+except ValueError:
+    print("LLM_CHECKPOINT_EVERY не число — беру 25", file=sys.stderr)
+    LLM_CHECKPOINT_EVERY = 25
+LLM_CHECKPOINT_EVERY = max(0, LLM_CHECKPOINT_EVERY)   # 0 = выключено
 # Published-archive sanity floors (the archive is ~6000 rows; thousands of
 # URLs / dozens of recent titles are the legitimate minimum). Below these the
 # dedup gate is degraded — a state that has silently occurred 3 times.
@@ -1537,7 +1544,7 @@ _NO_CACHE_VERDICTS = {
 }
 
 
-def _cache_entry_for(row: ArticleRow) -> tuple | None:
+def _cache_entry_for(row: ArticleRow, *, provisional: bool = False) -> tuple | None:
     """The SQLite cache tuple for one row, or None when it must not be frozen.
 
     THE single source of truth for what gets persisted, shared by the mid-pass
@@ -1601,6 +1608,16 @@ def _cache_entry_for(row: ArticleRow) -> tuple | None:
         "event_model": row.event_model,
         "event_type": row.event_type,
     }
+    if provisional:
+        # Written mid-pass by the checkpoint. The verdict is real and worth
+        # restoring; what is NOT real is that the editor ever saw this row —
+        # the run has not pushed anything yet and may never get to. The
+        # anti-repeat stores skip provisional rows for exactly that reason
+        # (storage._blob_is_provisional), so the recovery run cannot divert a
+        # story as a duplicate of the copy it saved a minute earlier. The
+        # end-of-run write overwrites the same url_hash WITHOUT the flag, so a
+        # healthy run leaves nothing behind and behaves as it always did.
+        cached_row["provisional"] = True
     return (
         url_hash(canon_u),
         canon_u,
@@ -1621,11 +1638,12 @@ def _cache_entry_for(row: ArticleRow) -> tuple | None:
     )
 
 
-def _persist_rows(rows: list[ArticleRow]) -> int:
+def _persist_rows(rows: list[ArticleRow], *, provisional: bool = False) -> int:
     """Freeze whatever of ``rows`` is fit to freeze. Returns how many."""
     if DEDUP_STORE is None:
         return 0
-    entries = [e for e in (_cache_entry_for(r) for r in rows) if e is not None]
+    entries = [e for e in (_cache_entry_for(r, provisional=provisional)
+                           for r in rows) if e is not None]
     if entries:
         DEDUP_STORE.mark_many_with_cache(entries)
     return len(entries)
@@ -1869,7 +1887,8 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         # Bounded loss on a hard death: at most LLM_CHECKPOINT_EVERY rows.
         if _checkpoint_due(i - 1, checkpointed):
             try:
-                _n = _persist_rows(candidates[checkpointed:i - 1])
+                _n = _persist_rows(candidates[checkpointed:i - 1],
+                                   provisional=True)
                 checkpointed = i - 1
                 print(f"  контрольная точка: {_n} строк в кэше "
                       f"({checkpointed}/{len(candidates)} разобрано)")

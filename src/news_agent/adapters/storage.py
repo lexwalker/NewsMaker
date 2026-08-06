@@ -74,6 +74,22 @@ def _blob_carries_dup_hint(blob: dict) -> bool:
         _DUP_HINT_RE.search(blob.get("llm_reason") or ""))
 
 
+def _blob_is_provisional(blob: dict) -> bool:
+    """True for a row frozen by the mid-pass checkpoint of a run that never
+    finished (aug-06).
+
+    The checkpoint exists so a power cut cannot throw away paid verdicts, and
+    the verdict IS worth restoring — that is the whole point. But a run that
+    died never pushed anything, so such a row must not be counted as something
+    we sent the editor. Otherwise the RECOVERY run — the very run the
+    checkpoint exists to help — would restore the row, match its own title
+    against itself, and divert it as «недавно уже отправляли в фид».
+
+    A healthy run overwrites the same url_hash at the end WITHOUT this flag, so
+    the mark clears itself and nothing changes for a normal run."""
+    return bool(blob.get("provisional"))
+
+
 class DedupStore:
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -267,6 +283,9 @@ class DedupStore:
             # never covered this store.
             if _blob_carries_dup_hint(blob):
                 continue
+            # A run that died mid-pass pushed nothing; see _blob_is_provisional.
+            if _blob_is_provisional(blob):
+                continue
             # Canonicalise the brand half of the key.
             eb = (canonicalize_brand(eb_raw) or eb_raw).lower()
             key = f"{eb}|{em}|{et}"
@@ -329,6 +348,9 @@ class DedupStore:
             # complete fix is to record actual pushes, which needs a write
             # path the push stage does not have yet.
             if _blob_carries_dup_hint(blob):
+                continue
+            # A run that died mid-pass pushed nothing; see _blob_is_provisional.
+            if _blob_is_provisional(blob):
                 continue
             nt = normalise_title(r["title"] or "")
             if nt:
