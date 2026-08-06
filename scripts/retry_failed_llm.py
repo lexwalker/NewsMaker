@@ -16,7 +16,6 @@ Run:  python scripts/retry_failed_llm.py          # auto-picks newest "ТЕСТ 
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import sys
@@ -26,10 +25,19 @@ from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 load_dotenv(ROOT / ".env", override=True)
+
+from news_agent.core.console import force_utf8_stdio  # noqa: E402
+
+# Was `sys.stdout = io.TextIOWrapper(sys.stdout.buffer, …)`. That idiom is fine
+# for a process that only RUNS this file and wrong the moment anything IMPORTS
+# it: the replaced wrapper loses its last reference, and finalising it closes
+# the buffer the new one writes to. Under pytest that is the capture object, so
+# importing this module poisoned every test collected after it — the jul-30
+# failure, rediscovered aug-06 the moment a test needed something from here.
+force_utf8_stdio()
 
 from news_agent.adapters.llm import make_llm_client  # noqa: E402
 from news_agent.core.articles_schema import (  # noqa: E402
@@ -224,6 +232,20 @@ def _load_hint() -> dict | None:
         return None
 
 
+def _hint_state_path(hint: dict | None) -> Path:
+    """The run-state file a recovery belongs to.
+
+    Each lane keeps its own window: the full chain in state.json, the hot chain
+    in state_hot.json. Advancing the wrong one is not a cosmetic error — it
+    would move a window past news nobody fetched, and those stories are gone
+    without a trace. Older hints carry no name; they are full-lane by
+    construction, since the hot lane had no recovery until aug-06. Only a bare
+    filename is honoured, so a hint can never point outside data/."""
+    name = (hint or {}).get("state_file") or "state.json"
+    name = Path(str(name)).name          # defensive: strip any path component
+    return ROOT / "data" / name
+
+
 def _consume_hint(hint: dict, cost_usd: float) -> None:
     """Full recovery succeeded: advance state to the recovered run (merge —
     RunState.save replaces the file, and the archive baselines written by the
@@ -231,7 +253,7 @@ def _consume_hint(hint: dict, cost_usd: float) -> None:
     the hint."""
     import json
     from news_agent.core.run_state import RunState
-    st = RunState(ROOT / "data" / "state.json")
+    st = RunState(_hint_state_path(hint))
     data = st.load()
     data.update({
         "articles_tab": hint["articles_tab"],
@@ -259,9 +281,13 @@ def main() -> int:
         # as a warned fallback (see tab_handoff — kills the I9 "newest tab
         # wins" poisoning and the hard-coded v18 last resort). Auto-resolve
         # also avoids Cyrillic argv (Windows/PowerShell mangles it).
+        # RUN_STATE_PATH is how the hot chain tells every stage which lane it
+        # is; retry was the one stage that ignored it and always asked the full
+        # lane, so an un-hinted hot recovery would have finished the WRONG tab.
         tab = resolve_articles_tab(
             svc, SHEET_ID,
-            state_path=ROOT / "data" / "state.json",
+            state_path=Path(os.environ.get(
+                "RUN_STATE_PATH", str(ROOT / "data" / "state.json"))),
             argv_tab=sys.argv[1] if len(sys.argv) > 1 else "",
         )
         print(f"  tab: {tab}")

@@ -188,102 +188,131 @@ class _BatchClient:
         return p, _usage()
 
 
-def _prefill(bft, rows, client, cap=10.0):
-    out = {}
-    bft._prefill_editorial_reviews(
-        rows, client=client, sections=[], country="Russia",
-        budget=BudgetTracker(cap_usd=cap), out=out)
-    return out
+# ------------------------------------------------ one chunk, judged on demand
+
+def _judge(bft, rows, client, start=0, cap=10.0, out=None):
+    if out is None:
+        out = {}
+    rc = bft._judge_chunk(rows, start, client=client, sections=[],
+                          country="Russia", budget=BudgetTracker(cap_usd=cap),
+                          out=out)
+    return rc, out
 
 
-def test_prefill_indexes_against_the_candidate_list(bft, monkeypatch) -> None:
-    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
-    rows = [_Row("a"), _Row("b"), _Row("c"), _Row("d")]
-    client = _BatchClient([["R1", "R2"], ["R3", None]])
-    out = _prefill(bft, rows, client)
-    assert out == {0: "R1", 1: "R2", 2: "R3"}   # index 3 stays for the loop
-    assert client.chunks == [2, 2]
-
-
-def test_prefill_survives_a_failed_chunk(bft, monkeypatch) -> None:
-    """One dead chunk costs ten single calls, not ten stories."""
+def test_a_chunk_fills_indexes_relative_to_the_whole_list(bft, monkeypatch) -> None:
+    """`out` is keyed by position in `candidates`, not in the chunk — the loop
+    looks itself up by its own counter, so an off-by-chunk would hand a verdict
+    to the wrong article."""
     monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
     rows = [_Row(x) for x in "abcd"]
-    client = _BatchClient([RuntimeError("overloaded"), ["R3", "R4"]])
-    assert _prefill(bft, rows, client) == {2: "R3", 3: "R4"}
+    rc, out = _judge(bft, rows, _BatchClient([["R3", "R4"]]), start=2)
+    assert rc == "" and out == {2: "R3", 3: "R4"}
 
 
-def test_prefill_stops_batching_after_two_failures(bft, monkeypatch) -> None:
-    """A dead API means every chunk dies. Hand the failure to the per-article
-    loop, where the circuit breaker can see it, instead of burning the run."""
-    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 1)
-    rows = [_Row(x) for x in "abcde"]
-    client = _BatchClient([RuntimeError("403"), RuntimeError("403"),
-                           ["R3"], ["R4"], ["R5"]])
-    assert _prefill(bft, rows, client) == {}
-    assert len(client.chunks) == 2
-
-
-def test_prefill_stops_at_once_on_a_usage_limit(bft, monkeypatch) -> None:
-    """Every call is retried three times inside the client, so a second doomed
-    chunk is six more round-trips on a key that is already refusing."""
-    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 1)
-    rows = [_Row(x) for x in "abcd"]
-    err = RuntimeError("This request would exceed your organization's usage limit")
-    assert bft.looks_like_usage_limit(str(err))
-    client = _BatchClient([err, ["R2"], ["R3"], ["R4"]])
-    assert _prefill(bft, rows, client) == {}
-    assert len(client.chunks) == 1
-
-
-def test_prefill_respects_the_cost_cap(bft, monkeypatch) -> None:
-    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 1)
+def test_a_gap_in_the_answer_stays_a_gap(bft, monkeypatch) -> None:
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 3)
     rows = [_Row(x) for x in "abc"]
-    client = _BatchClient([["R1"], ["R2"], ["R3"]])
-    with pytest.raises(BudgetExceeded):
-        _prefill(bft, rows, client, cap=0.015)
+    _, out = _judge(bft, rows, _BatchClient([["R1", None, "R3"]]))
+    assert out == {0: "R1", 2: "R3"}      # index 1 falls to the single path
+
+
+def test_a_failed_chunk_is_reported_not_raised(bft, monkeypatch) -> None:
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
+    rc, out = _judge(bft, [_Row("a"), _Row("b")],
+                     _BatchClient([RuntimeError("overloaded")]))
+    assert rc == "fail" and out == {}
+
+
+def test_a_recognised_limit_is_reported_as_such(bft, monkeypatch) -> None:
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
+    err = RuntimeError("Your credit balance is too low to access the API")
+    assert bft.looks_like_usage_limit(str(err))
+    rc, _ = _judge(bft, [_Row("a")], _BatchClient([err]))
+    assert rc == "limit"
+
+
+def test_a_chunk_past_the_end_does_nothing(bft, monkeypatch) -> None:
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 5)
+    client = _BatchClient([])
+    rc, out = _judge(bft, [_Row("a")], client, start=10)
+    assert rc == "" and out == {} and client.chunks == []
+
+
+def test_only_answered_rows_are_charged(bft, monkeypatch) -> None:
+    """An unanswered row pays again for its own single call; charging it here
+    too would overstate what the sheet reports per story."""
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
+    rows = [_Row("a"), _Row("b")]
+    _judge(bft, rows, _BatchClient([["R1", None]]))
+    assert rows[0].llm_cost_usd == pytest.approx(0.01)
+    assert rows[1].llm_cost_usd is None
 
 
 def test_a_budget_trip_keeps_the_verdicts_already_paid_for(bft, monkeypatch) -> None:
     """The money is spent either way. Losing the verdicts too would mean paying
     for the same judgement twice — the caller owns the dict for this reason."""
     monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 1)
+    out: dict = {}
+    budget = BudgetTracker(cap_usd=0.015)
     rows = [_Row(x) for x in "abc"]
-    client = _BatchClient([["R1"], ["R2"], ["R3"]])
-    out = {}
+    bft._judge_chunk(rows, 0, client=_BatchClient([["R1"]]), sections=[],
+                     country="Russia", budget=budget, out=out)
     with pytest.raises(BudgetExceeded):
-        bft._prefill_editorial_reviews(
-            rows, client=client, sections=[], country="Russia",
-            budget=BudgetTracker(cap_usd=0.015), out=out)
-    assert out == {0: "R1", 1: "R2"}    # survived the raise
+        bft._judge_chunk(rows, 1, client=_BatchClient([["R2"]]), sections=[],
+                         country="Russia", budget=budget, out=out)
+    assert out == {0: "R1", 1: "R2"}      # both survived the raise
 
 
-def test_prefill_charges_only_the_rows_it_answered(bft, monkeypatch) -> None:
-    """An unanswered row pays again for its own single call; charging it here
-    too would overstate what the sheet reports per story."""
-    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
-    rows = [_Row("a"), _Row("b")]
-    _prefill(bft, rows, _BatchClient([["R1", None]]))
-    assert rows[0].llm_cost_usd == pytest.approx(0.01)
-    assert rows[1].llm_cost_usd is None
+# ------------------------------------------------------- when to judge, and when to stop
+
+def test_chunks_are_judged_once_each_in_order(bft, monkeypatch) -> None:
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 10)
+    d = bft._BatchDriver(True)
+    fired = []
+    for i in range(1, 46):               # the loop's own 1-based counter
+        if d.due(i - 1):
+            fired.append(d.next_at)
+            d.record("")
+    assert fired == [0, 10, 20, 30, 40]  # aligned, no repeats, no gaps
 
 
-def test_prefill_skips_clients_without_the_batch_call(bft, monkeypatch) -> None:
-    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 5)
-    stub = types.SimpleNamespace()      # legacy/stub client
-    assert _prefill(bft, [_Row("a")], stub) == {}
+def test_a_failed_chunk_still_advances_the_boundary(bft, monkeypatch) -> None:
+    """The bug this class exists for: leaving the boundary put made the next
+    iteration judge the very same ten again — and pay for them again."""
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 10)
+    d = bft._BatchDriver(True)
+    assert d.due(0)
+    d.record("fail")
+    assert d.next_at == 10
+    assert not d.due(1)                  # row 1 falls to the single path
 
 
-# --------------------------------------------------- the configuration knob
+def test_two_failures_in_a_row_stop_batching(bft, monkeypatch) -> None:
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 10)
+    d = bft._BatchDriver(True)
+    assert d.record("fail") == ""
+    msg = d.record("fail")
+    assert "поштучно" in msg and not d.on
+    assert not d.due(999)
 
-def test_batch_size_is_parsed_defensively(bft, monkeypatch) -> None:
-    """This is the documented off switch. An empty or malformed value must not
-    kill the run at import time, before argparse, with a bare traceback."""
-    import importlib
-    for raw, want in (("", 10), ("ten", 10), ("1", 1), ("0", 1),
-                      ("-5", 1), ("10", 10), ("999", 25)):
-        monkeypatch.setenv("EDITORIAL_BATCH_SIZE", raw)
-        mod = importlib.reload(bft)
-        assert mod.EDITORIAL_BATCH_SIZE == want, f"{raw!r} → {mod.EDITORIAL_BATCH_SIZE}"
-    monkeypatch.delenv("EDITORIAL_BATCH_SIZE", raising=False)
-    importlib.reload(bft)
+
+def test_a_success_between_failures_resets_the_count(bft, monkeypatch) -> None:
+    """Alternating failures are a flaky API, not a dead one — batching should
+    survive them."""
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 10)
+    d = bft._BatchDriver(True)
+    for outcome in ("fail", "", "fail", "", "fail"):
+        d.record(outcome)
+    assert d.on
+
+
+def test_a_recognised_limit_stops_batching_at_once(bft, monkeypatch) -> None:
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 10)
+    d = bft._BatchDriver(True)
+    msg = d.record("limit")
+    assert "лимит" in msg and not d.on
+
+
+def test_a_disabled_driver_never_fires(bft) -> None:
+    d = bft._BatchDriver(False)
+    assert not any(d.due(i) for i in range(100))

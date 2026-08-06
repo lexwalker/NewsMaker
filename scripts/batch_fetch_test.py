@@ -1668,81 +1668,107 @@ def _checkpoint_due(done: int, checkpointed: int) -> bool:
     return bool(LLM_CHECKPOINT_EVERY) and done - checkpointed >= LLM_CHECKPOINT_EVERY
 
 
-def _prefill_editorial_reviews(
+class _BatchDriver:
+    """When to judge the next chunk, and when to stop batching altogether.
+
+    A five-line state machine that was inline until it grew a bug: on a failed
+    chunk the boundary was not advanced, so the next iteration re-judged the
+    same ten articles and paid for them twice. Now the boundary moves on EVERY
+    attempt — a chunk that failed has already handed its rows to the single
+    path — and the rule lives somewhere a test can reach it.
+    """
+
+    def __init__(self, enabled: bool) -> None:
+        self.on = enabled
+        self.next_at = 0        # index of the next chunk's first candidate
+        self._failures = 0      # consecutive, reset by any success
+
+    def due(self, done: int) -> bool:
+        """Has the loop reached the head of the next unjudged chunk?"""
+        return self.on and done >= self.next_at
+
+    def record(self, outcome: str) -> str:
+        """Take the chunk's outcome; return a message to print, or ""."""
+        self.next_at += EDITORIAL_BATCH_SIZE
+        if outcome == "limit":
+            # No second opinion needed: every call is retried three times inside
+            # the client, so one more doomed chunk is six more round-trips on a
+            # key that is already refusing.
+            self.on = False
+            return "это исчерпанный лимит — пакетный разбор остановлен"
+        if outcome == "fail":
+            self._failures += 1
+            if self._failures >= 2:
+                # A dead batch may mean a dead API. Hand the failure to the
+                # per-article path, where the circuit breaker lives, instead of
+                # burning every remaining chunk on it.
+                self.on = False
+                return "две пачки подряд не удались — дальше только поштучно"
+            return ""
+        self._failures = 0
+        return ""
+
+
+def _judge_chunk(
     candidates: list[ArticleRow],
+    start: int,
     *,
     client,  # noqa: ANN001 — LLMClient, or any object exposing the batch call
     sections: list,
     country: str,
     budget,  # noqa: ANN001 — BudgetTracker
     out: dict[int, object],
-) -> None:
-    """Judge the candidates in chunks, filling ``out`` with {index: review}.
+) -> str:
+    """Judge ``candidates[start : start+EDITORIAL_BATCH_SIZE]`` in ONE call,
+    filling ``out`` with {index in candidates: review}.
 
-    An index is ABSENT whenever the batch did not give a usable answer for it,
-    and the caller must then judge that article singly. Absence is the only
-    failure mode this function has: a chunk that raises is logged and skipped,
-    not retried and not fatal.
+    Returns "" when the call succeeded, "limit" for a recognised usage limit,
+    "fail" for anything else. An index is ABSENT from ``out`` whenever the batch
+    gave no usable answer for it, and the caller must then judge that article
+    singly — absence is the only way this can fail a single article.
 
-    ``out`` is owned by the CALLER and filled in place, so that a BudgetExceeded
-    raised half-way through does not take the verdicts already paid for down
-    with the stack frame. Losing them would be the worst of both worlds: the
-    money is spent and no article is judged.
+    Called LAZILY, when the loop reaches the chunk, not for the whole list up
+    front. That ordering is the difference between the checkpoint protecting 8%
+    of a run's spend and protecting all of it: judged up front, every verdict
+    would sit in memory unfrozen while the expensive part of the run happened;
+    judged as the loop arrives, each chunk's verdicts are applied to their rows
+    within ten iterations and frozen at the next checkpoint. Measured on the
+    aug-05 full run, the editorial calls are 92% of the bill and 25 of the 29
+    minutes — that is what was left unprotected.
 
-    BudgetExceeded is deliberately not caught HERE — the cap must stop the pass
-    the same way it stops the per-article loop; the caller decides what to keep.
+    ``out`` is owned by the CALLER, so a BudgetExceeded raised here does not take
+    the verdicts already paid for down with the stack frame; it propagates for
+    the same reason the per-article loop lets it propagate.
     """
-    if not hasattr(client, "editorial_review_batch"):
-        return              # legacy/stub clients keep the one-per-article path
-    n_chunks = (len(candidates) + EDITORIAL_BATCH_SIZE - 1) // EDITORIAL_BATCH_SIZE
-    print(f"  пакетный разбор: {len(candidates)} статей → {n_chunks} вызовов "
-          f"(по {EDITORIAL_BATCH_SIZE})")
-    failed_chunks = 0
-    for start in range(0, len(candidates), EDITORIAL_BATCH_SIZE):
-        chunk = candidates[start:start + EDITORIAL_BATCH_SIZE]
-        items = [(r.title, r.body_excerpt or r.title) for r in chunk]
-        try:
-            reviews, u = client.editorial_review_batch(
-                items=items, sections=sections, portal_country=country)
-        except BudgetExceeded:
-            raise
-        except Exception as e:  # noqa: BLE001
-            failed_chunks += 1
-            print(f"    пачка {start // EDITORIAL_BATCH_SIZE + 1}/{n_chunks} "
-                  f"не удалась ({type(e).__name__}: {str(e)[:90]}) — "
-                  f"{len(chunk)} статей пойдут поштучно", file=sys.stderr)
-            # A dead batch may mean a dead API. Stop batching and let the
-            # per-article loop meet the failure, where the circuit breaker
-            # lives — otherwise a usage limit would burn every chunk in turn.
-            # A recognised usage limit needs no second opinion: every call is
-            # retried three times inside the client, so one more doomed chunk
-            # is six more round-trips on a key that is already refusing.
-            if looks_like_usage_limit(str(e)):
-                print("    это исчерпанный лимит — пакетный разбор остановлен",
-                      file=sys.stderr)
-                break
-            if failed_chunks >= 2:
-                print("    две пачки подряд не удались — дальше только поштучно",
-                      file=sys.stderr)
-                break
-            continue
-        failed_chunks = 0
-        # Cost is charged to the rows the call actually covered; a row left
-        # unanswered here pays again for its own single call, and pretending
-        # it paid twice would overstate the per-row cost in the sheet.
-        # It is a flat average within the chunk — the sheet's per-row cost stops
-        # resolving a long article from a short one, though the run total stays
-        # exact because the budget records the call, not the shares.
-        answered = [i for i, rev in enumerate(reviews) if rev is not None]
-        share = (u.cost_usd / len(answered)) if answered else 0.0
-        for i in answered:
-            row = chunk[i]
-            row.llm_cost_usd = round((row.llm_cost_usd or 0) + share, 5)
-            out[start + i] = reviews[i]
-        budget.record(u)     # may raise: `out` is the caller's, so it survives
-    got = len(out)
-    print(f"  пакетный разбор: готово {got}/{len(candidates)}"
-          + (f", поштучно добьём {len(candidates) - got}" if got < len(candidates) else ""))
+    chunk = candidates[start:start + EDITORIAL_BATCH_SIZE]
+    if not chunk:
+        return ""
+    items = [(r.title, r.body_excerpt or r.title) for r in chunk]
+    try:
+        reviews, u = client.editorial_review_batch(
+            items=items, sections=sections, portal_country=country)
+    except BudgetExceeded:
+        raise
+    except Exception as e:  # noqa: BLE001
+        _limit = looks_like_usage_limit(str(e))
+        print(f"    пачка со строки {start + 1} не удалась "
+              f"({type(e).__name__}: {str(e)[:90]}) — "
+              f"{len(chunk)} статей пойдут поштучно", file=sys.stderr)
+        return "limit" if _limit else "fail"
+    # Cost is charged to the rows the call actually covered; a row left
+    # unanswered here pays again for its own single call, and pretending it paid
+    # twice would overstate the per-row cost in the sheet. It is a flat average
+    # within the chunk — the sheet's per-row cost stops resolving a long article
+    # from a short one, though the run total stays exact because the budget
+    # records the call, not the shares.
+    answered = [i for i, rev in enumerate(reviews) if rev is not None]
+    share = (u.cost_usd / len(answered)) if answered else 0.0
+    for i in answered:
+        row = chunk[i]
+        row.llm_cost_usd = round((row.llm_cost_usd or 0) + share, 5)
+        out[start + i] = reviews[i]
+    budget.record(u)     # may raise: `out` is the caller's, so it survives
+    return ""
 
 
 def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> dict:
@@ -1865,29 +1891,28 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     # That is the whole safety story: the batch is an accelerator in front of
     # the existing path, never a replacement for it, so a bad batch costs money
     # and not news.
+    # Batched editorial review, judged LAZILY: when the loop reaches the start
+    # of a chunk it judges those ten articles in one call, and the next ten
+    # iterations consume the answers. Whatever a chunk fails to produce — a dead
+    # call, a skipped article, an unusable verdict — simply stays missing, and
+    # the loop judges it one at a time exactly as before. The batch is an
+    # accelerator in front of the existing path, never a replacement for it, so
+    # a bad batch costs money and not news.
+    #
+    # Lazy rather than up-front on purpose. Judging everything first left every
+    # verdict in memory, unfrozen, through the most expensive 25 minutes of the
+    # run: the checkpoint could only protect the 8% of the spend that happens
+    # after it. Now a chunk's verdicts reach their rows within ten iterations
+    # and are frozen at the next checkpoint.
     prefilled: dict[int, object] = {}
     budget_blown = ""
-    if not use_legacy and EDITORIAL_BATCH_SIZE > 1:
-        try:
-            _prefill_editorial_reviews(
-                candidates,
-                client=editorial_client,
-                sections=sections,
-                country=country,
-                budget=budget,
-                out=prefilled,
-            )
-        except BudgetExceeded as e:
-            # The verdicts bought before the cap tripped are the caller's and
-            # survive. Applying them is worth it: a classified row is persisted
-            # to the SQLite cache and costs nothing next run, whereas throwing
-            # it away means paying for the same judgement twice.
-            budget_blown = str(e)
-            aborted = f"budget exceeded during batch prefill: {e}"
-            print(f"\n!!! Бюджет исчерпан на пакетном разборе: {e}\n"
-                  f"    {len(prefilled)} уже оплаченных вердиктов сохранены и "
-                  f"будут применены; остальные строки останутся неразобранными "
-                  f"и переразберутся в следующем прогоне.", file=sys.stderr)
+    batcher = _BatchDriver(not use_legacy and EDITORIAL_BATCH_SIZE > 1
+                           and hasattr(editorial_client, "editorial_review_batch"))
+    n_batched = 0         # verdicts that came from a batch, for the summary
+    if batcher.on:
+        _n = -(-len(candidates) // EDITORIAL_BATCH_SIZE)
+        print(f"  пакетный разбор: {len(candidates)} статей → {_n} вызовов "
+              f"(по {EDITORIAL_BATCH_SIZE}, пачка судится когда цикл до неё дошёл)")
     checkpointed = 0     # candidates already frozen into SQLite this pass
     for i, r in enumerate(candidates, start=1):
         # Freeze what has been judged so far. At the TOP of the iteration on
@@ -1917,6 +1942,37 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             # + section + region + confidence + reason. Already answered by
             # the batch pass above? Then no call at all — that is where the
             # saving comes from.
+            # Reached the head of an unjudged chunk? Judge those ten now.
+            # Boundaries are advanced by a fixed step rather than by "is this
+            # index missing", so a chunk that answered nine of ten cannot make
+            # the next call start one row early and pay for the overlap.
+            if not budget_blown and batcher.due(i - 1):
+                _before = len(prefilled)
+                try:
+                    _outcome = _judge_chunk(
+                        candidates, batcher.next_at,
+                        client=editorial_client, sections=sections,
+                        country=country, budget=budget, out=prefilled)
+                except BudgetExceeded as e:
+                    # The verdicts bought before the cap tripped are the
+                    # caller's and survive. Applying them is worth it: a
+                    # classified row is persisted to the cache and costs nothing
+                    # next run, whereas throwing it away means paying twice for
+                    # the same judgement.
+                    budget_blown = str(e)
+                    aborted = f"budget exceeded during batch review: {e}"
+                    print(f"\n!!! Бюджет исчерпан на пакетном разборе: {e}\n"
+                          f"    {len(prefilled)} оплаченных вердиктов сохранены "
+                          f"и будут применены; остальные строки останутся "
+                          f"неразобранными и переразберутся в следующем "
+                          f"прогоне.", file=sys.stderr)
+                    _outcome = "fail"
+                else:
+                    n_batched += len(prefilled) - _before
+                _msg = batcher.record(_outcome)
+                if _msg:
+                    print(f"    {_msg}", file=sys.stderr)
+
             _pre = prefilled.pop(i - 1, None)
             if _pre is None and budget_blown:
                 continue    # cap already hit — no more calls, row re-runs later
@@ -2268,6 +2324,11 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             f"spent=${budget.spent_usd:.3f}  |  {r.title[:60]}"
         )
 
+    if EDITORIAL_BATCH_SIZE > 1 and not use_legacy:
+        _singly = max(0, len(candidates) - n_batched)
+        print(f"  пакетный разбор: {n_batched} вердиктов из пачек"
+              + (f", {_singly} поштучно" if _singly else "")
+              + ("" if batcher.on else "  (пакетный режим был выключен по отказам)"))
     snap = budget.snapshot()
     print(f"\nLLM pass done: {snap['calls']} calls, "
           f"${snap['spent_usd']} / ${snap['cap_usd']}  "
@@ -3687,7 +3748,14 @@ def main(argv: list[str] | None = None) -> int:
     # tab travels via this hint file; retry consumes it and advances the state
     # itself on full success. Any other alarm class (archive floors, stuck
     # rows) is NOT retryable — no hint, chain stays aborted.
-    if (alarms and RUN_WINDOW is not None and not args.hot
+    # The hot lane used to be excluded here. It was excluded because recovery
+    # advanced data/state.json unconditionally, so finishing a HOT run would
+    # have moved the FULL lane's window and made it skip everything in between
+    # — worse than no recovery. The hint now names its own state file, so the
+    # exclusion is no longer needed, and the lane that polls most often finally
+    # has a recovery path (aug-06: a hot run died on an empty balance at
+    # candidate 95 of 282 and had to be finished by hand).
+    if (alarms and RUN_WINDOW is not None
             and all(a.startswith("LLM pass aborted") for a in alarms)):
         hint_path = args.state_path.parent / "llm_abort_recovery.json"
         try:
@@ -3697,6 +3765,9 @@ def main(argv: list[str] | None = None) -> int:
                 "window_start": RUN_WINDOW.since.isoformat(timespec="seconds"),
                 "articles": len(article_rows),
                 "cost_usd": round(total_cost, 4),
+                # File NAME, not path: the recovery resolves it under data/, so
+                # a moved checkout cannot make it write somewhere unexpected.
+                "state_file": args.state_path.name,
             }, ensure_ascii=False, indent=1), encoding="utf-8")
             print(f"Recovery hint written ({hint_path.name}): retry_failed_llm "
                   f"can finish tab '{articles_tab}' without a re-fetch.")
