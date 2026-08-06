@@ -19,6 +19,7 @@ from news_agent.core.dup_arbiter import (  # noqa: E402
     archive_candidates,
     build_fresh_display,
     graykey_candidates,
+    merge_candidate_pool,
 )
 
 _GEELY_TWIN = "geely galaxy a7 sedan traveled 2 608 km on a single tank of fuel"
@@ -199,3 +200,44 @@ def test_lede_is_squeezed_and_capped() -> None:
     line = [l for l in d.splitlines() if l.startswith("[лид:")][0]
     assert "много пробелов" in line
     assert len(line) <= 410
+
+
+def test_graykey_include_decided_surfaces_demoted_pair() -> None:
+    # A stale-demoted hint pair is deterministic-shaped (same squash model,
+    # same type). The default exclusion hides it from the arbiter; with
+    # include_decided the pair is returned — for a demoted row it was never
+    # «decided», it was dropped (aug-05 audit).
+    recent = {
+        "hongqi|tiangong 08|launch": ("2026-07-08T08:00:00+00:00",
+                                      "https://x.example/a",
+                                      "hongqi tiangong 08 (launch)"),
+    }
+    kwargs = dict(event_brand="hongqi", event_model="tiangong 08",
+                  event_type="launch", recent=recent)
+    assert graykey_candidates(**kwargs) == []
+    assert graykey_candidates(**kwargs, include_decided=True) == [
+        "hongqi tiangong 08 (launch)"]
+
+
+def test_merge_pool_reserves_graykey_slots() -> None:
+    archive = [f"a{i}" for i in range(5)]
+    pool = merge_candidate_pool(archive, [], ["g1", "g2", "g3"])
+    assert len(pool) == 6
+    assert pool[:4] == ["a0", "a1", "a2", "a3"]   # archive still leads
+    assert pool[4:] == ["g1", "g2"]               # graykey keeps >=2 slots
+
+
+def test_merge_pool_backfills_from_graykey_when_head_short() -> None:
+    assert merge_candidate_pool(["a0"], [], ["g1", "g2", "g3", "g4"]) == [
+        "a0", "g1", "g2", "g3", "g4"]
+
+
+def test_merge_pool_without_graykey_matches_old_recipe() -> None:
+    archive = [f"a{i}" for i in range(5)]
+    assert merge_candidate_pool(archive, ["s0", "s1"], []) == archive + ["s0"]
+
+
+def test_merge_pool_total_cap_holds() -> None:
+    pool = merge_candidate_pool([f"a{i}" for i in range(9)], [],
+                                [f"g{i}" for i in range(9)])
+    assert len(pool) == 6

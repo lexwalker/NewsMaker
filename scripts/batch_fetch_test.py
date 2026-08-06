@@ -720,6 +720,7 @@ from news_agent.core.dup_arbiter import (  # noqa: E402
     archive_candidates as arbiter_archive_candidates,
     build_fresh_display as arbiter_fresh_display,
     graykey_candidates as arbiter_graykey_candidates,
+    merge_candidate_pool as arbiter_merge_pool,
     statistics_candidates as arbiter_stat_candidates,
 )
 from news_agent.core.dedup import EVENT_HINT_TRUSTED_DAYS  # noqa: E402
@@ -1919,20 +1920,30 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         if (DUP_ARBITER_ON and not dup_hint and not use_legacy
                 and hasattr(client, "same_published_event")):
             try:
-                _arb_cands = arbiter_archive_candidates(
-                    title=r.title, alt_title=r.llm_title_en,
-                    event_brand=r.event_brand, event_model=r.event_model,
-                    pub_titles=arb_pub_titles,
-                ) + arbiter_stat_candidates(
-                    title=r.title, alt_title=r.llm_title_en,
-                    event_type=r.event_type, event_brand=r.event_brand,
-                    pub_titles=arb_pub_titles,
-                ) + arbiter_graykey_candidates(
-                    event_brand=r.event_brand, event_model=r.event_model,
-                    event_type=r.event_type, recent=recent_ev or {},
-                    current_url=canonicalise(r.article_url),
+                _arb_cands = arbiter_merge_pool(
+                    arbiter_archive_candidates(
+                        title=r.title, alt_title=r.llm_title_en,
+                        event_brand=r.event_brand, event_model=r.event_model,
+                        pub_titles=arb_pub_titles,
+                    ),
+                    arbiter_stat_candidates(
+                        title=r.title, alt_title=r.llm_title_en,
+                        event_type=r.event_type, event_brand=r.event_brand,
+                        pub_titles=arb_pub_titles,
+                    ),
+                    arbiter_graykey_candidates(
+                        event_brand=r.event_brand, event_model=r.event_model,
+                        event_type=r.event_type, recent=recent_ev or {},
+                        current_url=canonicalise(r.article_url),
+                        # A stale-demoted row's event pair is deterministic-
+                        # shaped and was excluded as «already decided» — but
+                        # it was dropped, not decided, and it IS the evidence
+                        # this row was promised. Measured aug-06 over 2 days:
+                        # every demoted row already had a non-empty pool, so
+                        # this adds candidates to existing calls, not calls.
+                        include_decided=(_demo == "stale"),
+                    ),
                 )
-                _arb_cands = _arb_cands[:6]
                 if _arb_cands:
                     _idx, u = client.same_published_event(
                         fresh=arbiter_fresh_display(
@@ -2023,11 +2034,13 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
           f"${snap['spent_usd']} / ${snap['cap_usd']}  "
           f"({snap['input_tokens']} in / {snap['output_tokens']} out)")
     if _stale_dup_hints:
-        print(f"  dup hints older than {EVENT_HINT_TRUSTED_DAYS}d not auto-diverted: "
-              f"{_stale_dup_hints} (handed to the LLM arbiter instead)")
+        print(f"  dup hints older than {EVENT_HINT_TRUSTED_DAYS}d not "
+              f"auto-diverted: {_stale_dup_hints} (the demoted event pair "
+              f"rides along as arbiter evidence — include_decided)")
     if _weak_archive_hints:
         print(f"  archive brand+model hints not auto-diverted: "
-              f"{_weak_archive_hints} (handed to the LLM arbiter instead)")
+              f"{_weak_archive_hints} (the arbiter sees the same archive "
+              f"titles via its candidate retrieval)")
     return {"aborted": aborted, "candidates": len(candidates)}
 
 

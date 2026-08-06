@@ -196,6 +196,7 @@ def graykey_candidates(
     recent: dict[str, tuple[str, str, str]],
     current_url: str = "",
     k: int = 4,
+    include_decided: bool = False,
 ) -> list[str]:
     """Near-miss candidates from the 30-day event-key store.
 
@@ -203,6 +204,13 @@ def graykey_candidates(
     canonical_url, display)}. Excludes pairs the deterministic layers
     already decide (exact / squash-equal / token-subset with same type);
     keeps the undecidable gray zone. Returns display lines, newest first.
+
+    ``include_decided=True`` keeps the deterministic-shaped pairs IN: for a
+    row whose hint was DEMOTED (stale >7d), that pair was not «already
+    decided» — it was dropped, and it is exactly the evidence the arbiter
+    is promised. Without the flag such a row reaches the arbiter with the
+    event evidence structurally invisible (aug-05 audit): the exclusion
+    here assumed «decided ⇒ auto-diverted», which the demotions broke.
     """
     eb = canonical_event_brand(event_brand)
     em = (event_model or "").strip().lower()
@@ -229,7 +237,7 @@ def graykey_candidates(
             or (my_toks and h_toks
                 and (my_toks <= h_toks or h_toks <= my_toks) and et == ht)
         )
-        if deterministic:
+        if deterministic and not include_decided:
             continue
         # NB: «same model, different type» was tried as a third gray class
         # and removed after the jul-23 offline eval: it produced only false
@@ -241,10 +249,39 @@ def graykey_candidates(
             or (my_toks and h_toks and (my_toks & h_toks)
                 and not (my_toks <= h_toks or h_toks <= my_toks))
         )
-        if gray:
+        if gray or (deterministic and include_decided):
             out.append((seen_iso, display or key))
     out.sort(reverse=True)
     return [d for _, d in out[:k]]
+
+
+def merge_candidate_pool(
+    archive: list[str],
+    stat: list[str],
+    graykey: list[str],
+    *,
+    total: int = 6,
+    reserve_graykey: int = 2,
+) -> list[str]:
+    """Combine the three candidate sources into one ≤``total`` pool.
+
+    The old recipe — plain concatenation cut to [:total] — put graykey
+    last, and a productive archive (k=5) squeezed it to a single slot at
+    best (aug-05 audit). But graykey holds the 30-day EVENT evidence, the
+    only source that survives divergent headlines and cross-language
+    repeats — exactly the gray zone the arbiter exists for. Archive and
+    stat are mutually exclusive by construction (brand-gated vs
+    brandless), so in practice this arbitrates archive vs graykey.
+
+    Archive/stat still lead (their titles are the stronger read for the
+    LLM), but graykey keeps at least ``reserve_graykey`` slots whenever it
+    has candidates; leftover slots backfill from graykey. Pool size and
+    call count are unchanged — only the composition.
+    """
+    gray = list(graykey)
+    reserved = min(len(gray), reserve_graykey)
+    head = (list(archive) + list(stat))[: max(0, total - reserved)]
+    return (head + gray)[:total]
 
 
 def build_fresh_display(
