@@ -281,6 +281,18 @@ except ValueError:
     print("EDITORIAL_BATCH_SIZE не число — беру 10", file=sys.stderr)
     EDITORIAL_BATCH_SIZE = 10
 EDITORIAL_BATCH_SIZE = max(1, min(25, EDITORIAL_BATCH_SIZE))  # 1 = выключено
+
+# How often the editorial pass freezes what it has judged so far into SQLite.
+# The pass is the only expensive stage — ~$3 and ~25 minutes of a full run —
+# and until aug-06 it was the only stage with NO checkpoint: verdicts lived in
+# memory until the pass ended, so a power cut or a kill threw away everything
+# judged, while the FREE fetch stage had had a resume file since jun-24. A
+# graceful failure (usage limit, credit exhausted, budget cap) was always safe
+# — main persists on the way out — but a hard death was not.
+# 25 rows is roughly two batched calls: small enough that a crash costs pennies,
+# large enough that the write happens ~17 times a run instead of 418. The store
+# is local SQLite, so a flush is milliseconds and cannot fail on the network.
+LLM_CHECKPOINT_EVERY = max(0, int(os.environ.get("LLM_CHECKPOINT_EVERY", "") or 25))
 # Published-archive sanity floors (the archive is ~6000 rows; thousands of
 # URLs / dozens of recent titles are the legitimate minimum). Below these the
 # dedup gate is degraded — a state that has silently occurred 3 times.
@@ -1504,6 +1516,131 @@ def _refresh_cached_dup_hints(article_rows: list[ArticleRow]) -> None:
           f"current rules, {hinted} carry a hint")
 
 
+# Verdicts that must NOT be frozen in the cache.
+#  • fetch/extract errors — the next run must retry them;
+#  • the published-archive verdict — re-checked against the FRESH daily archive
+#    every run, never frozen;
+#  • «дубль финального URL» (jul-28) — a WITHIN-RUN artefact: the same url
+#    arriving from a second source (iz.ru root + its rubric pages, auto.ru index
+#    + mag). The first copy is the real one and may well be ACCEPTED and pushed,
+#    but both share a url_hash, so persisting the duplicate OVERWRITES the real
+#    row's verdict, event keys and LLM fields. Measured: 810 such rows in one
+#    week, e.g. the Maybach GLS story that WAS pushed and published while its
+#    cache row read «дубль». The next run's dedup then goes blind to a story we
+#    already published, the paid classification is lost, and any analytics built
+#    on the cache under-counts the feed.
+_NO_CACHE_VERDICTS = {
+    "Отклонить (ошибка загрузки)",
+    "Отклонить (не удалось извлечь)",
+    "Отклонить (уже опубликовано редактором)",
+    "Отклонить (дубль финального URL)",
+}
+
+
+def _cache_entry_for(row: ArticleRow) -> tuple | None:
+    """The SQLite cache tuple for one row, or None when it must not be frozen.
+
+    THE single source of truth for what gets persisted, shared by the mid-pass
+    checkpoint and the end-of-run write. Two copies of these rules would be a
+    slow-motion bug: the checkpoint would freeze rows the final write refuses,
+    and nobody would notice until a crash made the difference visible.
+    """
+    if row is None or not row.article_url:
+        return None
+    if row.verdict in _NO_CACHE_VERDICTS:
+        return None
+    # Don't persist accept-graded rows the LLM never classified (aborted or
+    # errored pass, --no-llm run): an unclassified row is NOT a final state.
+    # I2 froze 1000+ such rows stamped with the CURRENT cls_ver — harmless to
+    # correctness (cache_is_authoritative refuses them) but poisonous to
+    # forensics. Let the next run redo them.
+    if (row.verdict in {"Точно новость", "Возможно новость"}
+            and not row.from_cache and not row.llm_relevance):
+        return None
+    canon_u = canonicalise(row.article_url)
+    # Strip the "из кэша" marker before persisting so a row never ends up with
+    # the marker on its own saved snapshot.
+    note_out = (row.llm_note or "").replace("из кэша", "").strip(" |").strip()
+    # Persist the reason CLEAN — a hint frozen into the cached reason replays on
+    # every restore of the URL and the push diverts the row forever, immune to
+    # later rule changes (aug-05). The hint that was live THIS run is kept in
+    # its own field for forensics; restore re-derives from current stores.
+    _dup_hint_live, _reason_clean = split_dup_hint(row.llm_reason)
+    cached_row = {
+        # Classifier version that produced this classification. A later run
+        # honours the row's rule-based verdict only if this matches the live
+        # version (else it re-classifies).
+        "cls_ver": CLASSIFIER_VERSION,
+        "prompt_ver": PROMPT_VERSION,
+        "heur_ver": HEURISTICS_VERSION,
+        "verdict": row.verdict,
+        "is_article": row.is_article,
+        "article_score": row.article_score,
+        "article_reasons": row.article_reasons[:300],
+        "auto_topic": row.auto_topic,
+        "auto_hits": row.auto_hits[:200],
+        "llm_relevance": row.llm_relevance,
+        "llm_section": row.llm_section,
+        "llm_region": row.llm_region,
+        "llm_confidence": row.llm_confidence,
+        "llm_title_en": row.llm_title_en[:300],
+        "llm_title_ru": row.llm_title_ru[:300],
+        "llm_note": note_out,
+        "llm_reason": (_reason_clean or "")[:300],
+        "dup_hint": (_dup_hint_live or "")[:300],
+        "primary_url": row.primary_url,
+        "primary_domain": row.primary_domain,
+        "primary_confidence": row.primary_confidence,
+        "primary_method": row.primary_method,
+        # Plan P3-D: persist brand+model so a later run can emit a
+        # "we wrote about this model recently" advisory hint.
+        "launch_brand_model": row.launch_brand_model,
+        # Hybrid dedup Stage 1: persist the semantic event-key so a later run
+        # / portal check can collapse the same story without re-calling the LLM.
+        "event_brand": row.event_brand,
+        "event_model": row.event_model,
+        "event_type": row.event_type,
+    }
+    return (
+        url_hash(canon_u),
+        canon_u,
+        row.title[:500],
+        row.published_at or None,
+        domain_of(canon_u),
+        DEDUP_PORTAL,
+        json.dumps(cached_row, ensure_ascii=False),
+        # The LEDE. The store has taken an 8th element for this since the column
+        # was added, and the caller passed seven for a long time — so lede_text
+        # is empty in the older rows, and EVERY dedup layer we have compares
+        # headlines because nothing else was ever kept. That is why «новая
+        # модель с тремя моторами» and «новая модель объявила цену» read as two
+        # stories when the first article's body already carried the price: the
+        # body was thrown away at write time. Cheap to store, and it is the only
+        # thing that lets a later run judge content rather than wording.
+        (row.body_excerpt or "")[:600] or None,
+    )
+
+
+def _persist_rows(rows: list[ArticleRow]) -> int:
+    """Freeze whatever of ``rows`` is fit to freeze. Returns how many."""
+    if DEDUP_STORE is None:
+        return 0
+    entries = [e for e in (_cache_entry_for(r) for r in rows) if e is not None]
+    if entries:
+        DEDUP_STORE.mark_many_with_cache(entries)
+    return len(entries)
+
+
+def _checkpoint_due(done: int, checkpointed: int) -> bool:
+    """Do the rows finished since the last freeze justify another one?
+
+    Pulled out so the cadence is testable without driving a whole LLM pass:
+    the property that matters is that the frozen slices are contiguous and
+    never overlap, because an overlap would rewrite rows and a gap would
+    silently leave paid verdicts unprotected."""
+    return bool(LLM_CHECKPOINT_EVERY) and done - checkpointed >= LLM_CHECKPOINT_EVERY
+
+
 def _prefill_editorial_reviews(
     candidates: list[ArticleRow],
     *,
@@ -1724,7 +1861,25 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                   f"    {len(prefilled)} уже оплаченных вердиктов сохранены и "
                   f"будут применены; остальные строки останутся неразобранными "
                   f"и переразберутся в следующем прогоне.", file=sys.stderr)
+    checkpointed = 0     # candidates already frozen into SQLite this pass
     for i, r in enumerate(candidates, start=1):
+        # Freeze what has been judged so far. At the TOP of the iteration on
+        # purpose: rejected rows leave the body early via `continue`, and they
+        # are worth freezing too — a rejection is a paid verdict like any other.
+        # Bounded loss on a hard death: at most LLM_CHECKPOINT_EVERY rows.
+        if _checkpoint_due(i - 1, checkpointed):
+            try:
+                _n = _persist_rows(candidates[checkpointed:i - 1])
+                checkpointed = i - 1
+                print(f"  контрольная точка: {_n} строк в кэше "
+                      f"({checkpointed}/{len(candidates)} разобрано)")
+            except Exception as _e:  # noqa: BLE001
+                # A checkpoint is insurance, never a reason to lose the pass:
+                # main writes everything again on the way out.
+                print(f"  контрольная точка не удалась ({type(_e).__name__}) — "
+                      f"продолжаю без неё", file=sys.stderr)
+                checkpointed = i - 1
+
         # ============================================================
         # Stage 1+2: editorial review (NEW path — consolidated call)
         # OR legacy is_automotive + classify_section (old path)
@@ -3376,111 +3531,9 @@ def main(argv: list[str] | None = None) -> int:
     # first means a transient blip on the Sheets write no longer throws away
     # the whole classification: a re-run restores it from cache for ~$0.
     if DEDUP_STORE is not None:
-        import json as _json
-        entries = []
-        for row in article_rows:
-            if not row.article_url:
-                continue
-            # Don't persist rows that ended in a fetch/extract error — we
-            # want the next run to retry them. Also don't persist the
-            # published-archive verdict — it must be re-checked against the
-            # FRESH daily archive each run, not frozen in the cache.
-            if row.verdict in {
-                "Отклонить (ошибка загрузки)",
-                "Отклонить (не удалось извлечь)",
-                "Отклонить (уже опубликовано редактором)",
-                # jul-28: "дубль финального URL" is a WITHIN-RUN artefact —
-                # the SAME url arriving from a second source (iz.ru root +
-                # its rubric pages, auto.ru index + mag). The first copy is
-                # the real one and may well be ACCEPTED and pushed; but both
-                # copies share a url_hash, so persisting the duplicate
-                # OVERWRITES the real row's verdict, event keys and LLM
-                # fields. Measured: 810 such rows in one week, e.g. the
-                # Maybach GLS story that WAS pushed and published while its
-                # cache row read "дубль". Consequences: the next run's dedup
-                # is blind to a story we already published (dup risk), the
-                # paid classification is lost (re-classify cost), and any
-                # analytics built on the cache under-counts the feed.
-                "Отклонить (дубль финального URL)",
-            }:
-                continue
-            # Don't persist accept-graded rows the LLM never classified
-            # (aborted/errored pass, --no-llm run): an unclassified row is NOT
-            # a final state. I2 froze 1000+ such rows stamped with the CURRENT
-            # cls_ver — harmless to correctness (cache_is_authoritative refuses
-            # them) but poisonous to forensics. Let the next run redo them.
-            if (row.verdict in {"Точно новость", "Возможно новость"}
-                    and not row.from_cache and not row.llm_relevance):
-                continue
-            canon_u = canonicalise(row.article_url)
-            uh = url_hash(canon_u)
-            # Strip the "из кэша" marker before persisting so a row never
-            # ends up with the marker on its own saved snapshot.
-            note_out = (row.llm_note or "").replace("из кэша", "").strip(" |").strip()
-            # Persist the reason CLEAN — a hint frozen into the cached
-            # reason replays on every restore of the URL and the push
-            # diverts the row forever, immune to later rule changes
-            # (aug-05). The hint that was live THIS run is kept in its own
-            # field for forensics; restore re-derives from current stores.
-            _dup_hint_live, _reason_clean = split_dup_hint(row.llm_reason)
-            cached_row = {
-                # Classifier version that produced this classification.
-                # A later run honours the row's rule-based verdict only if
-                # this matches the live version (else it re-classifies).
-                "cls_ver": CLASSIFIER_VERSION,
-                "prompt_ver": PROMPT_VERSION,
-                "heur_ver": HEURISTICS_VERSION,
-                "verdict": row.verdict,
-                "is_article": row.is_article,
-                "article_score": row.article_score,
-                "article_reasons": row.article_reasons[:300],
-                "auto_topic": row.auto_topic,
-                "auto_hits": row.auto_hits[:200],
-                "llm_relevance": row.llm_relevance,
-                "llm_section": row.llm_section,
-                "llm_region": row.llm_region,
-                "llm_confidence": row.llm_confidence,
-                "llm_title_en": row.llm_title_en[:300],
-                "llm_title_ru": row.llm_title_ru[:300],
-                "llm_note": note_out,
-                "llm_reason": (_reason_clean or "")[:300],
-                "dup_hint": (_dup_hint_live or "")[:300],
-                "primary_url": row.primary_url,
-                "primary_domain": row.primary_domain,
-                "primary_confidence": row.primary_confidence,
-                "primary_method": row.primary_method,
-                # Plan P3-D: persist brand+model so a later run can emit a
-                # "we wrote about this model recently" advisory hint.
-                "launch_brand_model": row.launch_brand_model,
-                # Hybrid dedup Stage 1: persist the semantic event-key
-                # so a later run / portal check can collapse the same
-                # story without re-calling the LLM.
-                "event_brand": row.event_brand,
-                "event_model": row.event_model,
-                "event_type": row.event_type,
-            }
-            entries.append((
-                uh,
-                canon_u,
-                row.title[:500],
-                row.published_at or None,
-                domain_of(canon_u),
-                DEDUP_PORTAL,
-                _json.dumps(cached_row, ensure_ascii=False),
-                # The LEDE. The store has taken an 8th element for this since
-                # the column was added, and the caller has always passed seven —
-                # so `lede_text` is empty in all 51150 rows, and EVERY dedup
-                # layer we have compares headlines because nothing else was
-                # ever kept. That is why «новая модель с тремя моторами» and
-                # «новая модель объявила цену» read as two stories when the
-                # first article's body already carried the price: the body was
-                # thrown away at write time. Cheap to store, and it is the only
-                # thing that lets a later run judge content rather than wording.
-                (row.body_excerpt or "")[:600] or None,
-            ))
-        DEDUP_STORE.mark_many_with_cache(entries)
+        stored = _persist_rows(article_rows)
         print(
-            f"SQLite cache: +{len(entries)} rows stored with full classification "
+            f"SQLite cache: {stored} rows stored with full classification "
             f"(next run will restore these without LLM)."
         )
         # The declaration has now done its job: the rows it protected are
