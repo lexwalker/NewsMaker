@@ -1580,6 +1580,33 @@ EDITORIAL_REVIEW_SCHEMA = {
         "region": {"type": "string", "enum": ["Local", "Global"]},
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "reason": {"type": "string"},
+        # Attribution + structured doubt (aug-06). Optional on purpose:
+        # cached/legacy verdicts simply lack them. Schema-only change —
+        # EDITORIAL_REVIEW_SYSTEM is untouched, classifier_version stays,
+        # no cached verdict is re-judged. These two fields exist so that
+        # editor labels can be aggregated PER RULE (a scoreboard instead
+        # of blind constitution edits) and so «спорно» is a flag, not a
+        # substring.
+        "rule": {
+            "type": "string",
+            "description": (
+                "Which part of the editorial guide DECIDED this verdict: "
+                "step1_topic — тематический гейт (не наша тема/чёрный "
+                "список тем); step2_substance — форма и содержание (обзор, "
+                "гайд, мнение, прогноз, листикл…); step2b_rescue — спас-"
+                "лист; step3_section — принято, решался только раздел; "
+                "doubt — правило сомнения (публикуем со «спорно»); other."
+            ),
+            "enum": ["step1_topic", "step2_substance", "step2b_rescue",
+                     "step3_section", "doubt", "other"],
+        },
+        "disputed": {
+            "type": "boolean",
+            "description": (
+                "true, если сработало правило сомнения — вердикт спорный "
+                "и сомнение названо в reason («спорно: …»)."
+            ),
+        },
         # Hybrid dedup Stage 1 — semantic key, emitted every call.
         "event_signature": {
             "type": "object",

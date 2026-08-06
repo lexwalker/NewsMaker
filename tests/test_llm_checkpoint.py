@@ -54,6 +54,9 @@ class _Row:
         self.llm_title_ru = "Заголовок"
         self.llm_note = kw.get("note", "")
         self.llm_reason = kw.get("reason", "обычное обоснование")
+        # aug-06 attribution fields — mirror ArticleRow's defaults.
+        self.llm_rule = kw.get("rule", "")
+        self.llm_disputed = kw.get("disputed", False)
         self.primary_url = ""
         self.primary_domain = ""
         self.primary_confidence = ""

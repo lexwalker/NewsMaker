@@ -55,6 +55,61 @@ DECISIONS = DATA / "editor_decisions.json"
 RECALL_MISSES = DATA / "recall_misses.jsonl"
 CONFIRMED_DUPS = DATA / "confirmed_dups.jsonl"
 LABELED = DATA / "labeled_rejects.jsonl"
+SQLITE = Path(os.environ.get("SQLITE_PATH", str(DATA / "news_agent.sqlite")))
+SCOREBOARD = DATA / "rule_scoreboard.jsonl"
+
+
+def _rule_scoreboard(routed: list[tuple[str, dict]]) -> None:
+    """Per-RULE precision from the editor's answers (aug-06).
+
+    Verdicts carry `rule` (which constitution step decided) since aug-06 —
+    joined here by url_hash from the SQLite cache blob. «нет» confirms the
+    step, «да» is a false reject charged to it. Dup-typed rows are the
+    dedup layer's business, not the constitution's, and are excluded.
+    Legacy verdicts without a rule show as «—» so the covered share is
+    visible. Never fatal — the scoreboard is telemetry, not the ritual.
+    """
+    content = [(d, row) for d, row in routed
+               if d != "confirmed_dup"
+               and not row["type"].startswith(review_tab.TYPE_DUP)]
+    if not content:
+        return
+    try:
+        import sqlite3
+        con = sqlite3.connect(str(SQLITE))
+        hashes = [row["url_hash"] for _, row in content]
+        rules: dict[str, str] = {}
+        for i in range(0, len(hashes), 500):
+            chunk = hashes[i:i + 500]
+            q = ("SELECT url_hash, cached_row_json FROM seen_articles "
+                 f"WHERE url_hash IN ({','.join('?' * len(chunk))})")
+            for uh, blob in con.execute(q, chunk):
+                try:
+                    rules[uh] = (json.loads(blob).get("rule") or "—").strip() or "—"
+                except Exception:
+                    rules[uh] = "—"
+        board: dict[str, list[int]] = {}
+        for d, row in content:
+            r = rules.get(row["url_hash"], "—")
+            ok_bad = board.setdefault(r, [0, 0])
+            if d == CONFIRMED_NEGATIVE:
+                ok_bad[0] += 1
+            elif d == FALSE_REJECT:
+                ok_bad[1] += 1
+        if not board:
+            return
+        print("\n  СКОРБОРД ПРАВИЛ (контентные ответы этой порции):")
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with SCOREBOARD.open("a", encoding="utf-8") as f:
+            for r, (ok, bad) in sorted(board.items(), key=lambda kv: -sum(kv[1])):
+                tot = ok + bad
+                fr = f"{bad / tot:.0%}" if tot else "–"
+                print(f"    {r:18} подтверждено {ok:3}, зря {bad:3}  (ложных {fr})")
+                f.write(json.dumps({"ts": ts, "rule": r, "confirmed": ok,
+                                    "false_rejects": bad},
+                                   ensure_ascii=False) + "\n")
+    except Exception as e:  # noqa: BLE001 — telemetry must not break ingest
+        print(f"  (скорборд правил пропущен: {type(e).__name__}: {e})")
 
 
 def _norm(t: str) -> str:
@@ -139,6 +194,8 @@ def main() -> int:
     if not routed:
         print("  nothing new to ingest (editor hasn't labelled, or all done).")
         return 0
+
+    _rule_scoreboard(routed)
 
     # examples
     for d, row in routed[:6]:

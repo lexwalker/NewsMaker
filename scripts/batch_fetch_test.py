@@ -582,6 +582,11 @@ class ArticleRow:
     # LLM editorial review: short reason for accept/reject. Visible to
     # editor in dedicated sheet column so they understand what the bot saw.
     llm_reason: str = ""
+    # Attribution (aug-06): which constitution step decided (enum in the
+    # review schema) + the structured doubt flag. Feed the per-rule
+    # scoreboard; "" / False on legacy cached verdicts.
+    llm_rule: str = ""
+    llm_disputed: bool = False
     # Hybrid dedup Stage 1: semantic event-signature from the LLM
     # (normalised brand/model/event_type). "" when absent.
     event_brand: str = ""
@@ -1155,6 +1160,8 @@ def _score_recall(article, r: SourceResult, row: ArticleRow) -> bool:  # type: i
             # reason only; _refresh_cached_dup_hints re-derives the hint
             # under CURRENT rules before the sheet write.
             row.llm_reason = split_dup_hint(cached.get("llm_reason", ""))[1]
+            row.llm_rule = cached.get("rule", "")
+            row.llm_disputed = bool(cached.get("disputed", False))
             row.event_brand = cached.get("event_brand", "")
             row.event_model = cached.get("event_model", "")
             row.event_type = cached.get("event_type", "")
@@ -1595,6 +1602,8 @@ def _cache_entry_for(row: ArticleRow, *, provisional: bool = False) -> tuple | N
         "llm_note": note_out,
         "llm_reason": (_reason_clean or "")[:300],
         "dup_hint": (_dup_hint_live or "")[:300],
+        "rule": row.llm_rule,
+        "disputed": row.llm_disputed,
         "primary_url": row.primary_url,
         "primary_domain": row.primary_domain,
         "primary_confidence": row.primary_confidence,
@@ -1974,6 +1983,13 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             # this populates the new "Обоснование LLM" sheet column so the
             # editor can see exactly why the bot accepted or rejected.
             r.llm_reason = review.reason[:300] if review.reason else ""
+
+            # Attribution + structured doubt: recorded for EVERY verdict
+            # (accepted or rejected) — the per-rule scoreboard in
+            # ingest_rejected_labels joins editor labels to these via the
+            # cache blob.
+            r.llm_rule = getattr(review, "rule", "") or ""
+            r.llm_disputed = bool(getattr(review, "disputed", False))
 
             # Consistency guard (jun-18): the model occasionally returns
             # should_publish=True while its OWN reason concludes the item must be
@@ -2707,6 +2723,8 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
             # restore site in _score_recall): clean reason only, the hint
             # is re-derived under current rules by _refresh_cached_dup_hints.
             row.llm_reason = split_dup_hint(cached.get("llm_reason", ""))[1]
+            row.llm_rule = cached.get("rule", "")
+            row.llm_disputed = bool(cached.get("disputed", False))
             # Always mark every cache restoration with "из кэша" so the
             # editor can see at a glance that the row wasn't re-evaluated
             # this run. Cached rows still carry the full verdict / section

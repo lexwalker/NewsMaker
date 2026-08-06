@@ -645,6 +645,15 @@ def _row_for_cluster(c: dict, run_ts: str) -> list[str]:
         note = (f"возможно дубль: намёк у {hinted} из {c.get('size')} "
                 f"источников — проверьте")
         flag = f"{flag} | {note}" if flag else note
+    # Doubt display (aug-06): the aug-04 inversion publishes borderline
+    # stories with «спорно: …» named in the reason — but the reason column
+    # is long text nobody scans, so the whole point of the inversion was
+    # invisible. Surface it in the orange flag column. Interim text-match:
+    # the structured `disputed` flag is already persisted in SQLite; wiring
+    # it through the articles schema replaces this substring check.
+    if "спорно" in (c.get("llm_reason") or "").lower():
+        _sp = "спорно — на границе правил, решает редактор"
+        flag = f"{flag} | {_sp}" if flag else _sp
     return [
         run_ts,
         c["canonical_title"],

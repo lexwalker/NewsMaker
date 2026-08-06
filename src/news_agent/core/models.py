@@ -118,6 +118,12 @@ class EditorialReview(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     reason: str = ""
     event_signature: EventSignature | None = None
+    # Attribution (aug-06): which ladder step decided — feeds the per-rule
+    # scoreboard built from editor labels. "" on cached/legacy verdicts.
+    rule: str = ""
+    # Structured doubt: the DECISION RULE fired («спорно») — a flag the
+    # pipeline can show and count, instead of grepping reason text.
+    disputed: bool = False
 
     @field_validator("region", mode="before")
     @classmethod
