@@ -262,6 +262,13 @@ STUCK_SHARE_ABORT = 0.02   # …AND more than this share of the candidates
 # persistent outage (org-disabled, credit-exhausted, bad model id, 429 storm)
 # → abort the pass loudly instead of silently burning every remaining call.
 CONSEC_LLM_ERRORS_ABORT = 5
+# Articles judged per editorial_review call. The constitution is ~8.2k tokens
+# and is re-read on every call; at 10 per call that read is amortised and a run
+# drops from ~$3.81 to ~$2.7 (article bodies and per-article verdicts don't
+# shrink, so the saving is ~30%, not 10x). Measured on 60 recorded verdicts:
+# 90% identical, 3% of accepted stories flipped to rejected. Set to 1 to
+# disable batching and go back to one call per article.
+EDITORIAL_BATCH_SIZE = max(1, int(os.environ.get("EDITORIAL_BATCH_SIZE", "10")))
 # Published-archive sanity floors (the archive is ~6000 rows; thousands of
 # URLs / dozens of recent titles are the legitimate minimum). Below these the
 # dedup gate is degraded — a state that has silently occurred 3 times.
@@ -1484,6 +1491,69 @@ def _refresh_cached_dup_hints(article_rows: list[ArticleRow]) -> None:
           f"current rules, {hinted} carry a hint")
 
 
+def _prefill_editorial_reviews(
+    candidates: list[ArticleRow],
+    *,
+    client,  # noqa: ANN001 — LLMClient, or any object exposing the batch call
+    sections: list,
+    country: str,
+    budget,  # noqa: ANN001 — BudgetTracker
+) -> dict[int, object]:
+    """Judge the candidates in chunks; return {index in ``candidates``: review}.
+
+    An index is ABSENT whenever the batch did not give a usable answer for it,
+    and the caller must then judge that article singly. Absence is the only
+    failure mode this function has: a chunk that raises is logged and skipped,
+    not retried and not fatal.
+
+    BudgetExceeded is deliberately NOT caught — the cap must stop the pass here
+    the same way it stops the per-article loop.
+    """
+    out: dict[int, object] = {}
+    if not hasattr(client, "editorial_review_batch"):
+        return out          # legacy/stub clients keep the one-per-article path
+    n_chunks = (len(candidates) + EDITORIAL_BATCH_SIZE - 1) // EDITORIAL_BATCH_SIZE
+    print(f"  пакетный разбор: {len(candidates)} статей → {n_chunks} вызовов "
+          f"(по {EDITORIAL_BATCH_SIZE})")
+    failed_chunks = 0
+    for start in range(0, len(candidates), EDITORIAL_BATCH_SIZE):
+        chunk = candidates[start:start + EDITORIAL_BATCH_SIZE]
+        items = [(r.title, r.body_excerpt or r.title) for r in chunk]
+        try:
+            reviews, u = client.editorial_review_batch(
+                items=items, sections=sections, portal_country=country)
+        except BudgetExceeded:
+            raise
+        except Exception as e:  # noqa: BLE001
+            failed_chunks += 1
+            print(f"    пачка {start // EDITORIAL_BATCH_SIZE + 1}/{n_chunks} "
+                  f"не удалась ({type(e).__name__}: {str(e)[:90]}) — "
+                  f"{len(chunk)} статей пойдут поштучно", file=sys.stderr)
+            # A dead batch may mean a dead API. Stop batching and let the
+            # per-article loop meet the failure, where the circuit breaker
+            # lives — otherwise a usage limit would burn every chunk in turn.
+            if failed_chunks >= 2:
+                print("    две пачки подряд не удались — дальше только поштучно",
+                      file=sys.stderr)
+                break
+            continue
+        failed_chunks = 0
+        # Cost is charged to the rows the call actually covered; a row left
+        # unanswered here pays again for its own single call, and pretending
+        # it paid twice would overstate the per-row cost in the sheet.
+        answered = [i for i, rev in enumerate(reviews) if rev is not None]
+        share = (u.cost_usd / len(answered)) if answered else 0.0
+        for i in answered:
+            row = chunk[i]
+            row.llm_cost_usd = round((row.llm_cost_usd or 0) + share, 6)
+            out[start + i] = reviews[i]
+        budget.record(u)
+    got = len(out)
+    print(f"  пакетный разбор: готово {got}/{len(candidates)}"
+          + (f", поштучно добьём {len(candidates) - got}" if got < len(candidates) else ""))
+    return out
+
+
 def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> dict:
     """For every certain/possible row: run LLM editorial review + translate.
 
@@ -1596,6 +1666,23 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     _weak_archive_hints = 0  # archive brand+model tier -> handed to the arbiter
     consec_errors = 0   # circuit breaker: N in a row → persistent failure
     aborted = ""        # non-empty = why the pass stopped early
+
+    # Batched editorial review: judge the candidates in chunks BEFORE the loop,
+    # then let the loop consume the verdicts. Whatever a chunk fails to produce
+    # — a dead call, a skipped article, an unusable verdict — simply stays
+    # missing, and the loop below judges it one at a time exactly as before.
+    # That is the whole safety story: the batch is an accelerator in front of
+    # the existing path, never a replacement for it, so a bad batch costs money
+    # and not news.
+    prefilled: dict[int, object] = {}
+    if not use_legacy and EDITORIAL_BATCH_SIZE > 1:
+        prefilled = _prefill_editorial_reviews(
+            candidates,
+            client=editorial_client,
+            sections=sections,
+            country=country,
+            budget=budget,
+        )
     for i, r in enumerate(candidates, start=1):
         # ============================================================
         # Stage 1+2: editorial review (NEW path — consolidated call)
@@ -1603,16 +1690,22 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
         # ============================================================
         if not use_legacy:
             # NEW PATH: one consolidated LLM call returning publish/skip
-            # + section + region + confidence + reason.
+            # + section + region + confidence + reason. Already answered by
+            # the batch pass above? Then no call at all — that is where the
+            # saving comes from.
+            _pre = prefilled.pop(i - 1, None)
             try:
-                review, u = editorial_client.editorial_review(
-                    title=r.title,
-                    body=r.body_excerpt or r.title,
-                    sections=sections,
-                    portal_country=country,
-                )
-                budget.record(u)
-                r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+                if _pre is not None:
+                    review = _pre
+                else:
+                    review, u = editorial_client.editorial_review(
+                        title=r.title,
+                        body=r.body_excerpt or r.title,
+                        sections=sections,
+                        portal_country=country,
+                    )
+                    budget.record(u)
+                    r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
             except Exception as e:  # noqa: BLE001
                 r.llm_note = f"editorial_review error: {str(e)[:200]}"
                 consec_errors += 1

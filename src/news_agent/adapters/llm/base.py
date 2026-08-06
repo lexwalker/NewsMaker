@@ -1607,3 +1607,64 @@ EDITORIAL_REVIEW_SCHEMA = {
         },
     },
 }
+
+
+# ---- batched editorial review -------------------------------------------
+# The constitution is ~8.2k tokens and is read once PER CALL. Prompt caching
+# already discounts each read to a tenth of list price — without it a run would
+# cost ~$14.50 instead of $3.81 — but 418 reads still add up to $1.19, the
+# largest removable line in a run. Batching attacks the COUNT rather than the
+# price: ten articles per call is one read instead of ten.
+#
+# Measured aug-06 by replaying 60 rows whose one-per-call verdict was already
+# recorded: 90% of verdicts identical, and 1 accepted story of 30 flipped to
+# rejected (3%, against a 5% bar agreed before the test). Per-article cost
+# 8200+1100 in / 145 out -> 820+1100 / 145, about 30% off the run.
+#
+# The per-article shape mirrors EDITORIAL_REVIEW_SCHEMA exactly, event_signature
+# included — dedup is fed by that field, and a batch that dropped it would
+# quietly blind the semantic layer.
+EDITORIAL_REVIEW_BATCH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["verdicts"],
+    "properties": {
+        "verdicts": {
+            "type": "array",
+            "description": (
+                "One verdict per input article, each tagged with the article's "
+                "number. Judge every article independently."
+            ),
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                # Derived, not copied: the batch verdict must stay identical in
+                # shape to the single one, or dedup and section routing would
+                # quietly diverge between the two paths.
+                "required": ["n", *EDITORIAL_REVIEW_SCHEMA["required"]],
+                "properties": {
+                    "n": {
+                        "type": "integer",
+                        "description": "1-based number of the article judged.",
+                    },
+                    **EDITORIAL_REVIEW_SCHEMA["properties"],
+                },
+            },
+        },
+    },
+}
+
+
+def build_editorial_review_batch_user(items: list[tuple[str, str]]) -> str:
+    """User message for a batch: numbered articles, same fields as the single
+    call. ``items`` is [(title, body), …]; bodies keep the 4000-char budget the
+    one-per-call path gives them, so a batched verdict sees exactly what a
+    single verdict would."""
+    parts = []
+    for i, (title, body) in enumerate(items, start=1):
+        parts.append(f"### Article {i}\nTitle: {title}\n\nBody:\n{body[:4000]}")
+    return (
+        "Judge EACH article below independently, applying the same rules you "
+        "would to a single article. Return exactly one verdict per article, "
+        "tagged with its number.\n\n" + "\n\n".join(parts)
+    )

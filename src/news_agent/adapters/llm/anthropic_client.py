@@ -12,6 +12,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from news_agent.adapters.llm.base import (
     CLASSIFY_SCHEMA,
+    EDITORIAL_REVIEW_BATCH_SCHEMA,
     EDITORIAL_REVIEW_SCHEMA,
     MATCH_PUBLISHED_SCHEMA,
     MATCH_PUBLISHED_SYSTEM,
@@ -23,6 +24,7 @@ from news_agent.adapters.llm.base import (
     TRANSLATE_SYSTEM,
     build_classify_system,
     build_classify_user,
+    build_editorial_review_batch_user,
     build_editorial_review_system,
     build_editorial_review_user,
     prompt_hash,
@@ -142,6 +144,77 @@ class AnthropicLLMClient:
         if not isinstance(es, dict):
             data["event_signature"] = None
         return EditorialReview.model_validate(data), usage
+
+    @staticmethod
+    def _coerce_review(data: dict[str, Any]) -> EditorialReview:
+        """Fill the same optional gaps editorial_review tolerates."""
+        if not data.get("should_publish"):
+            data.setdefault("section", "")
+            data.setdefault("region", None)
+            data.setdefault("confidence", 0.5)
+        if not isinstance(data.get("event_signature"), dict):
+            data["event_signature"] = None
+        return EditorialReview.model_validate(data)
+
+    def editorial_review_batch(
+        self,
+        *,
+        items: list[tuple[str, str]],
+        sections: list[SectionDefinition],
+        portal_country: str,
+    ) -> tuple[list[EditorialReview | None], LLMUsage]:
+        """Judge several articles in one call, cutting the count of times the
+        8.2k-token constitution has to be read.
+
+        Returns a list POSITIONALLY ALIGNED with ``items``; an entry is None when
+        the model skipped that article or returned something that fails
+        validation. Callers must judge those singly — a silent None would drop a
+        story, and dropping it is exactly what the caller cannot notice.
+
+        The whole call raising is left to propagate: the caller already knows how
+        to fall back, and swallowing it here would hide a usage limit from the
+        circuit breaker.
+        """
+        out: list[EditorialReview | None] = [None] * len(items)
+        if not items:
+            return out, LLMUsage(
+                input_tokens=0, output_tokens=0, cost_usd=0.0,
+                latency_ms=0, provider="anthropic", model=self.model)
+        tool = _tool(
+            "record_editorial_reviews",
+            "Record one verdict per numbered article: should we publish it, "
+            "and if so in which section and region.",
+            EDITORIAL_REVIEW_BATCH_SCHEMA,
+        )
+        system = build_editorial_review_system(sections, portal_country)
+        user = build_editorial_review_batch_user(items)
+        data, usage = self._tool_call(
+            system=system, user=user, tool=tool,
+            # The single call gets 600 for one article; a batch needs room for
+            # every verdict or the tail is truncated into a parse failure.
+            max_tokens=min(8000, 400 * len(items) + 200),
+        )
+        for entry in (data.get("verdicts") or []):
+            if not isinstance(entry, dict):
+                continue
+            n = entry.get("n")
+            # A hallucinated or duplicated number must not overwrite a good
+            # verdict or land on the wrong article: accept 1..len once each.
+            if not isinstance(n, int) or not (1 <= n <= len(items)):
+                continue
+            if out[n - 1] is not None:
+                continue
+            try:
+                out[n - 1] = self._coerce_review(
+                    {k: v for k, v in entry.items() if k != "n"})
+            except ValidationError:
+                log.warning("batch review: unusable verdict for article %s", n)
+        missing = sum(1 for r in out if r is None)
+        if missing:
+            log.warning(
+                "batch review: %s of %s articles came back without a verdict",
+                missing, len(items))
+        return out, usage
 
     def translate_title(
         self, *, title: str, source_language_hint: str | None
