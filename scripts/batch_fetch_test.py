@@ -3174,15 +3174,50 @@ def _health_check(
                     f"dedup. Нужна свежая выгрузка «Опубликованные (все)»."
                 )
 
-    # 3. Fetch mass-failure signal (informational unless widespread).
+    # 3. Fetch mass-failure. Compared against THIS installation's own history,
+    #    not a constant — that is the whole lesson of aug-06. The absolute
+    #    threshold was 40%; the run lost 135 of 345 sources (39.1%), squeaked
+    #    under it, and reported status OK. Worse, it was a `warn`, so even
+    #    crossing it would not have held the window: those 135 sources had
+    #    yielded 77 auto-relevant articles the previous day — 20% of a day's
+    #    harvest — and the window advanced over them, so nothing will ever ask
+    #    for that period again. A silent 20% coverage loss is exactly the
+    #    failure class this project keeps re-learning.
+    #
+    #    The baseline makes the signal sharp: the three healthy runs of aug-05
+    #    sat at 15-18%, so 39% is 2.6x normal and obvious — while an absolute
+    #    threshold generous enough not to cry wolf can never see it.
     err_sources = sum(1 for s in results if s.error)
     zero_links = sum(
         1 for s in results if not s.error and s.articles_attempted == 0)
-    if results and err_sources > len(results) * 0.4:
-        warns.append(
-            f"{err_sources}/{len(results)} sources errored — mass fetch "
-            f"failure (network/proxy/WAF)?"
-        )
+    err_share = err_sources / len(results) if results else 0.0
+    if results:
+        base = prev_state.get("err_share")
+        # ALARM (holds the window, next run re-covers) only for a genuine mass
+        # failure: twice the usual rate AND a quarter of the source list. Both
+        # halves matter — a portal that normally errors at 20% must not alarm
+        # at 41%, and a lucky run at 5% must not alarm at 11%.
+        if (isinstance(base, (int, float)) and base > 0
+                and err_share >= 2 * base and err_share >= 0.25):
+            alarms.append(
+                f"{err_sources}/{len(results)} sources errored ({err_share:.0%}) "
+                f"— {err_share / base:.1f}x the last healthy run's {base:.0%}. "
+                f"Mass fetch failure; window NOT advanced so the next run "
+                f"re-covers this period."
+            )
+        elif err_share > 0.4:
+            # Backstop for a first run, a lost state file, or a baseline that
+            # is itself bad: no history to compare against, so fall back to the
+            # constant that has always been here.
+            alarms.append(
+                f"{err_sources}/{len(results)} sources errored ({err_share:.0%}) "
+                f"— mass fetch failure (network/proxy/WAF?), no usable baseline."
+            )
+        elif err_share >= 0.25:
+            warns.append(
+                f"{err_sources}/{len(results)} sources errored ({err_share:.0%})"
+                + (f", baseline {base:.0%}" if isinstance(base, (int, float)) else "")
+            )
 
     print("\n=== RUN HEALTH ===")
     print(f"  sources : {len(results)} fetched | {err_sources} errored | "
@@ -3708,6 +3743,12 @@ def main(argv: list[str] | None = None) -> int:
                     "archive_urls_count": len(PUBLISHED_URLS),
                     "archive_titles_count": len(PUBLISHED_TITLES),
                     "articles_tab": articles_tab,
+                    # Fetch-failure baseline. Written only on a HEALTHY run, so
+                    # a degraded night cannot raise the bar it will be judged
+                    # against tomorrow — otherwise a slow slide would keep
+                    # re-baselining itself and never alarm.
+                    "err_share": round(
+                        sum(1 for s in results if s.error) / max(1, len(results)), 4),
                 },
             )
             print(
