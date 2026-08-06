@@ -75,10 +75,23 @@ def has_reject_directive(reason: str | None) -> bool:
 
 
 # ------------------------------------------------------ persistent failures
-# An account-level usage-limit 400 is PERSISTENT: every remaining call fails
-# identically, so the pass must abort instead of silently burning the tail
-# (the I2 incident truncated ~15% of every run it hit).
-USAGE_LIMIT_MARKERS = ("usage limit", "reached your specified")
+# An account-level 400 is PERSISTENT: every remaining call fails identically,
+# so the pass must abort instead of silently burning the tail (the I2 incident
+# truncated ~15% of every run it hit).
+#
+# «credit balance is too low» was missing here until aug-06, and it is the
+# wording the API actually returns when the account runs dry — which happened
+# twice in one day. Without it the fast path never fired and the generic
+# "5 consecutive failures" rule had to do the work instead. Measured on the
+# 13:35 hot run: two batch chunks and five single calls, each retried three
+# times inside the client, so ~21 doomed round-trips before the pass gave up at
+# candidate 95 of 282. Recognising the wording stops it at the first one.
+USAGE_LIMIT_MARKERS = (
+    "usage limit",
+    "reached your specified",
+    "credit balance is too low",
+    "insufficient credit",
+)
 
 
 def looks_like_usage_limit(error_message: str) -> bool:
