@@ -336,6 +336,17 @@ class AnthropicLLMClient:
             messages=[{"role": "user", "content": user}],
         )
         latency_ms = int((time.monotonic() - t0) * 1000)
+        # Hitting the ceiling truncates the tool arguments. A single call loses
+        # one verdict and the row simply re-runs, but a batch loses the TAIL of
+        # its list — the articles are then judged singly, so nothing is lost,
+        # yet the batch was paid for and produced nothing for them. Silent is
+        # the wrong way for that to happen: without this line the only symptom
+        # is a bill that stops falling.
+        if getattr(resp, "stop_reason", None) == "max_tokens":
+            log.warning(
+                "llm.truncated", tool=tool["name"], max_tokens=max_tokens,
+                output_tokens=getattr(resp.usage, "output_tokens", 0),
+            )
         data: dict[str, Any] = {}
         for block in resp.content:
             if getattr(block, "type", None) == "tool_use" and getattr(block, "name", "") == tool["name"]:

@@ -262,13 +262,25 @@ STUCK_SHARE_ABORT = 0.02   # …AND more than this share of the candidates
 # persistent outage (org-disabled, credit-exhausted, bad model id, 429 storm)
 # → abort the pass loudly instead of silently burning every remaining call.
 CONSEC_LLM_ERRORS_ABORT = 5
-# Articles judged per editorial_review call. The constitution is ~8.2k tokens
-# and is re-read on every call; at 10 per call that read is amortised and a run
-# drops from ~$3.81 to ~$2.7 (article bodies and per-article verdicts don't
-# shrink, so the saving is ~30%, not 10x). Measured on 60 recorded verdicts:
-# 90% identical, 3% of accepted stories flipped to rejected. Set to 1 to
-# disable batching and go back to one call per article.
-EDITORIAL_BATCH_SIZE = max(1, int(os.environ.get("EDITORIAL_BATCH_SIZE", "10")))
+# Articles judged per editorial_review call. The constitution is ~8.5k tokens
+# and is re-read on every call; at 10 per call that read is amortised and the
+# aug-05 run projects from $3.301 to $2.379 — a 28% saving, not 10x, because
+# article bodies ($1.012) and per-article verdicts ($0.943) scale with articles
+# and batching cannot touch them. Measured on 60 recorded verdicts: 90%
+# identical, 1 of 30 accepted stories flipped to rejected.
+#
+# Parsed defensively: this is the documented off switch, and an empty or
+# malformed value must not kill the run at import time, before argparse, before
+# logging, with a bare traceback in a scheduled task. Clamped at 25 because
+# max_tokens is 400*N+200 capped at 8000 — past ~19 per call the per-verdict
+# budget starts shrinking below what a verdict actually needs (p95 = 191
+# output tokens), and a truncated response loses the tail of the batch.
+try:
+    EDITORIAL_BATCH_SIZE = int(os.environ.get("EDITORIAL_BATCH_SIZE", "") or 10)
+except ValueError:
+    print("EDITORIAL_BATCH_SIZE не число — беру 10", file=sys.stderr)
+    EDITORIAL_BATCH_SIZE = 10
+EDITORIAL_BATCH_SIZE = max(1, min(25, EDITORIAL_BATCH_SIZE))  # 1 = выключено
 # Published-archive sanity floors (the archive is ~6000 rows; thousands of
 # URLs / dozens of recent titles are the legitimate minimum). Below these the
 # dedup gate is degraded — a state that has silently occurred 3 times.
@@ -1499,20 +1511,25 @@ def _prefill_editorial_reviews(
     sections: list,
     country: str,
     budget,  # noqa: ANN001 — BudgetTracker
-) -> dict[int, object]:
-    """Judge the candidates in chunks; return {index in ``candidates``: review}.
+    out: dict[int, object],
+) -> None:
+    """Judge the candidates in chunks, filling ``out`` with {index: review}.
 
     An index is ABSENT whenever the batch did not give a usable answer for it,
     and the caller must then judge that article singly. Absence is the only
     failure mode this function has: a chunk that raises is logged and skipped,
     not retried and not fatal.
 
-    BudgetExceeded is deliberately NOT caught — the cap must stop the pass here
-    the same way it stops the per-article loop.
+    ``out`` is owned by the CALLER and filled in place, so that a BudgetExceeded
+    raised half-way through does not take the verdicts already paid for down
+    with the stack frame. Losing them would be the worst of both worlds: the
+    money is spent and no article is judged.
+
+    BudgetExceeded is deliberately not caught HERE — the cap must stop the pass
+    the same way it stops the per-article loop; the caller decides what to keep.
     """
-    out: dict[int, object] = {}
     if not hasattr(client, "editorial_review_batch"):
-        return out          # legacy/stub clients keep the one-per-article path
+        return              # legacy/stub clients keep the one-per-article path
     n_chunks = (len(candidates) + EDITORIAL_BATCH_SIZE - 1) // EDITORIAL_BATCH_SIZE
     print(f"  пакетный разбор: {len(candidates)} статей → {n_chunks} вызовов "
           f"(по {EDITORIAL_BATCH_SIZE})")
@@ -1533,6 +1550,13 @@ def _prefill_editorial_reviews(
             # A dead batch may mean a dead API. Stop batching and let the
             # per-article loop meet the failure, where the circuit breaker
             # lives — otherwise a usage limit would burn every chunk in turn.
+            # A recognised usage limit needs no second opinion: every call is
+            # retried three times inside the client, so one more doomed chunk
+            # is six more round-trips on a key that is already refusing.
+            if looks_like_usage_limit(str(e)):
+                print("    это исчерпанный лимит — пакетный разбор остановлен",
+                      file=sys.stderr)
+                break
             if failed_chunks >= 2:
                 print("    две пачки подряд не удались — дальше только поштучно",
                       file=sys.stderr)
@@ -1542,17 +1566,19 @@ def _prefill_editorial_reviews(
         # Cost is charged to the rows the call actually covered; a row left
         # unanswered here pays again for its own single call, and pretending
         # it paid twice would overstate the per-row cost in the sheet.
+        # It is a flat average within the chunk — the sheet's per-row cost stops
+        # resolving a long article from a short one, though the run total stays
+        # exact because the budget records the call, not the shares.
         answered = [i for i, rev in enumerate(reviews) if rev is not None]
         share = (u.cost_usd / len(answered)) if answered else 0.0
         for i in answered:
             row = chunk[i]
-            row.llm_cost_usd = round((row.llm_cost_usd or 0) + share, 6)
+            row.llm_cost_usd = round((row.llm_cost_usd or 0) + share, 5)
             out[start + i] = reviews[i]
-        budget.record(u)
+        budget.record(u)     # may raise: `out` is the caller's, so it survives
     got = len(out)
     print(f"  пакетный разбор: готово {got}/{len(candidates)}"
           + (f", поштучно добьём {len(candidates) - got}" if got < len(candidates) else ""))
-    return out
 
 
 def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -> dict:
@@ -1676,14 +1702,28 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
     # the existing path, never a replacement for it, so a bad batch costs money
     # and not news.
     prefilled: dict[int, object] = {}
+    budget_blown = ""
     if not use_legacy and EDITORIAL_BATCH_SIZE > 1:
-        prefilled = _prefill_editorial_reviews(
-            candidates,
-            client=editorial_client,
-            sections=sections,
-            country=country,
-            budget=budget,
-        )
+        try:
+            _prefill_editorial_reviews(
+                candidates,
+                client=editorial_client,
+                sections=sections,
+                country=country,
+                budget=budget,
+                out=prefilled,
+            )
+        except BudgetExceeded as e:
+            # The verdicts bought before the cap tripped are the caller's and
+            # survive. Applying them is worth it: a classified row is persisted
+            # to the SQLite cache and costs nothing next run, whereas throwing
+            # it away means paying for the same judgement twice.
+            budget_blown = str(e)
+            aborted = f"budget exceeded during batch prefill: {e}"
+            print(f"\n!!! Бюджет исчерпан на пакетном разборе: {e}\n"
+                  f"    {len(prefilled)} уже оплаченных вердиктов сохранены и "
+                  f"будут применены; остальные строки останутся неразобранными "
+                  f"и переразберутся в следующем прогоне.", file=sys.stderr)
     for i, r in enumerate(candidates, start=1):
         # ============================================================
         # Stage 1+2: editorial review (NEW path — consolidated call)
@@ -1695,6 +1735,8 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
             # the batch pass above? Then no call at all — that is where the
             # saving comes from.
             _pre = prefilled.pop(i - 1, None)
+            if _pre is None and budget_blown:
+                continue    # cap already hit — no more calls, row re-runs later
             try:
                 if _pre is not None:
                     review = _pre
@@ -1707,6 +1749,14 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                     )
                     budget.record(u)
                     r.llm_cost_usd = round((r.llm_cost_usd or 0) + u.cost_usd, 5)
+                    # Only a LIVE call proves the API is up, so only a live call
+                    # may clear the breaker. Resetting on a prefilled row would
+                    # disarm it exactly when it is needed: once the batch has
+                    # answered most rows, the few that fall back are separated
+                    # by prefilled ones, the count never reaches the threshold,
+                    # and a dead API would push a silently truncated feed —
+                    # incident I2, which this breaker exists to prevent.
+                    consec_errors = 0
             except Exception as e:  # noqa: BLE001
                 r.llm_note = f"editorial_review error: {str(e)[:200]}"
                 consec_errors += 1
@@ -1737,7 +1787,6 @@ def _run_llm_pass(article_rows: list[ArticleRow], *, use_legacy: bool = False) -
                     )
                     break
                 continue
-            consec_errors = 0  # a successful call resets the breaker
 
             r.llm_relevance = "Да" if review.should_publish else "Нет"
             # Hybrid dedup Stage 1: capture the semantic event-signature

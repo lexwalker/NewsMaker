@@ -1610,16 +1610,24 @@ EDITORIAL_REVIEW_SCHEMA = {
 
 
 # ---- batched editorial review -------------------------------------------
-# The constitution is ~8.2k tokens and is read once PER CALL. Prompt caching
-# already discounts each read to a tenth of list price — without it a run would
-# cost ~$14.50 instead of $3.81 — but 418 reads still add up to $1.19, the
-# largest removable line in a run. Batching attacks the COUNT rather than the
-# price: ten articles per call is one read instead of ten.
+# The constitution is ~8.5k tokens and is read once PER CALL. Prompt caching
+# already discounts each read to a tenth of list price — without it the aug-05
+# full run would have cost $12.83 instead of $3.30 — but 418 reads still add up
+# to $1.06, the largest removable line in a run. Batching attacks the COUNT
+# rather than the price: ten articles per call is one read instead of ten.
+#
+# Measured on logs/run_prog_20260805_233002.log (418 editorial calls, $3.3006):
+#   constitution   $1.060 read + $0.032 write
+#   article bodies $1.012      verdicts $0.943      other calls $0.254
+# At ten per call the reads drop to $0.107 and a second prefix has to be written
+# (the batch tool differs, so it caches separately), which projects the run at
+# $2.379 — a saving of $0.921, i.e. 28%, NOT the 10x the call count suggests.
+# Bodies and verdicts scale with articles and batching cannot touch them.
 #
 # Measured aug-06 by replaying 60 rows whose one-per-call verdict was already
 # recorded: 90% of verdicts identical, and 1 accepted story of 30 flipped to
-# rejected (3%, against a 5% bar agreed before the test). Per-article cost
-# 8200+1100 in / 145 out -> 820+1100 / 145, about 30% off the run.
+# rejected (3% — but that is 1/30, whose 95% upper bound is 14.9%, so the test
+# cannot actually distinguish 3% from the 5% bar it was meant to clear).
 #
 # The per-article shape mirrors EDITORIAL_REVIEW_SCHEMA exactly, event_signature
 # included — dedup is fed by that field, and a batch that dropped it would

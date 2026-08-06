@@ -188,13 +188,19 @@ class _BatchClient:
         return p, _usage()
 
 
+def _prefill(bft, rows, client, cap=10.0):
+    out = {}
+    bft._prefill_editorial_reviews(
+        rows, client=client, sections=[], country="Russia",
+        budget=BudgetTracker(cap_usd=cap), out=out)
+    return out
+
+
 def test_prefill_indexes_against_the_candidate_list(bft, monkeypatch) -> None:
     monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
     rows = [_Row("a"), _Row("b"), _Row("c"), _Row("d")]
     client = _BatchClient([["R1", "R2"], ["R3", None]])
-    out = bft._prefill_editorial_reviews(
-        rows, client=client, sections=[], country="Russia",
-        budget=BudgetTracker(cap_usd=10.0))
+    out = _prefill(bft, rows, client)
     assert out == {0: "R1", 1: "R2", 2: "R3"}   # index 3 stays for the loop
     assert client.chunks == [2, 2]
 
@@ -204,10 +210,7 @@ def test_prefill_survives_a_failed_chunk(bft, monkeypatch) -> None:
     monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
     rows = [_Row(x) for x in "abcd"]
     client = _BatchClient([RuntimeError("overloaded"), ["R3", "R4"]])
-    out = bft._prefill_editorial_reviews(
-        rows, client=client, sections=[], country="Russia",
-        budget=BudgetTracker(cap_usd=10.0))
-    assert out == {2: "R3", 3: "R4"}
+    assert _prefill(bft, rows, client) == {2: "R3", 3: "R4"}
 
 
 def test_prefill_stops_batching_after_two_failures(bft, monkeypatch) -> None:
@@ -217,11 +220,20 @@ def test_prefill_stops_batching_after_two_failures(bft, monkeypatch) -> None:
     rows = [_Row(x) for x in "abcde"]
     client = _BatchClient([RuntimeError("403"), RuntimeError("403"),
                            ["R3"], ["R4"], ["R5"]])
-    out = bft._prefill_editorial_reviews(
-        rows, client=client, sections=[], country="Russia",
-        budget=BudgetTracker(cap_usd=10.0))
-    assert out == {}
+    assert _prefill(bft, rows, client) == {}
     assert len(client.chunks) == 2
+
+
+def test_prefill_stops_at_once_on_a_usage_limit(bft, monkeypatch) -> None:
+    """Every call is retried three times inside the client, so a second doomed
+    chunk is six more round-trips on a key that is already refusing."""
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 1)
+    rows = [_Row(x) for x in "abcd"]
+    err = RuntimeError("This request would exceed your organization's usage limit")
+    assert bft.looks_like_usage_limit(str(err))
+    client = _BatchClient([err, ["R2"], ["R3"], ["R4"]])
+    assert _prefill(bft, rows, client) == {}
+    assert len(client.chunks) == 1
 
 
 def test_prefill_respects_the_cost_cap(bft, monkeypatch) -> None:
@@ -229,9 +241,21 @@ def test_prefill_respects_the_cost_cap(bft, monkeypatch) -> None:
     rows = [_Row(x) for x in "abc"]
     client = _BatchClient([["R1"], ["R2"], ["R3"]])
     with pytest.raises(BudgetExceeded):
+        _prefill(bft, rows, client, cap=0.015)
+
+
+def test_a_budget_trip_keeps_the_verdicts_already_paid_for(bft, monkeypatch) -> None:
+    """The money is spent either way. Losing the verdicts too would mean paying
+    for the same judgement twice — the caller owns the dict for this reason."""
+    monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 1)
+    rows = [_Row(x) for x in "abc"]
+    client = _BatchClient([["R1"], ["R2"], ["R3"]])
+    out = {}
+    with pytest.raises(BudgetExceeded):
         bft._prefill_editorial_reviews(
             rows, client=client, sections=[], country="Russia",
-            budget=BudgetTracker(cap_usd=0.015))
+            budget=BudgetTracker(cap_usd=0.015), out=out)
+    assert out == {0: "R1", 1: "R2"}    # survived the raise
 
 
 def test_prefill_charges_only_the_rows_it_answered(bft, monkeypatch) -> None:
@@ -239,10 +263,7 @@ def test_prefill_charges_only_the_rows_it_answered(bft, monkeypatch) -> None:
     too would overstate what the sheet reports per story."""
     monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 2)
     rows = [_Row("a"), _Row("b")]
-    client = _BatchClient([["R1", None]])
-    bft._prefill_editorial_reviews(
-        rows, client=client, sections=[], country="Russia",
-        budget=BudgetTracker(cap_usd=10.0))
+    _prefill(bft, rows, _BatchClient([["R1", None]]))
     assert rows[0].llm_cost_usd == pytest.approx(0.01)
     assert rows[1].llm_cost_usd is None
 
@@ -250,7 +271,19 @@ def test_prefill_charges_only_the_rows_it_answered(bft, monkeypatch) -> None:
 def test_prefill_skips_clients_without_the_batch_call(bft, monkeypatch) -> None:
     monkeypatch.setattr(bft, "EDITORIAL_BATCH_SIZE", 5)
     stub = types.SimpleNamespace()      # legacy/stub client
-    out = bft._prefill_editorial_reviews(
-        [_Row("a")], client=stub, sections=[], country="Russia",
-        budget=BudgetTracker(cap_usd=10.0))
-    assert out == {}
+    assert _prefill(bft, [_Row("a")], stub) == {}
+
+
+# --------------------------------------------------- the configuration knob
+
+def test_batch_size_is_parsed_defensively(bft, monkeypatch) -> None:
+    """This is the documented off switch. An empty or malformed value must not
+    kill the run at import time, before argparse, with a bare traceback."""
+    import importlib
+    for raw, want in (("", 10), ("ten", 10), ("1", 1), ("0", 1),
+                      ("-5", 1), ("10", 10), ("999", 25)):
+        monkeypatch.setenv("EDITORIAL_BATCH_SIZE", raw)
+        mod = importlib.reload(bft)
+        assert mod.EDITORIAL_BATCH_SIZE == want, f"{raw!r} → {mod.EDITORIAL_BATCH_SIZE}"
+    monkeypatch.delenv("EDITORIAL_BATCH_SIZE", raising=False)
+    importlib.reload(bft)
