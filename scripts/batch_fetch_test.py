@@ -3083,6 +3083,34 @@ def _append_run_log(
         f.write(_json.dumps(record, ensure_ascii=False) + "\n")
 
 
+ERR_HISTORY_LEN = 6      # ≈ two days of runs on the current cadence
+
+
+def _err_baseline(prev_state: dict) -> float | None:
+    """The fetch-failure rate a run should be judged against.
+
+    The MEDIAN of the last few healthy runs, not the last one. Comparing
+    against the previous run alone ratchets: the aug-07 12:10 hot run errored
+    at 25% against an 18% baseline, printed its warning — and then, being
+    healthy, stored 25% as the bar for tomorrow. A creep of 18 -> 25 -> 35 -> 49
+    is never twice its predecessor at any single step, so it would alarm
+    exactly never while nearly tripling overall. A median over six runs still
+    remembers the 18% while the creep is happening.
+
+    Falls back to the single stored value when there is not enough history
+    (upgrades, a fresh state file), and to None when there is none at all —
+    the caller then uses the absolute threshold instead.
+    """
+    hist = prev_state.get("err_share_hist")
+    if isinstance(hist, list):
+        vals = sorted(v for v in hist if isinstance(v, (int, float)) and v >= 0)
+        if len(vals) >= 3:
+            mid = len(vals) // 2
+            return vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+    one = prev_state.get("err_share")
+    return one if isinstance(one, (int, float)) else None
+
+
 def _health_check(
     results: list[SourceResult],
     article_rows: list[ArticleRow],
@@ -3192,7 +3220,7 @@ def _health_check(
         1 for s in results if not s.error and s.articles_attempted == 0)
     err_share = err_sources / len(results) if results else 0.0
     if results:
-        base = prev_state.get("err_share")
+        base = _err_baseline(prev_state)
         # ALARM (holds the window, next run re-covers) only for a genuine mass
         # failure: twice the usual rate AND a quarter of the source list. Both
         # halves matter — a portal that normally errors at 20% must not alarm
@@ -3201,7 +3229,7 @@ def _health_check(
                 and err_share >= 2 * base and err_share >= 0.25):
             alarms.append(
                 f"{err_sources}/{len(results)} sources errored ({err_share:.0%}) "
-                f"— {err_share / base:.1f}x the last healthy run's {base:.0%}. "
+                f"— {err_share / base:.1f}x the recent healthy median {base:.0%}. "
                 f"Mass fetch failure; window NOT advanced so the next run "
                 f"re-covers this period."
             )
@@ -3731,6 +3759,8 @@ def main(argv: list[str] | None = None) -> int:
     # re-covered by the next run (its unclassified rows re-fetch + re-classify;
     # the cache makes the healthy part cost ~$0).
     if RUN_WINDOW is not None and not alarms:
+        _err_now = round(
+            sum(1 for s in results if s.error) / max(1, len(results)), 4)
         try:
             state.update_success(
                 run_at=run_at_dt,
@@ -3743,12 +3773,18 @@ def main(argv: list[str] | None = None) -> int:
                     "archive_urls_count": len(PUBLISHED_URLS),
                     "archive_titles_count": len(PUBLISHED_TITLES),
                     "articles_tab": articles_tab,
-                    # Fetch-failure baseline. Written only on a HEALTHY run, so
-                    # a degraded night cannot raise the bar it will be judged
-                    # against tomorrow — otherwise a slow slide would keep
-                    # re-baselining itself and never alarm.
-                    "err_share": round(
-                        sum(1 for s in results if s.error) / max(1, len(results)), 4),
+                    # Fetch-failure baseline. Written only on a HEALTHY run —
+                    # a degraded night must not raise the bar it will be judged
+                    # against tomorrow. Kept as a short HISTORY, because the
+                    # single last value ratchets: every run that stays under the
+                    # alarm becomes the new normal, and a creep of 18 -> 25 ->
+                    # 35 -> 49 never doubles in one step. _err_baseline takes
+                    # the median, which still remembers where the creep started.
+                    "err_share": _err_now,
+                    "err_share_hist": (
+                        [_err_now] + [v for v in (state.load().get("err_share_hist") or [])
+                                      if isinstance(v, (int, float))]
+                    )[:ERR_HISTORY_LEN],
                 },
             )
             print(

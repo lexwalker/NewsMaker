@@ -119,3 +119,47 @@ def test_a_rise_worth_seeing_but_not_stopping_is_a_warning(bft) -> None:
 def test_an_empty_source_list_is_not_a_division_by_zero(bft) -> None:
     bft._health_check([], [], llm_ran=False, llm_aborted="", llm_candidates=0,
                       dedup_enabled=False, prev_state={})
+
+
+# ------------------------------------------------- the baseline must not ratchet
+
+def test_the_median_of_recent_runs_is_the_baseline(bft) -> None:
+    assert bft._err_baseline({"err_share_hist": [0.25, 0.18, 0.17, 0.19]}) == pytest.approx(0.185)
+    assert bft._err_baseline({"err_share_hist": [0.30, 0.18, 0.17]}) == pytest.approx(0.18)
+
+
+def test_a_creeping_failure_rate_still_alarms(bft) -> None:
+    """The hole this fixes. Judged against the PREVIOUS run only, 18 -> 25 ->
+    35 -> 49 never doubles in one step, so it alarms exactly never while nearly
+    tripling. Against the median of the last six it does."""
+    hist = [0.35, 0.25, 0.18, 0.18, 0.17, 0.19]      # the creep so far
+    base = bft._err_baseline({"err_share_hist": hist})
+    assert base == pytest.approx(0.185)              # still remembers the start
+    alarms = [a for a in _check(bft, errored=169, total=345, baseline=None)
+              if "sources errored" in a]             # 49% — no single baseline
+    assert alarms                                    # absolute backstop catches it
+    # and with the history it is caught on the relative rule, far earlier:
+    results = [bft.SourceResult(url=f"https://s{i}/", error="x" if i < 138 else "",
+                                articles_attempted=0 if i < 138 else 3)
+               for i in range(345)]                  # 40%, well under 2x of 25%
+    got = bft._health_check(results, [], llm_ran=False, llm_aborted="",
+                            llm_candidates=0, dedup_enabled=False,
+                            prev_state={"err_share_hist": hist,
+                                        "archive_urls_count": 6935,
+                                        "archive_titles_count": 1711})
+    assert [a for a in got if "sources errored" in a], got
+
+
+def test_too_little_history_falls_back_to_the_single_value(bft) -> None:
+    assert bft._err_baseline({"err_share_hist": [0.4], "err_share": 0.2}) == 0.2
+    assert bft._err_baseline({"err_share": 0.2}) == 0.2
+
+
+def test_no_history_at_all_means_no_baseline(bft) -> None:
+    assert bft._err_baseline({}) is None
+    assert bft._err_baseline({"err_share_hist": "не список"}) is None
+
+
+def test_junk_in_the_history_is_ignored(bft) -> None:
+    assert bft._err_baseline(
+        {"err_share_hist": [0.2, None, "x", 0.18, 0.19]}) == pytest.approx(0.19)
