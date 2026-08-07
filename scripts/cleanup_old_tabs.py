@@ -61,17 +61,26 @@ def main() -> int:
     svc = _svc()
     meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
 
+    # Handoff pointers of EVERY lane, not just the full one. The hot lane has
+    # its own state file and its own tab family; it survived the aug-07 cleanup
+    # only because its pinned tab happened to be among the newest 12 of its
+    # family. That is luck, not a guarantee — a lane that has been quiet while
+    # the other one ran would age its pointer out and the next cluster/push
+    # would look for a tab that no longer exists. Cheap to make explicit.
     protected: set[str] = set()
-    try:
-        st = json.loads((ROOT / "data" / "state.json").read_text(encoding="utf-8"))
+    for state_file in sorted((ROOT / "data").glob("state*.json")):
+        try:
+            st = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
         tab = (st.get("articles_tab") or "").strip()
-        if tab:
-            protected.add(tab)
-            m = re.match(r"^ТЕСТ статьи v(\d+)$", tab)
-            if m:
-                protected.add(f"ТЕСТ прогон v{m.group(1)}")
-    except (OSError, json.JSONDecodeError):
-        pass
+        if not tab:
+            continue
+        protected.add(tab)
+        # …and its paired report tab, whatever family it belongs to.
+        m = re.match(r"^ТЕСТ статьи( \(гор\))? v(\d+)$", tab)
+        if m:
+            protected.add(f"ТЕСТ прогон{m.group(1) or ''} v{m.group(2)}")
 
     total_cells = 0
     victims: list[tuple[str, int, int]] = []   # (title, sheetId, cells)
@@ -103,6 +112,27 @@ def main() -> int:
     if not args.apply:
         print("\nDRY-RUN (no changes). Re-run with --apply to delete.")
         return 0
+
+    # Last gate before an irreversible batch, and the reason it exists: from
+    # aug-07 this runs UNATTENDED at the end of every chain. The family+isdigit
+    # filter above should make a non-working tab unreachable, but "should" is
+    # not what you want standing between a scheduled task and the editor's
+    # archive. Re-derive the name test independently here: anything that is not
+    # literally «ТЕСТ прогон/статьи [(гор)] vЧИСЛО» aborts the whole deletion
+    # rather than being skipped, because if one unexpected title got this far
+    # the selection logic is wrong and the rest of the list is not trustworthy
+    # either.
+    SAFE = re.compile(r"^ТЕСТ (прогон|статьи)( \(гор\))? v\d+$")
+    stray = [t for t, _, _ in victims if not SAFE.match(t)]
+    if stray:
+        print(f"\n!!! ОТМЕНА: в списке на удаление есть листы вне шаблона: "
+              f"{stray[:5]} — ничего не удалено.", file=sys.stderr)
+        return 2
+    hit = sorted(set(t for t, _, _ in victims) & protected)
+    if hit:
+        print(f"\n!!! ОТМЕНА: под удаление попали закреплённые листы {hit} "
+              f"— ничего не удалено.", file=sys.stderr)
+        return 2
 
     # Batch the deletions (irreversible — that's why --apply is explicit).
     reqs = [{"deleteSheet": {"sheetId": sid}} for _, sid, _ in victims]

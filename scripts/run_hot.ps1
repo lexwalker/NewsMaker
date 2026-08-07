@@ -82,6 +82,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 $ErrorActionPreference = $prevEAP
 
+# Reclaim the workbook -- see the long note in run_prog.ps1. The hot lane is
+# the one that actually hit the 10M-cell ceiling on aug-07 (exit 1 at tab
+# allocation, no news for an hour), and it allocates a pair every tick, so it
+# is the lane that most needs this. Last step, non-fatal.
+& python scripts/cleanup_old_tabs.py --keep 20 --apply 2>&1 | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "  (tab cleanup failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+}
+
 # Tee the finish marker INTO the log (aug-04). Third copy of the same defect
 # (run_recover, run_prog, here): it went to the task's stdout only, so the log
 # ended on the push summary and a finished run was indistinguishable from one

@@ -148,6 +148,24 @@ if ($NoPush) {
   }
   $ErrorActionPreference = $prevEAP
 }
+
+# Reclaim the workbook. Every run allocates a fresh tab pair and until aug-07
+# nothing ever removed them: 323 tabs / 9.96M cells against Google's 10M
+# ceiling, and the 08:51 hot run simply could not create its tabs -- exit 1,
+# no news, and an hour before anyone knew why. The tool existed since jul-26
+# and was never run, because running it was a human's job.
+#
+# LAST, after the push and the labelling ritual, so nothing downstream can want
+# a tab this just removed. Non-fatal by construction: the run has already
+# delivered by the time we get here, and a cleanup that fails must not turn a
+# successful run into a failed one. Keeps 20 versions per family (about three
+# days) plus every lane's pinned tab, and aborts the whole batch if any title
+# outside the "TEST progon/statyi [(gor)] vN" shape reaches the delete list.
+& python scripts/cleanup_old_tabs.py --keep 20 --apply 2>&1 | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "  (tab cleanup failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+}
+
 Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
 # Tee the finish marker INTO the log (aug-04, same defect as run_recover.ps1):
 # it used to go only to the task's stdout, so the log ended on the push summary
