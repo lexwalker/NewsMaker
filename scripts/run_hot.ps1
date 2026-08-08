@@ -82,6 +82,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 $ErrorActionPreference = $prevEAP
 
+# Pull the editor's comments off the feed -- see the note in run_prog.ps1.
+# Idempotent by comment hash, so running it every tick only picks up what is
+# new. Non-fatal: it feeds measurement, not delivery.
+& python scripts/sync_editor_feedback.py 2>&1 | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "  (editor-feedback sync failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+}
+
 # Reclaim the workbook -- see the long note in run_prog.ps1. The hot lane is
 # the one that actually hit the 10M-cell ceiling on aug-07 (exit 1 at tab
 # allocation, no news for an hour), and it allocates a pair every tick, so it

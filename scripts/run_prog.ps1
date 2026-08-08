@@ -149,6 +149,17 @@ if ($NoPush) {
   $ErrorActionPreference = $prevEAP
 }
 
+# Pull the editor's comments off the feed into eval_set_v2. Same defect as the
+# tab cleanup and the label ingest before it: the script existed, nothing
+# called it, and it had last run on aug-04 -- so on aug-07 the week's precision
+# was scored on 88 stale comments, 22 of them from July, none from Wed-Fri,
+# while 117 fresh marks sat unread on the sheet. Non-fatal: this feeds
+# measurement and the constitution edits, not delivery.
+& python scripts/sync_editor_feedback.py 2>&1 | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "  (editor-feedback sync failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
+}
+
 # Reclaim the workbook. Every run allocates a fresh tab pair and until aug-07
 # nothing ever removed them: 323 tabs / 9.96M cells against Google's 10M
 # ceiling, and the 08:51 hot run simply could not create its tabs -- exit 1,

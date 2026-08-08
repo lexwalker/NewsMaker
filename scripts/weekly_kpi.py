@@ -1,7 +1,13 @@
 """Weekly KPI — one reproducible, HONEST run of the 4 agreed metrics for a
 week window, saved to data/weekly_kpi_<until>.json so weeks are comparable.
 
-  coverage      — of editor publications this week, how many we collected
+  coverage      — of editor publications this week, how many REACHED HIS FEED
+                  (printed with the two levels above it: accepted, crawled —
+                  the headline used to be the crawl level, which answered
+                  "did we see it" and read 59% on a week we delivered 25%)
+  precision     — of the rows we pushed and he marked, how many belonged
+                  there: clean + fixable. Windowed on the day we PUSHED, not
+                  on the day someone remembered to run the feedback sync.
   found_right   — of our accepted items, how many the editor published
   section_right — of those, how many sections agree
   reject_right  — of our rejected items, how many editor did NOT publish (PROXY)
@@ -131,10 +137,76 @@ def load_cache(since: datetime, until: datetime):
     return collection, accepted, rejected, coll_dates
 
 
+def load_feed(svc, since: datetime, until: datetime):  # type: ignore[no-untyped-def]
+    """Rows we actually PUT IN FRONT OF THE EDITOR in the window, with his
+    comment on each: (items, comments).
+
+    Read straight from «Новости (новые)», keyed on the push timestamp in
+    column A. Two things depended on this and had neither:
+
+      · coverage was matched against the whole 30k-row fetch cache, so it
+        answered "did the crawler ever see this story" — 59% on the aug-07
+        week — when the question everyone actually asks is "did the editor get
+        it from us", which was 25%;
+      · precision windowed on eval_set_v2's `synced_at`, the moment a human
+        remembered to run sync_editor_feedback. That had last run on aug-04, so
+        the "week of aug 3-7" was scored on 88 comments of which 22 belonged to
+        July and none to Wed-Fri at all.
+
+    Reading the sheet directly removes both couplings: the window means the
+    days we pushed, and the comments are whatever is on the sheet right now.
+    """
+    tab = os.environ.get("NEWS_TAB", "Новости (новые)")
+    vals = svc.spreadsheets().values().get(
+        spreadsheetId=SHEET, range=f"'{tab}'!A1:P6000"
+    ).execute().get("values", [])
+
+    def cell(r, i):
+        return (r[i] if len(r) > i else "").strip()
+
+    lo, hi = since.date(), until.date()
+    items, comments = [], []
+    for r in vals[1:]:
+        stamp = cell(r, 0)
+        if not stamp.startswith("20") or not cell(r, 1):
+            continue                      # run separators and blanks
+        d = _parse_date(stamp)
+        if not d or not (lo <= d.date() <= hi):
+            continue
+        urls = [cell(r, 9)] + [u.strip() for u in cell(r, 12).splitlines()]
+        items.append(Item(title=cell(r, 1),
+                          url=next((u for u in urls if u.startswith("http")), ""),
+                          section=cell(r, 3)))
+        c = cell(r, 15)
+        # Markers this pipeline writes into the comment column itself are not
+        # editor feedback and must not be scored as such.
+        comments.append("" if c.startswith(("🔁", "⚠", "ВТОРОЙ")) else c)
+    return items, comments
+
+
+def precision_from_feed(comments: list[str]) -> dict:
+    """Score the editor's own words on the rows pushed in the window."""
+    from sync_editor_feedback import parse_comment
+    rows = []
+    for c in comments:
+        if not c.strip():
+            continue                      # unmarked: not evidence either way
+        rec = parse_comment(c)
+        rec.setdefault("editor_comment", c)
+        rows.append(rec)
+    p = precision_from_feedback(rows)
+    p["scope"] = "pushed-in-window"
+    return p
+
+
 def load_editor_precision(since: datetime, until: datetime) -> dict:
     """Editor-comment precision over feedback synced in the window. Reads
     data/eval_set_v2.jsonl (provenance == 'editor_sheet'). Falls back to
-    all-time if no feedback landed in the window (editor reviews in bursts)."""
+    all-time if no feedback landed in the window (editor reviews in bursts).
+
+    Kept for the historical series only — superseded as the headline by
+    precision_from_feed, which does not depend on when a human last ran the
+    sync script."""
     if not EVAL_V2.exists():
         return {"total": 0, "rate": 0.0, "by_type": {}, "is_biased": True,
                 "scope": "no-data"}
@@ -209,7 +281,11 @@ def main() -> int:
     by_day = coverage_by_day(dated_pubs, active, coll_idx)
     total_days = (until.date() - since.date()).days + 1
 
-    prec = load_editor_precision(since, until)        # headline precision
+    # Delivered coverage + precision, both keyed on the days we PUSHED.
+    feed_items, feed_comments = load_feed(svc, since, until)
+    cov_feed = coverage_day_aligned(dated_pubs, active, build_index(feed_items))
+    cov_acc = coverage_day_aligned(dated_pubs, active, build_index(accepted))
+    prec = precision_from_feed(feed_comments)         # headline precision
     ps = precision_and_section(accepted, arch_idx, sec_by_key)  # lower bound
     rj = reject_right(rejected, arch_idx)
 
@@ -221,12 +297,28 @@ def main() -> int:
         print(f"  {name:18} {_pct(m['rate']):>5}  ({m['hit']}/{m['total']}) {extra}")
 
     print("METRICS (honest):")
-    line("1 coverage*", cov,
-         f"[url {cov['by_url']} + fuzzy {cov['by_fuzzy']}]")
+    # Coverage in three steps. The headline is DELIVERED, because that is the
+    # only one that answers "did the editor get it from us". The other two are
+    # printed alongside so the two losses are visible rather than averaged
+    # away: what the constitution rejected, and what was accepted but never
+    # reached the feed (dedup diverts, cluster drops).
+    line("1 coverage — delivered", cov_feed,
+         "← HEADLINE: reached the editor's feed")
+    line("   of which accepted", cov_acc,
+         "← the LLM said yes")
+    line("   of which crawled", cov,
+         f"← the crawler saw it [url {cov['by_url']} + fuzzy {cov['by_fuzzy']}]")
+    print(f"     lost to the constitution: {cov['hit'] - cov_acc['hit']}   "
+          f"accepted but never pushed: {cov_acc['hit'] - cov_feed['hit']}")
     print(f"     *day-aligned: prog ran {cov['active_days']}/{total_days} days; "
           f"{cov['excluded_no_prog']} pubs on no-prog days excluded (uptime gap)")
     line(f"2 precision ({prec['scope']})", prec,
-         "← editor comments (headline)")
+         "← story belonged in the feed")
+    print(f"       pushed {len(feed_items)}, marked {prec['commented']}, "
+          f"unmarked {len(feed_items) - prec['commented']} (not scored)")
+    print(f"       clean {prec['clean']} + fixable {prec['fixable']} "
+          f"= {prec['hit']} right;  wasted {prec['wasted']};  "
+          f"unparsed {prec['unparsed']} (not scored)")
     if prec["by_type"]:
         bt = ", ".join(f"{k} {v}" for k, v in prec["by_type"].items())
         print(f"       complaints: {bt}")
@@ -250,10 +342,16 @@ def main() -> int:
     print("  · coverage rests partly on cross-language fuzzy title match")
     print("    (imperfect) — the url part is exact. Small samples; treat")
     print("    single-week moves cautiously.")
-    print("  · precision = editor comments; editor flags PROBLEM rows and")
-    print("    passes clean ones silently → this is a pessimistic FLOOR.")
-    print(f"    (scope={prec['scope']}: 'all-time' means no feedback landed")
-    print("    inside the window yet — editor reviews in bursts.)")
+    print("  · precision counts a row RIGHT when the story belonged in the")
+    print("    feed — clean plus fixable (wrong section / source / language).")
+    print("    A wrong section is a five-second fix; a duplicate costs the")
+    print("    whole read. They are not the same mistake and are not summed.")
+    print(f"  · {len(feed_items) - prec['commented']} pushed rows carry no mark and are NOT scored —")
+    print("    unmarked means 'took it silently' or 'never got to it', and")
+    print("    nothing in the data tells the two apart.")
+    print(f"  · {prec['unparsed']} comments the parser cannot read are also left out")
+    print("    rather than counted as clean. Until aug-07 they were counted")
+    print("    as clean, which reported 60 real «ок» on that week as 108.")
     print("  · found_right (archive match) is a strict LOWER bound, not the")
     print("    'правильность' headline — it needs the editor to have published")
     print("    the exact story, title-matchable. Use precision above instead.")
@@ -266,7 +364,11 @@ def main() -> int:
 
     out = {
         "since": since.date().isoformat(), "until": until.date().isoformat(),
+        # `coverage` keeps naming the crawl level so the June-July series
+        # stays comparable; `coverage_delivered` is the new headline.
         "coverage": cov, "coverage_by_day": by_day,
+        "coverage_delivered": cov_feed, "coverage_accepted": cov_acc,
+        "pushed_rows": len(feed_items),
         "precision_editor": prec, "found_right": ps["found_right"],
         "section_right": ps["section_right"], "reject_right": rj,
     }

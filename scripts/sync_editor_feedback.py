@@ -123,6 +123,16 @@ P_DUP_CROSS = (
     r"\d{1,2}[.\s/]\d{0,2}\w*\s+было\b",   # «7 июля было», «31 июля было»
     r"стар\w+\s+новост",             # «очень старая новость от 04.06»
     r"^\s*уже\b",                    # «уже писали ранее»
+    # aug-07, the same audit one layer further out. Counting the week's own
+    # feed by hand against this parser: 48 of 108 rows it called «чисто» were
+    # complaints it had not recognised, and the largest group was dup wordings
+    # that name WHERE the story already ran rather than saying «было» alone.
+    r"было\s+в\s+\d",                # «было в 1 части», «было в 1й части»
+    r"было\s+(?:вчера|сегодня|тут|и\s+тут)",
+    r"было\s+(?:в|на)\s+(?:файле|портале|прессе)",
+    r"^\s*нет,\s*было\b",            # «нет, было»
+    r"в\s+файле\s+уже\s+была",
+    r"\d+\s+новост\w*\s+об\s+одном",  # «3 новости об одном и том же»
 )
 P_WRONG_PRIMARY = (
     r"постили\s+пресс",
@@ -159,6 +169,20 @@ P_REJECT = (
     r"финансирование.*не\s+постим",
     r"не\s+ставим",
     r"\bне\s+факт\b",  # explicit "это не факт"
+    # aug-07: «не нужно» is only the editor's tidiest wording. Measured on the
+    # week's own feed, these carried the same meaning and were all being
+    # counted as clean, which is how 60 real «ок» became a reported 108.
+    r"(?:нечего|нечго)\s+писать",    # «нечего писать»
+    r"писать\s+нечего",              # «там писать нечего»
+    r"(?:никакой|нет)\s+конкретики",
+    r"не\s+думаю[,\s].*нужн",        # «не думаю, что нам это нужно»
+    r"вр?р?яд\s+ли\s+нужн",          # «врряд ли нужно» (editor's typo included)
+    r"не\s+особо\s+нужн",
+    r"бренд\s+вообще\s+не\s+нужен",
+    r"ничего\s+важного",
+    r"не\s+понятно,?\s+что\s+за",    # «не понятно, что за рейтинг»
+    r"шакальн\w+\s+фото",            # unusable images
+    r"^\s*нет,\s",                   # «нет, ...» — a rejection with a reason
 )
 # APPROVE patterns. NOTE: matched only AFTER P_REJECT misses, so we
 # don't have to worry about "не постим" containing "постим".
