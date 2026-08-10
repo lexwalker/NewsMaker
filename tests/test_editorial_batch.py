@@ -316,3 +316,55 @@ def test_a_recognised_limit_stops_batching_at_once(bft, monkeypatch) -> None:
 def test_a_disabled_driver_never_fires(bft) -> None:
     d = bft._BatchDriver(False)
     assert not any(d.due(i) for i in range(100))
+
+
+# ------------------------- aug-10: a good answer thrown away over its shape
+
+def test_a_number_written_as_text_is_still_a_number() -> None:
+    """Twice on aug-10 a batch returned ten well-formed verdicts and every one
+    was discarded, costing ten single calls to redo work already paid for. The
+    range check is the safety property; the type never was."""
+    from news_agent.adapters.llm.anthropic_client import _as_index
+    assert _as_index(3) == 3
+    assert _as_index("3") == 3
+    assert _as_index(" #3 ") == 3
+    assert _as_index(3.0) == 3
+
+
+def test_anything_that_is_not_a_whole_number_stays_rejected() -> None:
+    from news_agent.adapters.llm.anthropic_client import _as_index
+    for junk in (None, True, False, 3.5, "3.5", "три", "", "-", [3], {"n": 3}):
+        assert _as_index(junk) is None, junk
+
+
+def test_a_string_index_lands_on_the_right_article() -> None:
+    c = _FakeClient([{"verdicts": [dict(_verdict(1), n="1"),
+                                   dict(_verdict(2), n="2")]}])
+    out, _ = c.editorial_review_batch(
+        items=[("a", "a"), ("b", "b")], sections=[], portal_country="Russia")
+    assert out[0] is not None and out[1] is not None
+
+
+def test_the_range_check_still_holds_for_coerced_numbers() -> None:
+    """Coercing the type must not soften the guard that keeps a hallucinated
+    number off someone else's article."""
+    c = _FakeClient([{"verdicts": [dict(_verdict(1), n="9"),
+                                   dict(_verdict(1), n="0")]}])
+    out, _ = c.editorial_review_batch(
+        items=[("a", "a")], sections=[], portal_country="Russia")
+    assert out == [None]
+
+
+def test_verdicts_under_another_key_are_still_read() -> None:
+    """A model that answers with `reviews` has still done the work."""
+    c = _FakeClient([{"reviews": [_verdict(1), _verdict(2)]}])
+    out, _ = c.editorial_review_batch(
+        items=[("a", "a"), ("b", "b")], sections=[], portal_country="Russia")
+    assert out[0] is not None and out[1] is not None
+
+
+def test_a_genuinely_empty_answer_is_still_a_hole() -> None:
+    c = _FakeClient([{"verdicts": []}])
+    out, _ = c.editorial_review_batch(
+        items=[("a", "a")], sections=[], portal_country="Russia")
+    assert out == [None]

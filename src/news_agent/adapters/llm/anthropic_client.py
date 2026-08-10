@@ -64,6 +64,42 @@ def _tool(name: str, description: str, schema: dict[str, Any]) -> dict[str, Any]
     return {"name": name, "description": description, "input_schema": schema}
 
 
+def _as_index(v: object) -> int | None:
+    """The article number a batch verdict claims, or None if it isn't one.
+
+    The schema asks for an integer and the model usually obliges, but "3" and
+    3.0 are the same article and rejecting them cost two whole batches on
+    aug-10. Anything that is not exactly a whole number stays rejected — the
+    caller still range-checks, so a wrong number can never land on the wrong
+    article, and `True` must not read as 1."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v) if v.is_integer() else None
+    if isinstance(v, str):
+        s = v.strip().lstrip("#").strip()
+        return int(s) if s.isdigit() else None
+    return None
+
+
+def _verdict_list(data: dict[str, Any]) -> list | None:
+    """The array of verdicts, whatever the model decided to call it.
+
+    `verdicts` is what the schema names and what we normally get. A model that
+    answers with `reviews` or `items` has still done the work, and throwing the
+    call away over the key would repeat it ten times at single-call prices."""
+    v = data.get("verdicts")
+    if isinstance(v, list):
+        return v
+    for key, val in data.items():
+        if isinstance(val, list) and val and isinstance(val[0], dict):
+            log.warning("batch review: verdicts arrived under %r", key)
+            return val
+    return None
+
+
 class AnthropicLLMClient:
     provider_name = "anthropic"
 
@@ -194,13 +230,21 @@ class AnthropicLLMClient:
             # every verdict or the tail is truncated into a parse failure.
             max_tokens=min(8000, 400 * len(items) + 200),
         )
-        for entry in (data.get("verdicts") or []):
+        dropped_n: list[object] = []
+        for entry in (_verdict_list(data) or []):
             if not isinstance(entry, dict):
                 continue
-            n = entry.get("n")
             # A hallucinated or duplicated number must not overwrite a good
             # verdict or land on the wrong article: accept 1..len once each.
-            if not isinstance(n, int) or not (1 <= n <= len(items)):
+            # The RANGE check is the safety property; the TYPE is not, and
+            # being strict about it threw away whole good answers — twice on
+            # aug-10 a batch came back with ten well-formed verdicts and every
+            # one was discarded here, costing ten single calls to redo work
+            # already paid for. A number the model wrote as "3" or 3.0 is still
+            # the number three.
+            n = _as_index(entry.get("n"))
+            if n is None or not (1 <= n <= len(items)):
+                dropped_n.append(entry.get("n"))
                 continue
             if out[n - 1] is not None:
                 continue
@@ -211,9 +255,14 @@ class AnthropicLLMClient:
                 log.warning("batch review: unusable verdict for article %s", n)
         missing = sum(1 for r in out if r is None)
         if missing:
+            # Say WHY, not just how many. The first version of this warning
+            # reported the count alone, and a batch that silently dropped all
+            # ten was indistinguishable from a model that answered nothing —
+            # two days of logs could not tell them apart.
             log.warning(
-                "batch review: %s of %s articles came back without a verdict",
-                missing, len(items))
+                "batch review: %s of %s articles came back without a verdict"
+                " (keys=%s, dropped n=%s)",
+                missing, len(items), sorted(data)[:6], dropped_n[:6])
         return out, usage
 
     def translate_title(
