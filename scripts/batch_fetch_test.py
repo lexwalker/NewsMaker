@@ -209,22 +209,45 @@ _SOURCE_CAP_OVERRIDES: dict[str, int] = {
     # actually productive (auto-topic rows per run, averaged over v71-v73).
     # Pure-auto sites first — they were the worst throttled, giving ~10 auto
     # stories from 15 links:
-    "110km.ru": 45,              # 10.7 auto/run at cap 15, 12s
-    "32cars.ru": 45,             # 10.3 at 15, 11s
+    "110km.ru": 150,             # 23 auto of 45 links — 51%, the best we have
+    "32cars.ru": 60,             #  7 of 45, 0.7s/link
     "avtonovostidnya.ru": 45,    #  6.3 at 15, 2s  — cheapest links we have
     "popmech.ru": 30,            #  5.3 at 15, 4s
-    "dp.ru": 30,                 #  5.7 at 15, 4s
+    "dp.ru": 120,                # 10 auto of 30 — 33%, and 0.2s a link
+    "3dnews.ru": 60,             #  4 of 15 — 27%, was on the default cap
     # General portals: extra links are mostly non-auto, but the heuristic
     # drops those for free BEFORE any LLM call, so the cost is fetch seconds,
     # not tokens.
-    "lenta.ru": 70,              #  8.0 auto/run at cap 35, 9s
-    "ria.ru": 70,                #  6.0 at 35, 14s
-    "kommersant.ru": 70,         #  7.3 at 35, 10s (RSS) / 5.3 (site)
-    "vedomosti.ru": 70,          #  5.0 at 35, 15s
+    "lenta.ru": 100,             # 18 auto of 70 — 26%
+    "ria.ru": 100,               # 16 of 70 — 23%
+    "kommersant.ru": 200,        # 11 of 70 — and 385 links left on the table,
+                                 # the single largest cut in the whole run
+    "vedomosti.ru": 150,         #  5 of 70 — 7%, but 130 links and 0.4s each
+    "motor.ru": 100,             #  1 of 60, cheap; watch whether it earns it
     "rg.ru": 70,                 #  5.3 at 35, 10s
-    # NOT raised: iz.ru. It is saturated too (60/60) but spends 93s to fetch
-    # 17 of them — a bigger cap buys nothing there, it needs the source budget
-    # below, or parallel fetching.
+    # aug-11 re-measure, on the v88 report. The aug-04 note above raised caps
+    # from a per-run average; this reads the cap-cut column directly and asks
+    # three questions of every saturated source: does it yield, is it fast, and
+    # how much is it leaving behind.
+    #
+    #   6283 links were cut across 127 sources — but 4865 of them (77%) belong
+    #   to 97 sources that produced ZERO auto-relevant rows from what we DID
+    #   take. globalsuzuki offers 1050 links and yields nothing; ecb.europa.eu
+    #   660; stellantis 444. Those are navigation and archive furniture, not
+    #   news, and raising their caps would buy fetch seconds and nothing else.
+    #   The extractor finding a thousand "articles" on a brand site is its own
+    #   bug, tracked separately — it is not a coverage lever.
+    #
+    #   The 30 sources that saturate AND yield lost 1418 links at a weighted
+    #   11.7%, so the linear ceiling is ~166 more auto rows a run. Halve it for
+    #   the tail being older than the head (link lists run newest-first and the
+    #   freshness window eats the rest) and ~70 is the honest expectation.
+    #
+    # NOT raised, and now for a measured reason rather than an old one:
+    # iz.ru and autostat.ru sit at 184-186s against the 180s source budget at
+    # 3.1s a link. They are time-bound, not cap-bound; a bigger number changes
+    # nothing until fetching goes parallel. Every source raised above costs
+    # 0.2-0.5s a link and has 200+ links of headroom inside its budget.
 }
 
 
