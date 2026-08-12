@@ -213,6 +213,37 @@ def _get(r: list[str], i: int) -> str:
     return r[i] if i < len(r) else ""
 
 
+def _title_and_body(r: list[str]) -> tuple[str, str]:
+    """The headline and lede as the LLM should see them.
+
+    Extracted so the batched call and the single fallback cannot disagree about
+    what an article IS — the whole safety story of batching rests on the two
+    paths judging identical input, and this was the one place the recovery tool
+    built it inline."""
+    title = _get(r, COL_TITLE)
+    # If the title is the original scraped string (no EN: prefix), use it as the
+    # source headline; otherwise drop the prefix so the LLM translates from the
+    # original rather than from our own translation.
+    clean = title
+    if "EN:" in title:
+        for line in title.splitlines():
+            if line.strip().startswith("EN:"):
+                clean = line.split(":", 1)[1].strip()
+                break
+    return clean, _get(r, COL_LEDE)
+
+
+# Articles judged per editorial_review call, read the same way the main run
+# reads it so the two stages cannot drift apart. Parsed defensively for the
+# same reason: this is the documented off switch and an empty value must not
+# kill a recovery at import time.
+try:
+    EDITORIAL_BATCH_SIZE = int(os.environ.get("EDITORIAL_BATCH_SIZE", "") or 10)
+except ValueError:
+    EDITORIAL_BATCH_SIZE = 10
+EDITORIAL_BATCH_SIZE = max(1, min(25, EDITORIAL_BATCH_SIZE))
+
+
 HINT_PATH = ROOT / "data" / "llm_abort_recovery.json"
 
 
@@ -415,20 +446,60 @@ def main() -> int:
     rejected_count = 0
     consec_errors = 0  # circuit breaker — parity with the main run's LLM pass
     aborted_early = False  # any break below = PARTIAL recovery, chain must stop
+    # Batched review, same shape as the main run's LLM pass: a chunk is judged
+    # when the loop reaches it, and whatever the chunk fails to answer falls
+    # through to the single call below. Recovery was the ONE stage still paying
+    # single-call prices — on aug-12 a transient 403 handed it 338 rows and it
+    # spent $2.51 where the main pass would have spent ~$1.05, because the
+    # constitution was read 338 times instead of 34.
+    prefilled: dict[int, object] = {}
+    batching = (EDITORIAL_BATCH_SIZE > 1
+                and hasattr(editorial_client, "editorial_review_batch"))
+    next_chunk_at = 0        # aligned boundaries: chunks can never overlap
+    failed_chunks = 0
+    budget_blown = False
+    n_batched = 0
+    if batching:
+        _n = -(-len(targets) // EDITORIAL_BATCH_SIZE)
+        print(f"  пакетный разбор: {len(targets)} строк → {_n} вызовов "
+              f"(по {EDITORIAL_BATCH_SIZE})")
+
     for idx, (sheet_row, r) in enumerate(targets, start=1):
         url = _get(r, COL_URL)
-        title = _get(r, COL_TITLE)
         verdict = _get(r, COL_VERDICT)
-        # If the title was the original scraped string (no EN: prefix),
-        # use it as the source headline. Otherwise drop the prefix
-        # because LLM should translate from the original.
-        clean_title = title
-        if "EN:" in title:
-            for line in title.splitlines():
-                if line.strip().startswith("EN:"):
-                    clean_title = line.split(":", 1)[1].strip()
-                    break
-        body = _get(r, COL_LEDE)
+        clean_title, body = _title_and_body(r)
+
+        # Reached the head of an unjudged chunk? Judge those rows now. The
+        # boundary advances on EVERY attempt, so a chunk that answered nine of
+        # ten cannot make the next call start one row early and pay twice.
+        if batching and not budget_blown and idx - 1 >= next_chunk_at:
+            _chunk = targets[next_chunk_at:next_chunk_at + EDITORIAL_BATCH_SIZE]
+            try:
+                _revs, _u = editorial_client.editorial_review_batch(
+                    items=[_title_and_body(rr) for _, rr in _chunk],
+                    sections=sections, portal_country=portal_country)
+                for _j, _rev in enumerate(_revs):
+                    if _rev is not None:
+                        prefilled[next_chunk_at + _j] = _rev
+                        n_batched += 1
+                budget.record(_u)      # may raise — verdicts above survive it
+                failed_chunks = 0
+            except BudgetExceeded as e:
+                print(f"\n!!! LLM budget exceeded on a batch at {idx}/{len(targets)}"
+                      f" — {len(prefilled)} paid verdicts kept, stopping after "
+                      f"them.", file=sys.stderr)
+                budget_blown = True
+            except Exception as e:  # noqa: BLE001
+                failed_chunks += 1
+                print(f"    пачка со строки {next_chunk_at + 1} не удалась "
+                      f"({type(e).__name__}: {str(e)[:90]}) — поштучно",
+                      file=sys.stderr)
+                # A recognised limit needs no second opinion, and two dead
+                # chunks in a row mean a dead API: hand the failure to the
+                # per-row path, where the circuit breaker already lives.
+                if looks_like_usage_limit(str(e)) or failed_chunks >= 2:
+                    batching = False
+            next_chunk_at += EDITORIAL_BATCH_SIZE
 
         # Consolidated editorial review — the SAME path as the main run (so a
         # recovered row is judged by the editorial constitution, not the old
@@ -436,12 +507,28 @@ def main() -> int:
         # returns the `reason` that fills "Обоснование LLM" (col AE). The legacy
         # path never produced a reason, so a mid-run-failure recovery left col AE
         # — and the rejected-markup tab built from it — empty.
+        _pre = prefilled.pop(idx - 1, None)
+        if _pre is None and budget_blown:
+            # The cap tripped and this row was not among the ones already paid
+            # for. Stop here and flush: everything before it IS written.
+            print(f"\n!!! stopping at {idx}/{len(targets)} (budget) — flushing "
+                  f"{len(updates)} accumulated updates.", file=sys.stderr)
+            aborted_early = True
+            break
         try:
-            review, ur = editorial_client.editorial_review(
-                title=clean_title, body=body,
-                sections=sections, portal_country=portal_country,
-            )
-            budget.record(ur)
+            if _pre is not None:
+                review = _pre          # judged in a batch — no call here
+            else:
+                review, ur = editorial_client.editorial_review(
+                    title=clean_title, body=body,
+                    sections=sections, portal_country=portal_country,
+                )
+                budget.record(ur)
+                # Only a LIVE call proves the API is up, so only a live call
+                # may clear the breaker — the same trap the main pass fell into
+                # on aug-06, where prefilled rows reset the count between the
+                # few real ones and a dead API could never reach the threshold.
+                consec_errors = 0
         except BudgetExceeded as e:
             # Cap tripped mid-recovery: STOP but FLUSH what's already paid for
             # (previously this propagated and discarded every accumulated
@@ -464,7 +551,6 @@ def main() -> int:
                 aborted_early = True
                 break
             continue
-        consec_errors = 0
         reason = (review.reason or "")[:300]
         # Event-signature, normalised EXACTLY as the main run (strip → lower →
         # 40/60/24). Computed BEFORE the reject branch so BOTH paths can cache
@@ -644,6 +730,11 @@ def main() -> int:
                 what=f"batchUpdate chunk {ci}/{len(chunks)}",
             )
         n_translated = len(targets) - rejected_count
+        if EDITORIAL_BATCH_SIZE > 1:
+            _singly = max(0, len(targets) - n_batched)
+            print(f"  пакетный разбор: {n_batched} вердиктов из пачек"
+                  + (f", {_singly} поштучно" if _singly else "")
+                  + ("" if batching else "  (пакетный режим выключен по отказам)"))
         print(
             f"\nDone. {n_translated} translated, {rejected_count} rejected by LLM. "
             f"Total cost: ${budget.spent_usd:.4f}"
