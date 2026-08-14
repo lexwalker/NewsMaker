@@ -391,9 +391,20 @@ class AnthropicLLMClient:
         # yet the batch was paid for and produced nothing for them. Silent is
         # the wrong way for that to happen: without this line the only symptom
         # is a bill that stops falling.
-        if getattr(resp, "stop_reason", None) == "max_tokens":
+        _stop = getattr(resp, "stop_reason", None)
+        if _stop == "max_tokens":
             log.warning(
                 "llm.truncated", tool=tool["name"], max_tokens=max_tokens,
+                output_tokens=getattr(resp.usage, "output_tokens", 0),
+            )
+        elif _stop not in (None, "tool_use", "end_turn", "stop_sequence"):
+            # Anything else — a refusal, a pause, a stop reason added later —
+            # is worth naming. On aug-13 a batch spent 1132 output tokens and
+            # returned an EMPTY verdicts array: not truncated, right key, no
+            # index rejected. Three explanations tried, none of them held, and
+            # the one field that would have settled it was never logged.
+            log.warning(
+                "llm.stop", tool=tool["name"], stop_reason=_stop,
                 output_tokens=getattr(resp.usage, "output_tokens", 0),
             )
         data: dict[str, Any] = {}

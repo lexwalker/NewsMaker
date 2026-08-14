@@ -72,3 +72,30 @@ def test_untouched_sources_keep_their_tier() -> None:
     assert _items_cap_for("https://tass.ru/rss/v2.xml") == 100     # explicit
     assert _items_cap_for("https://carscoops.com") == 60           # deep index
     assert _items_cap_for("https://example-unknown-site.com") == 15  # default
+
+
+# ------------------------------------------------- per-host read timeout
+
+def test_a_host_that_hangs_gets_a_shorter_leash() -> None:
+    """autostat's news RSS times out at the global 20s in every run, both
+    lanes. The obvious fix was measured and is wrong: at 45s it still timed
+    out, and a bare httpx with no headers timed out in the same minute a cold
+    probe of the identical URL had returned 200 in 1.2s. The host does not
+    answer slowly, it intermittently does not answer — so the leash is
+    SHORTER, not longer, and we stop paying 20s a run to learn that."""
+    from batch_fetch_test import _TIMEOUT_OVERRIDES
+    assert _TIMEOUT_OVERRIDES["autostat.ru"] < 20.0
+
+
+def test_the_timeout_override_matches_subdomains() -> None:
+    """The failing URL is on www.autostat.ru; the entry is the bare domain."""
+    from batch_fetch_test import _TIMEOUT_OVERRIDES
+    host = "www.autostat.ru"
+    assert any(host == d or host.endswith("." + d) for d in _TIMEOUT_OVERRIDES)
+
+
+def test_no_other_host_is_slowed_down() -> None:
+    """A per-host override is a scalpel. Anything in here is a host we have
+    measured, so the list staying tiny is part of the design."""
+    from batch_fetch_test import _TIMEOUT_OVERRIDES
+    assert len(_TIMEOUT_OVERRIDES) <= 3

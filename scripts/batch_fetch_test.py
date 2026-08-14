@@ -1007,6 +1007,23 @@ _ACCEPT_OVERRIDES: dict[str, str] = {
     "autocarindia.com": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
 }
 
+# Per-host read timeout, LOWER than the global 20s where a host is known to
+# hang rather than to be slow.
+#
+# autostat's news RSS times out at exactly the global 20s in every run of
+# aug-11..13, both lanes, while its other four URLs answer 200 in seconds. The
+# obvious reading — "large feed, needs longer" — was measured and is wrong: at
+# 45s it still timed out, and a bare httpx with no headers at all timed out too
+# in the same minute a cold probe of the identical URL had returned 200 in 1.2s
+# with 151 KB of valid RSS. The host does not answer slowly; it intermittently
+# does not answer. Raising the limit only buys a longer wait for the same
+# nothing, so this cuts the loss instead: on its good minutes 8s is plenty for
+# a 1.2s response, and on its bad ones we stop paying 20 seconds a run to find
+# out. Four other autostat URLs cover the same newsroom meanwhile.
+_TIMEOUT_OVERRIDES: dict[str, float] = {
+    "autostat.ru": 8.0,
+}
+
 
 def _http_get(client, url: str):
     """Route ``url`` through the right backend based on allowlist membership.
@@ -1067,6 +1084,9 @@ def _http_get(client, url: str):
     for _d, _accept in _ACCEPT_OVERRIDES.items():
         if host == _d or host.endswith("." + _d):
             return client.get(url, headers={"Accept": _accept})
+    for _d, _t in _TIMEOUT_OVERRIDES.items():
+        if host == _d or host.endswith("." + _d):
+            return client.get(url, timeout=_t)
     return client.get(url)
 
 
