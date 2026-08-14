@@ -82,6 +82,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 $ErrorActionPreference = $prevEAP
 
+# The two housekeeping steps below MUST run with 'Continue', for the same
+# reason Stage() does and the labelling block above does: with 'Stop',
+# PowerShell 5.1 turns any native-command stderr line into a TERMINATING
+# NativeCommandError. Both write to stderr in normal operation.
+#
+# Added aug-13 outside this guard, and the aug-14 10:16 run showed exactly
+# what that costs: the log stops mid-sync, the tab cleanup never ran, the DONE
+# marker was never written, the task returned 1, and an orphaned shell was left
+# behind. Delivery was already complete by then -- 903 articles, 9 stories
+# pushed -- so nothing was lost except the housekeeping and any way to tell
+# from the log that the run had finished. This is the jun-18 defect, third
+# occurrence, and the first one I introduced myself.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+
 # Pull the editor's comments off the feed -- see the note in run_prog.ps1.
 # Idempotent by comment hash, so running it every tick only picks up what is
 # new. Non-fatal: it feeds measurement, not delivery.
@@ -98,6 +113,8 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
   Write-Output "  (tab cleanup failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
 }
+
+$ErrorActionPreference = $prevEAP
 
 # Tee the finish marker INTO the log (aug-04). Third copy of the same defect
 # (run_recover, run_prog, here): it went to the task's stdout only, so the log

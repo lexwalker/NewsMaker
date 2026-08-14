@@ -149,6 +149,15 @@ if ($NoPush) {
   $ErrorActionPreference = $prevEAP
 }
 
+# Both housekeeping steps below MUST run with 'Continue' -- same reason as
+# Stage() and the labelling block above: with 'Stop', PowerShell 5.1 turns any
+# native-command stderr line into a TERMINATING NativeCommandError, and both of
+# these write to stderr in normal operation. Added aug-13 outside this guard;
+# the aug-14 10:16 hot run died mid-sync because of it, skipping the cleanup,
+# the DONE marker and -- here -- the lock removal below.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+
 # Pull the editor's comments off the feed into eval_set_v2. Same defect as the
 # tab cleanup and the label ingest before it: the script existed, nothing
 # called it, and it had last run on aug-04 -- so on aug-07 the week's precision
@@ -176,6 +185,7 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
   Write-Output "  (tab cleanup failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
 }
+$ErrorActionPreference = $prevEAP
 
 Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
 # Tee the finish marker INTO the log (aug-04, same defect as run_recover.ps1):
