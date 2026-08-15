@@ -49,7 +49,10 @@ load_dotenv(ROOT / ".env", override=True)
 from google.oauth2 import service_account  # noqa: E402
 from googleapiclient.discovery import build  # noqa: E402
 
-from news_agent.core.editor_feedback import precision_from_feedback  # noqa: E402
+from news_agent.core.editor_feedback import (  # noqa: E402
+    classify_row, mark_from_background, precision_from_feedback,
+    precision_from_marks,
+)
 from news_agent.core.published_dedup import url_key  # noqa: E402
 from news_agent.core.sheet_dates import parse_sheet_date as _parse_date  # noqa: E402
 from news_agent.core.reject_stage import (  # noqa: E402
@@ -137,9 +140,36 @@ def load_cache(since: datetime, until: datetime):
     return collection, accepted, rejected, coll_dates
 
 
+def _feed_marks(svc, tab: str, n_rows: int) -> tuple[list[str], dict]:
+    """The editor's colour on column P, row by row, plus a census of every
+    colour seen there.
+
+    Second request, and worth it: the colours are the only unambiguous thing on
+    this sheet. The census is returned so the report can name any colour that is
+    neither a known pipeline fill nor a recognised mark — a swatch we cannot
+    read must be visible, not silently absent from the denominator.
+    """
+    grid = svc.spreadsheets().get(
+        spreadsheetId=SHEET, ranges=[f"'{tab}'!P1:P{n_rows}"],
+        includeGridData=True,
+        fields="sheets/data/rowData/values/effectiveFormat/backgroundColor",
+    ).execute()
+    rows = grid["sheets"][0]["data"][0].get("rowData", [])
+    marks, census = [], {}
+    for i in range(n_rows):
+        cells = rows[i].get("values") or [] if i < len(rows) else []
+        colour = ((cells[0].get("effectiveFormat") or {}).get("backgroundColor")
+                  if cells else None) or {}
+        marks.append(mark_from_background(colour))
+        key = tuple(round(float(colour.get(c, 0.0)), 3)
+                    for c in ("red", "green", "blue"))
+        census[key] = census.get(key, 0) + 1
+    return marks, census
+
+
 def load_feed(svc, since: datetime, until: datetime):  # type: ignore[no-untyped-def]
     """Rows we actually PUT IN FRONT OF THE EDITOR in the window, with his
-    comment on each: (items, comments).
+    comment AND his colour mark on each: (items, comments, marks, census).
 
     Read straight from «Новости (новые)», keyed on the push timestamp in
     column A. Two things depended on this and had neither:
@@ -160,13 +190,16 @@ def load_feed(svc, since: datetime, until: datetime):  # type: ignore[no-untyped
     vals = svc.spreadsheets().values().get(
         spreadsheetId=SHEET, range=f"'{tab}'!A1:P6000"
     ).execute().get("values", [])
+    all_marks, census = _feed_marks(svc, tab, len(vals))
 
     def cell(r, i):
         return (r[i] if len(r) > i else "").strip()
 
     lo, hi = since.date(), until.date()
-    items, comments = [], []
-    for r in vals[1:]:
+    items, comments, marks = [], [], []
+    for i, r in enumerate(vals):
+        if i == 0:
+            continue                      # header
         stamp = cell(r, 0)
         if not stamp.startswith("20") or not cell(r, 1):
             continue                      # run separators and blanks
@@ -181,7 +214,8 @@ def load_feed(svc, since: datetime, until: datetime):  # type: ignore[no-untyped
         # Markers this pipeline writes into the comment column itself are not
         # editor feedback and must not be scored as such.
         comments.append("" if c.startswith(("🔁", "⚠", "ВТОРОЙ")) else c)
-    return items, comments
+        marks.append(all_marks[i] if i < len(all_marks) else "")
+    return items, comments, marks, census
 
 
 def precision_from_feed(comments: list[str]) -> dict:
@@ -233,6 +267,44 @@ def _pct(r):
     return f"{r*100:.0f}%"
 
 
+def _mark_vs_text(marks: list[str], comments: list[str]) -> tuple[int, int, int]:
+    """(agreed, colour-only, contradicted) over rows carrying both a colour and
+    a comment. A contradiction is the one thing here worth acting on: it means
+    one of the two witnesses is reading the row backwards."""
+    from sync_editor_feedback import parse_comment
+    agree = only_colour = contra = 0
+    for m, c in zip(marks, comments):
+        if m not in ("green", "red"):
+            continue
+        if not c.strip():
+            only_colour += 1
+            continue
+        rec = parse_comment(c)
+        rec.setdefault("editor_comment", c)
+        kind = classify_row(rec)
+        if kind == "unparsed":
+            only_colour += 1
+        elif (kind in ("clean", "fixable")) == (m == "green"):
+            agree += 1
+        else:
+            contra += 1
+    return agree, only_colour, contra
+
+
+# The colours the pipeline itself paints into this sheet. Anything outside this
+# set and the recognised marks is printed by name: a swatch we cannot read must
+# be visible in the report, not silently missing from the denominator.
+def _report_unknown_colours(census: dict) -> None:
+    unknown = {c: n for c, n in census.items()
+               if n >= 5 and not mark_from_background(
+                   dict(zip(("red", "green", "blue"), c)))
+               and min(c) <= 0.3 and max(c) >= 0.6}
+    if unknown:
+        print("       ⚠ непонятные цвета в колонке P (не метка, не заливка):")
+        for c, n in sorted(unknown.items(), key=lambda kv: -kv[1])[:5]:
+            print(f"          rgb{c} × {n}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=7)
@@ -282,10 +354,12 @@ def main() -> int:
     total_days = (until.date() - since.date()).days + 1
 
     # Delivered coverage + precision, both keyed on the days we PUSHED.
-    feed_items, feed_comments = load_feed(svc, since, until)
+    feed_items, feed_comments, feed_marks, colour_census = load_feed(
+        svc, since, until)
     cov_feed = coverage_day_aligned(dated_pubs, active, build_index(feed_items))
     cov_acc = coverage_day_aligned(dated_pubs, active, build_index(accepted))
-    prec = precision_from_feed(feed_comments)         # headline precision
+    prec = precision_from_feed(feed_comments)         # by his words
+    marks = precision_from_marks(feed_marks)          # by his colours
     ps = precision_and_section(accepted, arch_idx, sec_by_key)  # lower bound
     rj = reject_right(rejected, arch_idx)
 
@@ -312,16 +386,35 @@ def main() -> int:
           f"accepted but never pushed: {cov_acc['hit'] - cov_feed['hit']}")
     print(f"     *day-aligned: prog ran {cov['active_days']}/{total_days} days; "
           f"{cov['excluded_no_prog']} pubs on no-prog days excluded (uptime gap)")
-    line(f"2 precision ({prec['scope']})", prec,
-         "← story belonged in the feed")
-    print(f"       pushed {len(feed_items)}, marked {prec['commented']}, "
-          f"unmarked {len(feed_items) - prec['commented']} (not scored)")
+    # Precision has two witnesses now. When the editor has painted the week his
+    # colours ARE the answer and lead; his words stay printed underneath,
+    # because the two disagreeing is the only warning that either is drifting.
+    if marks["total"]:
+        line("2 precision (по цвету)", marks,
+             "← HEADLINE: зелёный = строка была нужна")
+        print(f"       pushed {len(feed_items)}, "
+              f"зелёных {marks['green']}, красных {marks['red']}, "
+              f"жёлтых {marks['yellow']} (не в счёте), "
+              f"без цвета {marks['unmarked']} (не в счёте)")
+        agree, only_colour, contra = _mark_vs_text(feed_marks, feed_comments)
+        print(f"       сверка со словами: совпало {agree}, "
+              f"цвет есть — слова парсер не понял {only_colour}, "
+              f"прямых противоречий {contra}")
+        print(f"   по словам ({prec['scope']}) "
+              f"{_pct(prec['rate'])}  ({prec['hit']}/{prec['total']}) "
+              "← прежняя метрика, для сопоставимости с июлем")
+    else:
+        line(f"2 precision ({prec['scope']})", prec,
+             "← story belonged in the feed")
+        print(f"       pushed {len(feed_items)}, marked {prec['commented']}, "
+              f"unmarked {len(feed_items) - prec['commented']} (not scored)")
     print(f"       clean {prec['clean']} + fixable {prec['fixable']} "
           f"= {prec['hit']} right;  wasted {prec['wasted']};  "
           f"unparsed {prec['unparsed']} (not scored)")
     if prec["by_type"]:
         bt = ", ".join(f"{k} {v}" for k, v in prec["by_type"].items())
         print(f"       complaints: {bt}")
+    _report_unknown_colours(colour_census)
     line("  found_right", ps["found_right"],
          "← archive-match LOWER BOUND (not the headline)")
     line("3 section_right", ps["section_right"])
@@ -369,6 +462,7 @@ def main() -> int:
         "coverage": cov, "coverage_by_day": by_day,
         "coverage_delivered": cov_feed, "coverage_accepted": cov_acc,
         "pushed_rows": len(feed_items),
+        "precision_marks": marks,          # the headline once he paints the week
         "precision_editor": prec, "found_right": ps["found_right"],
         "section_right": ps["section_right"], "reject_right": rj,
     }

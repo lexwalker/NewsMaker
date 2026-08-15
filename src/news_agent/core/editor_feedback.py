@@ -92,6 +92,76 @@ def _looks_approving(row: dict) -> bool:
     return head in _APPROVE_WORDS or head.startswith(("ок ", "ok ", "вроде ок"))
 
 
+# ──────────────────────────── the editor's colour marks ─────────────────────
+#
+# aug-15: the editor began painting column P himself — green for a row that
+# belonged in the feed, red for one that did not. That is exactly the ground
+# truth everything above tries to reconstruct from free text, and it does not
+# have to be guessed at: on the aug 8-15 week the parser could not read 46 of
+# 218 comments and left them unscored, while the colour has an opinion on every
+# one of them. Where both speak they agree — 212 of 221 marked rows.
+#
+# The pipeline paints this sheet too (section tints, run separators, header), so
+# a MARK has to be told apart from a FILL. Every colour the pipeline uses is
+# either PASTEL (no channel below .73) or DARK (no channel above .5); a mark is
+# a saturated primary. That is the whole test. An equality check against
+# #FF0000 would read the same today and break the first time he picks a
+# neighbouring swatch out of the palette.
+MARK_MAX = 0.6      # a mark has a channel at strength — brighter than any separator
+MARK_MIN = 0.3      # …and a channel nearly absent — deeper than any pastel fill
+
+
+def mark_from_background(color: dict | None) -> str:
+    """'green' | 'red' | 'yellow' | '' for one cell's background colour.
+
+    `color` is the Sheets API effectiveFormat.backgroundColor dict (channels
+    default to 0 when absent, which is how the API represents black). '' means
+    'not an editor mark' — unpainted, or painted by the pipeline.
+
+    Matching #FF0000 exactly would score this week correctly and read zero the
+    first time he picks the swatch one row down in the palette — a silent
+    degradation, the failure mode this codebase keeps paying for. So the test is
+    on SATURATION, which is what separates a mark from a fill, and the caller
+    reports any unrecognised colour it saw rather than dropping it quietly.
+    """
+    if not color:
+        return ""
+    r = float(color.get("red", 0.0))
+    g = float(color.get("green", 0.0))
+    b = float(color.get("blue", 0.0))
+    if max(r, g, b) < MARK_MAX or min(r, g, b) > MARK_MIN:
+        return ""                      # pastel fill, dark separator, or white
+    cut = max(r, g, b) * 0.6           # a channel is "lit" if near the strongest
+    lit = (r >= cut, g >= cut, b >= cut)
+    return {(False, True, False): "green",
+            (True, False, False): "red",
+            (True, True, False): "yellow"}.get(lit, "")
+
+
+def precision_from_marks(marks: list[str]) -> dict:
+    """Precision straight off the editor's colours — the headline when he has
+    painted the week.
+
+    Deliberately NOT merged with the text buckets. Green is the editor saying
+    «this row was right», full stop; it is not for us to re-open a green row
+    because its comment mentions a wrong section, nor to rescue a red one
+    because the wording looked approving. Yellow is neither and is reported
+    apart rather than folded into either side.
+    """
+    n = {"green": 0, "red": 0, "yellow": 0, "": 0}
+    for m in marks:
+        n[m if m in n else ""] += 1
+    judged = n["green"] + n["red"]
+    return {
+        "metric": "precision_marks",
+        "hit": n["green"], "total": judged,
+        "rate": (n["green"] / judged if judged else 0.0),
+        "green": n["green"], "red": n["red"], "yellow": n["yellow"],
+        "unmarked": n[""], "commented": judged + n["yellow"],
+        "is_biased": False,   # every marked row is scored; nothing is guessed
+    }
+
+
 def precision_from_feedback(rows: list[dict]) -> dict:
     """Of the commented rows, how many are clean (no editor objection).
 
