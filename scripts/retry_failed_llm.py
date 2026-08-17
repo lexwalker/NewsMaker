@@ -453,6 +453,12 @@ def main() -> int:
     # spent $2.51 where the main pass would have spent ~$1.05, because the
     # constitution was read 338 times instead of 34.
     prefilled: dict[int, object] = {}
+    # …and what that verdict cost. A batched row never makes the single call, so
+    # the usage object the cost column used to read does not exist for it —
+    # reading it raised UnboundLocalError on the FIRST batched row that survived
+    # to the write, which is every healthy recovery. The chunk's cost is split
+    # across the rows it answered, same rule as the main pass.
+    prefilled_cost: dict[int, float] = {}
     batching = (EDITORIAL_BATCH_SIZE > 1
                 and hasattr(editorial_client, "editorial_review_batch"))
     next_chunk_at = 0        # aligned boundaries: chunks can never overlap
@@ -478,10 +484,12 @@ def main() -> int:
                 _revs, _u = editorial_client.editorial_review_batch(
                     items=[_title_and_body(rr) for _, rr in _chunk],
                     sections=sections, portal_country=portal_country)
-                for _j, _rev in enumerate(_revs):
-                    if _rev is not None:
-                        prefilled[next_chunk_at + _j] = _rev
-                        n_batched += 1
+                _answered = [_j for _j, _rev in enumerate(_revs) if _rev is not None]
+                _share = (_u.cost_usd / len(_answered)) if _answered else 0.0
+                for _j in _answered:
+                    prefilled[next_chunk_at + _j] = _revs[_j]
+                    prefilled_cost[next_chunk_at + _j] = _share
+                    n_batched += 1
                 budget.record(_u)      # may raise — verdicts above survive it
                 failed_chunks = 0
             except BudgetExceeded as e:
@@ -508,6 +516,7 @@ def main() -> int:
         # path never produced a reason, so a mid-run-failure recovery left col AE
         # — and the rejected-markup tab built from it — empty.
         _pre = prefilled.pop(idx - 1, None)
+        _review_cost = prefilled_cost.pop(idx - 1, 0.0)
         if _pre is None and budget_blown:
             # The cap tripped and this row was not among the ones already paid
             # for. Stop here and flush: everything before it IS written.
@@ -523,6 +532,7 @@ def main() -> int:
                     title=clean_title, body=body,
                     sections=sections, portal_country=portal_country,
                 )
+                _review_cost = ur.cost_usd
                 budget.record(ur)
                 # Only a LIVE call proves the API is up, so only a live call
                 # may clear the breaker — the same trap the main pass fell into
@@ -638,7 +648,7 @@ def main() -> int:
             f"EN: {tp.english[:220]}{en_suffix}\n"
             f"RU: {tp.russian[:220]}{ru_suffix}"
         )
-        cost = round(ur.cost_usd + ut.cost_usd, 5)
+        cost = round(_review_cost + ut.cost_usd, 5)
         spent = budget.spent_usd
         print(
             f"  [{idx}/{len(targets)}] OK row {sheet_row}: "

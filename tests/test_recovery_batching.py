@@ -108,3 +108,42 @@ def test_the_breaker_is_only_cleared_by_a_live_call(rfl) -> None:
     # The only reset must sit INSIDE the else-branch that made a real call,
     # i.e. after the single call appears — not before it in the shared tail.
     assert reset > single, "счётчик прерывателя сбрасывается вне живого вызова"
+
+
+# ----------------------------------------------- the cost of a batched verdict
+
+def test_a_batched_row_does_not_read_the_single_calls_usage() -> None:
+    """The crash this pins: `ur` is bound only by the live single call, and the
+    cost column read it unconditionally — so the first batched row that reached
+    the write raised UnboundLocalError. Which is every healthy recovery: the
+    aug-17 run died four rows in, after paying for the chunk.
+
+    Static because the alternative is standing up Sheets to reach line 641; the
+    property is structural anyway — the cost line must not name `ur`.
+    """
+    src = (Path(__file__).resolve().parents[1]
+           / "scripts" / "retry_failed_llm.py").read_text(encoding="utf-8")
+    cost_line = next(l for l in src.splitlines() if "+ ut.cost_usd" in l)
+    assert "ur.cost_usd" not in cost_line, cost_line
+    assert "_review_cost" in cost_line, cost_line
+
+
+def test_both_paths_bind_the_review_cost() -> None:
+    """Neither branch may leave it unset: the batch pops a stored share, the
+    live call takes it from its own usage."""
+    src = (Path(__file__).resolve().parents[1]
+           / "scripts" / "retry_failed_llm.py").read_text(encoding="utf-8")
+    assert "_review_cost = prefilled_cost.pop(" in src
+    assert "_review_cost = ur.cost_usd" in src
+
+
+def test_the_chunk_cost_is_split_over_answered_rows_only() -> None:
+    """A chunk that answers three of ten must charge those three, not all ten —
+    the seven that fell through pay again for their own single call, and
+    charging them twice would overstate the per-row cost on the sheet."""
+    src = (Path(__file__).resolve().parents[1]
+           / "scripts" / "retry_failed_llm.py").read_text(encoding="utf-8")
+    assert "_answered = [_j for _j, _rev in enumerate(_revs) if _rev is not None]" in src
+    assert "_u.cost_usd / len(_answered)" in src
+    # …and an all-failed chunk must not divide by zero.
+    assert "if _answered else 0.0" in src
