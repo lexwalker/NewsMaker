@@ -3030,13 +3030,20 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
              "(a source-timing coverage lever). Re-fetched items are deduped.",
     )
     p.add_argument(
-        "--max-lookback-hours", type=int, default=48,
+        "--max-lookback-hours", type=int, default=96,
         help="Ceiling on the fetch window. First run / stale state clamps to "
-             "this. Default 48h (not 24): if a daily run is MISSED, a 24h "
-             "ceiling permanently drops that day's publications, while 48h "
-             "lets the next run catch the backlog. Re-seen articles restore "
-             "from cache (≈$0); only genuinely-new ones cost LLM. On a normal "
-             "daily cadence the window is ~24h, so this only binds after a gap.",
+             "this. Was 48h, chosen when the cadence was one daily run: a 24h "
+             "ceiling permanently drops a missed day, 48h lets the next run "
+             "catch it. Raised to 96h (aug-18) because 48 is exactly the "
+             "length of an ordinary weekend or trip — an outage that outlasts "
+             "it silently drops everything older, and the aborts we see are "
+             "API-side (usage limit, 403), which is precisely the kind that "
+             "can persist unattended for days. Re-seen articles restore from "
+             "cache (≈$0); only genuinely-new ones cost LLM, so the wider "
+             "ceiling is free until it is actually needed — and when it is "
+             "needed, that one recovery run fetches ~2x the usual volume. On "
+             "a normal cadence the window is hours, so this only ever binds "
+             "after a gap.",
     )
     p.add_argument(
         "--hot", action="store_true",

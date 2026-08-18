@@ -122,7 +122,13 @@ def wired(tmp_path, monkeypatch):
     monkeypatch.setattr(bf, "ENABLE_NHTSA_RECALLS", False)
     monkeypatch.setattr(bf, "SQLITE_PATH", tmp_path / "cache.sqlite")
 
-    argv = ["--no-llm", "--no-playwright", "--no-published-dedup",
+    # Pin the window knob the fingerprint hashes. It used to ride the script's
+    # default, so raising that default (48 -> 96 on aug-18) silently broke the
+    # fingerprint this test recomputes by hand — the resume looked lost when
+    # only the test's assumption had moved. A resume test should fix its own
+    # window, not inherit a production default it does not control.
+    argv = ["--max-lookback-hours", "48",
+            "--no-llm", "--no-playwright", "--no-published-dedup",
             "--state-path", str(state_path), "--runs-log", str(runs_log)]
     return {"argv": argv, "calls": calls, "writes": writes,
             "alloc_count": alloc_count, "run_id": run_id,
