@@ -81,15 +81,42 @@ def load_published_index(
     and those are true re-posts). ``pub_recent_titles`` is unchanged so the
     existing hard-reject stays on the safe 21-day window; the all-time set is
     for the ADVISORY dup-hint (divert-to-review, reversible)."""
-    try:
-        # A:R (NOT A1:R6000): the archive outgrew 6000 rows (jun-2026: 6077),
-        # and a hard row cap silently TRUNCATES the most-recent publications —
-        # exactly the ones the anti-dup must catch. Open-ended range reads all.
-        rows = svc.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id, range=f"'{PUB_TAB}'!A:R",
-            valueRenderOption="UNFORMATTED_VALUE",
-        ).execute().get("values", [])
-    except Exception as e:  # noqa: BLE001 — never break the prog over the gate
+    # RETRIED, unlike every other read this module used to do. On aug-18 a
+    # single Sheets 503 emptied the archive, the floor alarm fired as designed,
+    # and the 08:00 run aborted with nothing published — one transient blip on
+    # Google's side cost a whole run. Every other Sheets call in this codebase
+    # already retries with backoff; this one, the one whose failure stops the
+    # chain outright, did not. Same shape as the writers': 5 attempts, doubling
+    # delay, and the ORIGINAL exception re-raised so the message below (and the
+    # log line the operator greps for) is unchanged.
+    import time as _time
+
+    _delay = 2.0
+    rows = None
+    for _attempt in range(1, 6):
+        try:
+            # A:R (NOT A1:R6000): the archive outgrew 6000 rows (jun-2026: 6077),
+            # and a hard row cap silently TRUNCATES the most-recent publications —
+            # exactly the ones the anti-dup must catch. Open-ended range reads all.
+            rows = svc.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id, range=f"'{PUB_TAB}'!A:R",
+                valueRenderOption="UNFORMATTED_VALUE",
+            ).execute().get("values", [])
+            break
+        except Exception as _e:  # noqa: BLE001 — any transport error is worth a retry
+            if _attempt == 5:
+                rows = None
+                e = _e
+                break
+            import sys as _sys
+            print(
+                f"  ! published-archive read attempt {_attempt}/5 failed "
+                f"({type(_e).__name__}: {str(_e)[:70]}) — retrying in {_delay:.0f}s",
+                file=_sys.stderr,
+            )
+            _time.sleep(_delay)
+            _delay = min(_delay * 2, 30.0)
+    if rows is None:  # noqa: BLE001 — never break the prog over the gate
         # …but never die SILENTLY either: this exact gate has gone dark three
         # times (empty-tab read, serial-date decay, the A1:R6000 truncation)
         # and each time dups flowed to the editor for days. The caller's
