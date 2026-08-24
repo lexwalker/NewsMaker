@@ -420,8 +420,18 @@ class DedupStore:
                 "  last_seen_at    = excluded.last_seen_at, "
                 "  cached_row_json = COALESCE(excluded.cached_row_json, "
                 "                              seen_articles.cached_row_json), "
-                "  lede_text       = COALESCE(excluded.lede_text, "
-                "                              seen_articles.lede_text)",
+                # Keep the LONGER text, not merely the newest. COALESCE only
+                # guarded against NULL, so any writer holding a shorter slice
+                # overwrote a longer one — and one does: the recovery path
+                # rebuilds its row from the SHEET, whose lede cell is capped at
+                # 300 characters, so recovering a row that the main run had
+                # already stored in full shrank it by an order of magnitude.
+                # Silent, and it destroys exactly the dedup input this column
+                # exists to hold.
+                "  lede_text       = CASE WHEN length(COALESCE(excluded.lede_text, '')) "
+                "                            >= length(COALESCE(seen_articles.lede_text, '')) "
+                "                         THEN excluded.lede_text "
+                "                         ELSE seen_articles.lede_text END",
                 rows,
             )
 

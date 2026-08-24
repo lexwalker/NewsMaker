@@ -285,6 +285,18 @@ STUCK_SHARE_ABORT = 0.02   # …AND more than this share of the candidates
 # persistent outage (org-disabled, credit-exhausted, bad model id, 429 storm)
 # → abort the pass loudly instead of silently burning every remaining call.
 CONSEC_LLM_ERRORS_ABORT = 5
+
+# How much article text to KEEP for dedup. Not an LLM knob — this slice is
+# stored and compared, never sent to a model, so it costs disk and nothing else.
+#
+# It was 600, chosen when the only consumer was a human glancing at a cell. A
+# sample of 18 freshly-parsed articles put the median body at 3208 characters,
+# so 600 kept 19% of the story: the price, the range, the date and the model
+# code that identify an event are usually further in than that, which is why
+# 61-72% of rows yielded no facts at all to match on. 3000 covers ~94% of the
+# median article. At 2239 new articles a day that is ~5 MB/day, ~0.3 GB across
+# the 60-day dedup window, against a 162 MB database.
+DEDUP_TEXT_CHARS = 3000
 # Articles judged per editorial_review call. The constitution is ~8.5k tokens
 # and is re-read on every call; at 10 per call that read is amortised and the
 # aug-05 run projects from $3.301 to $2.379 — a 28% saving, not 10x, because
@@ -577,6 +589,12 @@ class ArticleRow:
     verdict: str = ""  # "Точно новость" | "Возможно новость" | ...
     # Kept in-memory only (not written to Sheets) — feeds the LLM.
     body_excerpt: str = ""
+    # …and a LONGER slice kept only to be stored, never sent to a model. The
+    # two are separate on purpose: the LLM slice is a cost knob (every char
+    # rides every judging call), while the stored slice is a dedup input and
+    # costs disk alone. Merging them would mean paying LLM rates for text
+    # whose only job is to sit in SQLite and be compared later.
+    body_full: str = ""
     # LLM fields — populated only for certain_news / possible_news
     llm_relevance: str = ""       # "Да" / "Нет" / ""
     llm_section: str = ""
@@ -1144,6 +1162,7 @@ def _score_recall(article, r: SourceResult, row: ArticleRow) -> bool:  # type: i
     row.title = article.title
     row.body_len = len(article.body)
     row.body_excerpt = article.body[:1000]
+    row.body_full = article.body[:DEDUP_TEXT_CHARS]
     row.published_at = article.published_at.isoformat() if article.published_at else ""
     row.source_language = "en"
     row.is_article = True
@@ -1686,7 +1705,7 @@ def _cache_entry_for(row: ArticleRow, *, provisional: bool = False) -> tuple | N
         # stories when the first article's body already carried the price: the
         # body was thrown away at write time. Cheap to store, and it is the only
         # thing that lets a later run judge content rather than wording.
-        (row.body_excerpt or "")[:600] or None,
+        (getattr(row, "body_full", "") or row.body_excerpt or "")[:DEDUP_TEXT_CHARS] or None,
     )
 
 
@@ -2654,6 +2673,7 @@ def _score_article(article, r: SourceResult, row: ArticleRow) -> bool:  # type: 
     row.title = article.title
     row.body_len = len(article.body)
     row.body_excerpt = article.body[:1000]  # ≤1000 chars → ~40% token saving on LLM input
+    row.body_full = article.body[:DEDUP_TEXT_CHARS]  # stored only; never sent to a model
     row.published_at = article.published_at.isoformat() if article.published_at else ""
     row.has_image = bool(article.image_url)
     row.image_url = article.image_url or ""

@@ -41,6 +41,9 @@ class _Row:
         self.llm_relevance = kw.get("llm_relevance", "Да")
         self.title = kw.get("title", "Заголовок")
         self.body_excerpt = kw.get("body", "тело статьи")
+        # The slice that is STORED — longer than the one the model sees, and
+        # a separate field for exactly that reason (see DEDUP_TEXT_CHARS).
+        self.body_full = kw.get("body_full", self.body_excerpt)
         self.published_at = None
         self.is_article = True
         self.article_score = 5
