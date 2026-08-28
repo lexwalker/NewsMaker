@@ -132,7 +132,9 @@ if ($NoPush) {
   Write-Output "=== 4/4 sample rejects for labelling  $(Get-Date -Format HH:mm:ss) ===" | Tee-Object -FilePath $log -Append
   $prevEAP = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  & python scripts/sample_rejected.py --total 12 --days 2 2>&1 | Tee-Object -FilePath $log -Append
+  # aug-29: compact ritual — the editor moved to colour answers, ~10 rows/day
+  # total, sampled from the full lane only (hot no longer samples).
+  & python scripts/sample_rejected.py --total 8 --random 2 --days 2 2>&1 | Tee-Object -FilePath $log -Append
   if ($LASTEXITCODE -ne 0) {
     Write-Output "  (reject sampling failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
   }

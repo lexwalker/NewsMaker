@@ -72,10 +72,8 @@ Stage "3/3 push to editor feed"   @('scripts/build_news_sheet.py')
 Write-Output "=== 4/4 sample rejects for labelling  $(Get-Date -Format HH:mm:ss) ===" | Tee-Object -FilePath $log -Append
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-& python scripts/sample_rejected.py --total 6 --days 1 2>&1 | Tee-Object -FilePath $log -Append
-if ($LASTEXITCODE -ne 0) {
-  Write-Output "  (reject sampling failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append
-}
+# aug-29: hot lane no longer SAMPLES (compact ritual, ~10 rows/day come from
+# the full lane alone) but still INGESTS - colour answers land any time of day.
 & python scripts/ingest_rejected_labels.py --write 2>&1 | Tee-Object -FilePath $log -Append
 if ($LASTEXITCODE -ne 0) {
   Write-Output "  (label ingest failed, exit $LASTEXITCODE - delivery unaffected)" | Tee-Object -FilePath $log -Append

@@ -21,17 +21,22 @@ Usage: python scripts/ingest_rejected_labels.py        # dry run (report)
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 DATA = ROOT / "data"
+
+from news_agent.core.console import force_utf8_stdio  # noqa: E402
+
+# The raw TextIOWrapper idiom kills pytest's capture the moment this module
+# is IMPORTED (see core/console.py docstring) — and tests now import it for
+# resolve_answer. reconfigure-based setup is import-safe.
+force_utf8_stdio()
 
 from dotenv import load_dotenv  # noqa: E402
 
@@ -41,12 +46,46 @@ from google.oauth2 import service_account  # noqa: E402
 from googleapiclient.discovery import build  # noqa: E402
 
 import review_tab  # noqa: E402  (shared review-tab helper, scripts/ on path)
+from news_agent.core.editor_feedback import mark_from_background  # noqa: E402
 from news_agent.core.labeling import (  # noqa: E402
     CONFIRMED_NEGATIVE,
     FALSE_REJECT,
     route_reject_label,
     summarise_labels,
 )
+
+
+def resolve_answer(text: str, mark: str) -> str:
+    """The editor's answer for one row: explicit text in D wins; otherwise
+    the CELL COLOUR is the answer (aug-29 — the editor moved to colour marks
+    in the feed on aug-15 and the razmetka tab went silent; same gesture
+    here: green = нужна, red = не нужна). Yellow/unpainted = no answer."""
+    t = (text or "").strip()
+    if t:
+        return t
+    return {"green": "да", "red": "нет"}.get(mark, "")
+
+
+def _column_d_marks(svc) -> list[str]:
+    """Colour marks of column D, index-aligned with the A1:G values rows.
+    Read-only; any failure degrades to text-only answers, never breaks."""
+    try:
+        grid = svc.spreadsheets().get(
+            spreadsheetId=EDITOR, ranges=[f"'{TAB}'!D1:D"],
+            fields="sheets(data(rowData(values("
+                   "effectiveFormat.backgroundColor))))",
+        ).execute()
+        out: list[str] = []
+        for rd in grid["sheets"][0]["data"][0].get("rowData", []):
+            vals = rd.get("values") or [{}]
+            colour = (vals[0].get("effectiveFormat") or {}).get(
+                "backgroundColor")
+            out.append(mark_from_background(colour))
+        return out
+    except Exception as e:  # noqa: BLE001
+        print(f"  (цвета колонки D не прочитаны: {type(e).__name__} — "
+              f"считаю только текстовые ответы)")
+        return []
 
 EDITOR = os.environ.get(
     "EDITOR_SPREADSHEET_ID", "1fQic_uDpTzfjySf091tW9Ql_iJ1Z544dQYbEHAlPAZs")
@@ -155,13 +194,15 @@ def main() -> int:
         return str(r[i]).strip() if len(r) > i and r[i] is not None else ""
 
     # Unified schema (A-G): Заголовок|Контекст|Тип|Нужно?|Раздел|url_hash|URL
+    marks = _column_d_marks(svc)
     ingested = _load_ingested()
     routed: list[tuple[str, dict]] = []
-    for r in rows:
+    for idx, r in enumerate(rows):
         uh = c(r, 5)
         if not uh or uh == "url_hash":          # header / instructions / separator
             continue
-        decision = route_reject_label(c(r, 3))
+        decision = route_reject_label(resolve_answer(
+            c(r, 3), marks[idx] if idx < len(marks) else ""))
         if decision == "skip" or uh in ingested:
             continue
         _typ = c(r, 2)
